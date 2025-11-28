@@ -2022,7 +2022,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   }, []);
   
   const loadPolicyGroups = () => {
-    fetch('http://localhost:8000/api/v1/policies/groups')
+    fetch('http://localhost:8000/api/v1/policies/groups/')
       .then(res => res.json())
       .then(data => {
         if (data.groups) {
@@ -2201,7 +2201,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     try {
       const url = editingGroup 
         ? `http://localhost:8000/api/v1/policies/groups/${editingGroup.id}`
-        : 'http://localhost:8000/api/v1/policies/groups';
+        : 'http://localhost:8000/api/v1/policies/groups/';
       
       const response = await fetch(url, {
         method: editingGroup ? 'PUT' : 'POST',
