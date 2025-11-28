@@ -1,0 +1,80 @@
+{
+  "groups": [
+    {
+      "id": "security-core",
+      "name": "Core Security",
+      "description": "Essential security policies for all projects",
+      "enabled": true,
+      "policies": [
+        "SEC-001",
+        "SEC-002",
+        "SEC-003",
+        "SEC-004"
+      ]
+    },
+    {
+      "id": "owasp-top10",
+      "name": "OWASP Top 10",
+      "description": "OWASP Top 10 web application security risks",
+      "enabled": true,
+      "policies": [
+        "OWASP-A1",
+        "OWASP-A2",
+        "OWASP-A3",
+        "OWASP-A5",
+        "OWASP-A6",
+        "OWASP-A7",
+        "OWASP-A8",
+        "OWASP-A9",
+        "OWASP-A10"
+      ]
+    },
+    {
+      "id": "nist-800-218",
+      "name": "NIST 800-218",
+      "description": "NIST Secure Software Development Framework policies",
+      "enabled": true,
+      "policies": [
+        "NIST-AC-3",
+        "NIST-AU-2",
+        "NIST-IA-5",
+        "NIST-SC-8",
+        "NIST-SC-12",
+        "NIST-SC-13",
+        "NIST-SI-10",
+        "NIST-SI-11"
+      ]
+    },
+    {
+      "id": "crypto-standards",
+      "name": "Cryptography Standards",
+      "description": "Cryptographic best practices and standards",
+      "enabled": true,
+      "policies": [
+        "CRYPTO-001",
+        "CRYPTO-002"
+      ]
+    },
+    {
+      "id": "sql-injection",
+      "name": "SQL Injection Prevention",
+      "description": "SQL injection detection and prevention",
+      "enabled": true,
+      "policies": [
+        "SQL-001"
+      ]
+    },
+    {
+      "id": "input-validation",
+      "name": "Input Validation",
+      "description": "Input validation and sanitization policies",
+      "enabled": false,
+      "policies": [
+        "INPUT-001",
+        "INPUT-002",
+        "INPUT-003"
+      ]
+    }
+  ],
+  "active_profile": "default"
+}

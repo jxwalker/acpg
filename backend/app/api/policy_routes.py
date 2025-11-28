@@ -14,6 +14,7 @@ from ..models.schemas import PolicyRule, PolicyCheck
 
 
 router = APIRouter(prefix="/policies", tags=["Policy Management"])
+groups_router = APIRouter(prefix="/policies/groups", tags=["Policy Groups"])
 
 
 # Models for API requests/responses
@@ -447,5 +448,242 @@ async def reload_all_policies():
     return {
         "message": "Policies reloaded successfully",
         "total_policies": len(policies)
+    }
+
+
+# ============================================================================
+# Policy Groups Management
+# ============================================================================
+
+POLICY_GROUPS_FILE = settings.POLICIES_DIR / "policy_groups.json"
+
+
+class PolicyGroup(BaseModel):
+    """A group of policies that can be enabled/disabled together."""
+    id: str = Field(..., description="Unique group identifier")
+    name: str = Field(..., description="Display name")
+    description: str = Field("", description="Group description")
+    enabled: bool = Field(True, description="Whether this group is active")
+    policies: List[str] = Field(default_factory=list, description="Policy IDs in this group")
+
+
+class PolicyGroupInput(BaseModel):
+    """Input for creating/updating a policy group."""
+    id: str
+    name: str
+    description: str = ""
+    enabled: bool = True
+    policies: List[str] = []
+
+
+def load_policy_groups() -> dict:
+    """Load policy groups from file."""
+    if POLICY_GROUPS_FILE.exists():
+        with open(POLICY_GROUPS_FILE, 'r') as f:
+            return json.load(f)
+    return {"groups": [], "active_profile": "default"}
+
+
+def save_policy_groups(data: dict):
+    """Save policy groups to file."""
+    with open(POLICY_GROUPS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def get_enabled_policy_ids() -> List[str]:
+    """Get list of policy IDs from all enabled groups."""
+    data = load_policy_groups()
+    enabled_policies = set()
+    
+    for group in data.get('groups', []):
+        if group.get('enabled', True):
+            enabled_policies.update(group.get('policies', []))
+    
+    return list(enabled_policies)
+
+
+@groups_router.get("/", response_model=dict)
+async def list_policy_groups():
+    """List all policy groups."""
+    data = load_policy_groups()
+    
+    # Enrich with policy details
+    compiler = get_policy_compiler()
+    all_policies = {p.id: p for p in compiler.get_all_policies()}
+    
+    groups_with_details = []
+    for group in data.get('groups', []):
+        policy_details = []
+        for policy_id in group.get('policies', []):
+            if policy_id in all_policies:
+                p = all_policies[policy_id]
+                policy_details.append({
+                    "id": p.id,
+                    "description": p.description,
+                    "severity": p.severity
+                })
+            else:
+                policy_details.append({
+                    "id": policy_id,
+                    "description": "Policy not found",
+                    "severity": "unknown"
+                })
+        
+        groups_with_details.append({
+            **group,
+            "policy_details": policy_details,
+            "policy_count": len(group.get('policies', []))
+        })
+    
+    # Count enabled policies
+    enabled_count = sum(
+        len(g.get('policies', [])) 
+        for g in data.get('groups', []) 
+        if g.get('enabled', True)
+    )
+    
+    return {
+        "groups": groups_with_details,
+        "total_groups": len(data.get('groups', [])),
+        "enabled_groups": sum(1 for g in data.get('groups', []) if g.get('enabled', True)),
+        "enabled_policies": enabled_count,
+        "active_profile": data.get('active_profile', 'default')
+    }
+
+
+@groups_router.get("/{group_id}")
+async def get_policy_group(group_id: str):
+    """Get a specific policy group."""
+    data = load_policy_groups()
+    
+    for group in data.get('groups', []):
+        if group.get('id') == group_id:
+            return group
+    
+    raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+
+
+@groups_router.post("/", response_model=dict)
+async def create_policy_group(group: PolicyGroupInput):
+    """Create a new policy group."""
+    data = load_policy_groups()
+    
+    # Check if group ID already exists
+    if any(g.get('id') == group.id for g in data.get('groups', [])):
+        raise HTTPException(status_code=400, detail=f"Group '{group.id}' already exists")
+    
+    new_group = {
+        "id": group.id,
+        "name": group.name,
+        "description": group.description,
+        "enabled": group.enabled,
+        "policies": group.policies
+    }
+    
+    data['groups'].append(new_group)
+    save_policy_groups(data)
+    
+    return {"message": f"Group '{group.id}' created successfully", "group": new_group}
+
+
+@groups_router.put("/{group_id}", response_model=dict)
+async def update_policy_group(group_id: str, group: PolicyGroupInput):
+    """Update a policy group."""
+    data = load_policy_groups()
+    
+    for i, g in enumerate(data.get('groups', [])):
+        if g.get('id') == group_id:
+            data['groups'][i] = {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description,
+                "enabled": group.enabled,
+                "policies": group.policies
+            }
+            save_policy_groups(data)
+            return {"message": f"Group '{group_id}' updated successfully", "group": data['groups'][i]}
+    
+    raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+
+
+@groups_router.delete("/{group_id}", response_model=dict)
+async def delete_policy_group(group_id: str):
+    """Delete a policy group."""
+    data = load_policy_groups()
+    
+    original_count = len(data.get('groups', []))
+    data['groups'] = [g for g in data.get('groups', []) if g.get('id') != group_id]
+    
+    if len(data['groups']) == original_count:
+        raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+    
+    save_policy_groups(data)
+    return {"message": f"Group '{group_id}' deleted successfully"}
+
+
+@groups_router.patch("/{group_id}/toggle", response_model=dict)
+async def toggle_policy_group(group_id: str):
+    """Toggle a policy group's enabled state."""
+    data = load_policy_groups()
+    
+    for group in data.get('groups', []):
+        if group.get('id') == group_id:
+            group['enabled'] = not group.get('enabled', True)
+            save_policy_groups(data)
+            return {
+                "message": f"Group '{group_id}' {'enabled' if group['enabled'] else 'disabled'}",
+                "enabled": group['enabled']
+            }
+    
+    raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+
+
+@groups_router.post("/{group_id}/policies", response_model=dict)
+async def add_policy_to_group(group_id: str, policy_id: str = Body(..., embed=True)):
+    """Add a policy to a group."""
+    data = load_policy_groups()
+    
+    for group in data.get('groups', []):
+        if group.get('id') == group_id:
+            if policy_id not in group.get('policies', []):
+                group['policies'].append(policy_id)
+                save_policy_groups(data)
+            return {"message": f"Policy '{policy_id}' added to group '{group_id}'", "policies": group['policies']}
+    
+    raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+
+
+@groups_router.delete("/{group_id}/policies/{policy_id}", response_model=dict)
+async def remove_policy_from_group(group_id: str, policy_id: str):
+    """Remove a policy from a group."""
+    data = load_policy_groups()
+    
+    for group in data.get('groups', []):
+        if group.get('id') == group_id:
+            if policy_id in group.get('policies', []):
+                group['policies'].remove(policy_id)
+                save_policy_groups(data)
+            return {"message": f"Policy '{policy_id}' removed from group '{group_id}'", "policies": group['policies']}
+    
+    raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+
+
+@groups_router.get("/enabled/policies", response_model=dict)
+async def get_enabled_policies():
+    """Get all policies from enabled groups."""
+    enabled_ids = get_enabled_policy_ids()
+    
+    compiler = get_policy_compiler()
+    all_policies = {p.id: p for p in compiler.get_all_policies()}
+    
+    enabled_policies = []
+    for policy_id in enabled_ids:
+        if policy_id in all_policies:
+            enabled_policies.append(all_policies[policy_id].model_dump())
+    
+    return {
+        "enabled_policy_ids": enabled_ids,
+        "policies": enabled_policies,
+        "count": len(enabled_policies)
     }
 

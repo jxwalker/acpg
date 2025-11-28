@@ -1882,8 +1882,19 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
   );
 }
 
-// Policies View with Editor
+// Policy Group interface
+interface PolicyGroup {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  policies: string[];
+  policy_count?: number;
+}
+
+// Policies View with Editor and Groups
 function PoliciesView({ policies }: { policies: PolicyRule[] }) {
+  const [activeTab, setActiveTab] = useState<'policies' | 'groups'>('policies');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'strict' | 'defeasible'>('all');
   const [showEditor, setShowEditor] = useState(false);
@@ -1891,6 +1902,18 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   const [customPolicies, setCustomPolicies] = useState<PolicyRule[]>([]);
   const [testCode, setTestCode] = useState('');
   const [testResult, setTestResult] = useState<any>(null);
+  
+  // Policy Groups state
+  const [policyGroups, setPolicyGroups] = useState<PolicyGroup[]>([]);
+  const [showGroupEditor, setShowGroupEditor] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<PolicyGroup | null>(null);
+  const [groupFormData, setGroupFormData] = useState({
+    id: '',
+    name: '',
+    description: '',
+    enabled: true,
+    policies: [] as string[]
+  });
   
   // Form state for policy editor
   const [formData, setFormData] = useState({
@@ -1905,7 +1928,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     fix_suggestion: ''
   });
   
-  // Load custom policies
+  // Load custom policies and groups
   useEffect(() => {
     fetch('http://localhost:8000/api/v1/policies/file/custom_policies.json')
       .then(res => res.json())
@@ -1915,7 +1938,20 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
         }
       })
       .catch(() => {});
+    
+    loadPolicyGroups();
   }, []);
+  
+  const loadPolicyGroups = () => {
+    fetch('http://localhost:8000/api/v1/policies/groups')
+      .then(res => res.json())
+      .then(data => {
+        if (data.groups) {
+          setPolicyGroups(data.groups);
+        }
+      })
+      .catch(() => {});
+  };
   
   const allPolicies = [...policies, ...customPolicies.filter(cp => 
     !policies.some(p => p.id === cp.id)
@@ -2063,6 +2099,91 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   const isCustomPolicy = (policyId: string) => 
     customPolicies.some(p => p.id === policyId);
   
+  // Group handling functions
+  const resetGroupForm = () => {
+    setGroupFormData({ id: '', name: '', description: '', enabled: true, policies: [] });
+    setEditingGroup(null);
+  };
+  
+  const handleToggleGroup = async (groupId: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/policies/groups/${groupId}/toggle`, {
+        method: 'PATCH'
+      });
+      if (response.ok) {
+        loadPolicyGroups();
+      }
+    } catch (err) {
+      alert('Failed to toggle group');
+    }
+  };
+  
+  const handleSaveGroup = async () => {
+    try {
+      const url = editingGroup 
+        ? `http://localhost:8000/api/v1/policies/groups/${editingGroup.id}`
+        : 'http://localhost:8000/api/v1/policies/groups';
+      
+      const response = await fetch(url, {
+        method: editingGroup ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(groupFormData)
+      });
+      
+      if (response.ok) {
+        loadPolicyGroups();
+        setShowGroupEditor(false);
+        resetGroupForm();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to save group');
+      }
+    } catch (err) {
+      alert('Failed to save group');
+    }
+  };
+  
+  const handleDeleteGroup = async (groupId: string) => {
+    if (!confirm(`Delete group "${groupId}"?`)) return;
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/policies/groups/${groupId}`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        loadPolicyGroups();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to delete group');
+      }
+    } catch (err) {
+      alert('Failed to delete group');
+    }
+  };
+  
+  const handleEditGroup = (group: PolicyGroup) => {
+    setGroupFormData({
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      enabled: group.enabled,
+      policies: group.policies
+    });
+    setEditingGroup(group);
+    setShowGroupEditor(true);
+  };
+  
+  const togglePolicyInGroup = (policyId: string) => {
+    setGroupFormData(prev => ({
+      ...prev,
+      policies: prev.policies.includes(policyId)
+        ? prev.policies.filter(p => p !== policyId)
+        : [...prev.policies, policyId]
+    }));
+  };
+  
+  const enabledGroupCount = policyGroups.filter(g => g.enabled).length;
+  
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2075,27 +2196,64 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
             <div>
               <h2 className="text-2xl font-display font-bold text-white">Policy Library</h2>
               <p className="text-slate-400">
-                {allPolicies.length} policies ({customPolicies.length} custom)
+                {allPolicies.length} policies • {policyGroups.length} groups ({enabledGroupCount} active)
               </p>
             </div>
           </div>
+          <div className="flex gap-2">
+            {activeTab === 'policies' ? (
+              <button
+                onClick={() => { resetForm(); setShowEditor(true); }}
+                className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                New Policy
+              </button>
+            ) : (
+              <button
+                onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                New Group
+              </button>
+            )}
+          </div>
+        </div>
+        
+        {/* Tabs */}
+        <div className="flex gap-2 mb-4">
           <button
-            onClick={() => { resetForm(); setShowEditor(true); }}
-            className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+            onClick={() => setActiveTab('policies')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+              activeTab === 'policies'
+                ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-400 hover:text-white border border-slate-700'
+            }`}
           >
-            <Plus className="w-5 h-5" />
-            New Policy
+            Policies ({allPolicies.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('groups')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+              activeTab === 'groups'
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : 'text-slate-400 hover:text-white border border-slate-700'
+            }`}
+          >
+            Groups ({policyGroups.length})
           </button>
         </div>
         
-        {/* Search & Filter */}
-        <div className="flex gap-4">
-          <div className="flex-1 relative">
-            <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+        {/* Search & Filter - only show for policies tab */}
+        {activeTab === 'policies' && (
+          <div className="flex gap-4">
+            <div className="flex-1 relative">
+              <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               placeholder="Search policies..."
               className="w-full pl-12 pr-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50"
             />
@@ -2116,7 +2274,126 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
             ))}
           </div>
         </div>
+        )}
       </div>
+      
+      {/* Group Editor Modal */}
+      {showGroupEditor && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-white">
+                {editingGroup ? `Edit Group: ${editingGroup.name}` : 'Create New Group'}
+              </h3>
+              <button onClick={() => { setShowGroupEditor(false); resetGroupForm(); }} className="text-slate-400 hover:text-white">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* Group Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Group ID</label>
+                  <input
+                    type="text"
+                    value={groupFormData.id}
+                    onChange={(e) => setGroupFormData(prev => ({ ...prev, id: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
+                    placeholder="e.g., my-custom-group"
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                    disabled={!!editingGroup}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Group Name</label>
+                  <input
+                    type="text"
+                    value={groupFormData.name}
+                    onChange={(e) => setGroupFormData(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="My Custom Group"
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">Description</label>
+                <input
+                  type="text"
+                  value={groupFormData.description}
+                  onChange={(e) => setGroupFormData(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="What this group is for"
+                  className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                />
+              </div>
+              
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="group-enabled"
+                  checked={groupFormData.enabled}
+                  onChange={(e) => setGroupFormData(prev => ({ ...prev, enabled: e.target.checked }))}
+                  className="w-5 h-5 rounded border-white/20 bg-slate-800"
+                />
+                <label htmlFor="group-enabled" className="text-sm text-slate-300">Enable this group for evaluations</label>
+              </div>
+              
+              {/* Policy Selection */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">
+                  Select Policies ({groupFormData.policies.length} selected)
+                </label>
+                <div className="max-h-64 overflow-y-auto bg-slate-900/50 rounded-xl p-4 space-y-2">
+                  {allPolicies.map(policy => (
+                    <label
+                      key={policy.id}
+                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all ${
+                        groupFormData.policies.includes(policy.id)
+                          ? 'bg-emerald-500/20 border border-emerald-500/30'
+                          : 'hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={groupFormData.policies.includes(policy.id)}
+                        onChange={() => togglePolicyInGroup(policy.id)}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="font-mono text-sm text-violet-400">{policy.id}</span>
+                      <span className="text-sm text-slate-400 truncate">{policy.description}</span>
+                      <span className={`ml-auto px-1.5 py-0.5 text-[10px] uppercase font-semibold rounded ${
+                        policy.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
+                        policy.severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
+                        policy.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' :
+                        'bg-slate-700 text-slate-400'
+                      }`}>
+                        {policy.severity}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            
+            {/* Actions */}
+            <div className="p-6 border-t border-white/10 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowGroupEditor(false); resetGroupForm(); }}
+                className="px-6 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveGroup}
+                disabled={!groupFormData.id || !groupFormData.name}
+                className="px-6 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-medium"
+              >
+                {editingGroup ? 'Update Group' : 'Create Group'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Policy Editor Modal */}
       {showEditor && (
@@ -2304,86 +2581,176 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
         </div>
       )}
       
-      {/* Policy Groups */}
-      <div className="grid grid-cols-2 gap-6">
-        {Object.entries(grouped).map(([category, catPolicies]) => (
-          <div key={category} className="glass rounded-2xl p-6 border border-white/5">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="px-2 py-1 bg-violet-500/20 text-violet-400 rounded-lg font-mono text-sm">
-                {category}
-              </span>
-              <span className="text-slate-400 text-sm font-normal">
-                {catPolicies.length} {catPolicies.length === 1 ? 'policy' : 'policies'}
-              </span>
-            </h3>
-            <div className="space-y-3">
-              {catPolicies.map(policy => (
-                <div
-                  key={policy.id}
-                  className={`p-4 bg-slate-800/50 rounded-xl border transition-all ${
-                    isCustomPolicy(policy.id) 
-                      ? 'border-violet-500/30 hover:border-violet-500/50' 
-                      : 'border-white/5 hover:border-violet-500/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-violet-400">{policy.id}</span>
-                      <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
-                        policy.type === 'strict'
-                          ? 'bg-red-500/10 text-red-400'
-                          : 'bg-amber-500/10 text-amber-400'
-                      }`}>
-                        {policy.type}
-                      </span>
-                      <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
-                        policy.severity === 'critical' ? 'bg-red-500/10 text-red-400' :
-                        policy.severity === 'high' ? 'bg-orange-500/10 text-orange-400' :
-                        policy.severity === 'medium' ? 'bg-amber-500/10 text-amber-400' :
-                        'bg-slate-700 text-slate-400'
-                      }`}>
-                        {policy.severity}
-                      </span>
-                      {isCustomPolicy(policy.id) && (
-                        <span className="px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded bg-violet-500/20 text-violet-400">
-                          Custom
+      {/* Policies Tab Content */}
+      {activeTab === 'policies' && (
+        <div className="grid grid-cols-2 gap-6">
+          {Object.entries(grouped).map(([category, catPolicies]) => (
+            <div key={category} className="glass rounded-2xl p-6 border border-white/5">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <span className="px-2 py-1 bg-violet-500/20 text-violet-400 rounded-lg font-mono text-sm">
+                  {category}
+                </span>
+                <span className="text-slate-400 text-sm font-normal">
+                  {catPolicies.length} {catPolicies.length === 1 ? 'policy' : 'policies'}
+                </span>
+              </h3>
+              <div className="space-y-3">
+                {catPolicies.map(policy => (
+                  <div
+                    key={policy.id}
+                    className={`p-4 bg-slate-800/50 rounded-xl border transition-all ${
+                      isCustomPolicy(policy.id) 
+                        ? 'border-violet-500/30 hover:border-violet-500/50' 
+                        : 'border-white/5 hover:border-violet-500/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-violet-400">{policy.id}</span>
+                        <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
+                          policy.type === 'strict'
+                            ? 'bg-red-500/10 text-red-400'
+                            : 'bg-amber-500/10 text-amber-400'
+                        }`}>
+                          {policy.type}
                         </span>
+                        <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
+                          policy.severity === 'critical' ? 'bg-red-500/10 text-red-400' :
+                          policy.severity === 'high' ? 'bg-orange-500/10 text-orange-400' :
+                          policy.severity === 'medium' ? 'bg-amber-500/10 text-amber-400' :
+                          'bg-slate-700 text-slate-400'
+                        }`}>
+                          {policy.severity}
+                        </span>
+                        {isCustomPolicy(policy.id) && (
+                          <span className="px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded bg-violet-500/20 text-violet-400">
+                            Custom
+                          </span>
+                        )}
+                      </div>
+                      {isCustomPolicy(policy.id) && (
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => handleEdit(policy)}
+                            className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeletePolicy(policy.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       )}
                     </div>
-                    {isCustomPolicy(policy.id) && (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => handleEdit(policy)}
-                          className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeletePolicy(policy.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                    <p className="text-sm text-slate-400">{policy.description}</p>
+                    {policy.check?.pattern && (
+                      <p className="text-xs text-slate-500 font-mono mt-2 truncate">
+                        Pattern: {policy.check.pattern}
+                      </p>
+                    )}
+                    {policy.fix_suggestion && (
+                      <p className="text-xs text-cyan-400 mt-2">
+                        💡 {policy.fix_suggestion}
+                      </p>
                     )}
                   </div>
-                  <p className="text-sm text-slate-400">{policy.description}</p>
-                  {policy.check?.pattern && (
-                    <p className="text-xs text-slate-500 font-mono mt-2 truncate">
-                      Pattern: {policy.check.pattern}
-                    </p>
-                  )}
-                  {policy.fix_suggestion && (
-                    <p className="text-xs text-cyan-400 mt-2">
-                      💡 {policy.fix_suggestion}
-                    </p>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* Groups Tab Content */}
+      {activeTab === 'groups' && (
+        <div className="space-y-4">
+          {policyGroups.length === 0 ? (
+            <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+              <FileCheck className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-white mb-2">No Policy Groups</h3>
+              <p className="text-slate-400 mb-6">Create groups to organize and enable/disable sets of policies together.</p>
+              <button
+                onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                Create First Group
+              </button>
+            </div>
+          ) : (
+            policyGroups.map(group => (
+              <div 
+                key={group.id} 
+                className={`glass rounded-2xl p-6 border transition-all ${
+                  group.enabled 
+                    ? 'border-emerald-500/30 bg-emerald-500/5' 
+                    : 'border-white/5 opacity-60'
+                }`}
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => handleToggleGroup(group.id)}
+                      className={`w-12 h-7 rounded-full transition-all relative ${
+                        group.enabled ? 'bg-emerald-500' : 'bg-slate-700'
+                      }`}
+                    >
+                      <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${
+                        group.enabled ? 'left-6' : 'left-1'
+                      }`} />
+                    </button>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white">{group.name}</h3>
+                      <p className="text-sm text-slate-400">{group.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-3 py-1 text-sm rounded-lg ${
+                      group.enabled 
+                        ? 'bg-emerald-500/20 text-emerald-400' 
+                        : 'bg-slate-700 text-slate-400'
+                    }`}>
+                      {group.policies.length} policies
+                    </span>
+                    <button
+                      onClick={() => handleEditGroup(group)}
+                      className="p-2 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteGroup(group.id)}
+                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Policy list */}
+                <div className="flex flex-wrap gap-2">
+                  {group.policies.slice(0, 10).map(policyId => (
+                    <span 
+                      key={policyId} 
+                      className="px-2 py-1 bg-slate-800/50 text-slate-300 text-xs font-mono rounded-lg"
+                    >
+                      {policyId}
+                    </span>
+                  ))}
+                  {group.policies.length > 10 && (
+                    <span className="px-2 py-1 bg-slate-800/50 text-slate-500 text-xs rounded-lg">
+                      +{group.policies.length - 10} more
+                    </span>
                   )}
                 </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

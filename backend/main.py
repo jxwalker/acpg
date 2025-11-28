@@ -112,8 +112,9 @@ except ImportError as e:
 
 # Include Policy CRUD routes
 try:
-    from app.api.policy_routes import router as policy_router
+    from app.api.policy_routes import router as policy_router, groups_router as policy_groups_router
     app.include_router(policy_router, prefix=settings.API_V1_STR)
+    app.include_router(policy_groups_router, prefix=settings.API_V1_STR)
     print("✅ Policy management enabled")
 except ImportError as e:
     print(f"⚠️  Policy routes not available: {e}")
