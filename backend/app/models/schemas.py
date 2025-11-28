@@ -1,0 +1,154 @@
+"""Data models for ACPG system."""
+from typing import List, Optional, Dict, Any, Literal
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+
+class PolicyCheck(BaseModel):
+    """Definition of how to check a policy rule."""
+    type: Literal["regex", "ast", "manual"]
+    pattern: Optional[str] = None
+    function: Optional[str] = None
+    target: Optional[str] = None
+    message: Optional[str] = None
+    languages: List[str] = Field(default_factory=list)
+
+
+class PolicyRule(BaseModel):
+    """A compliance policy rule."""
+    id: str
+    description: str
+    type: Literal["strict", "defeasible"]
+    severity: Literal["low", "medium", "high", "critical"]
+    check: PolicyCheck
+    fix_suggestion: Optional[str] = None
+
+
+class PolicySet(BaseModel):
+    """Collection of policy rules."""
+    policies: List[PolicyRule]
+
+
+class Violation(BaseModel):
+    """A policy violation found in code."""
+    rule_id: str
+    description: str
+    line: Optional[int] = None
+    evidence: Optional[str] = None
+    detector: str
+    severity: str
+
+
+class AnalysisResult(BaseModel):
+    """Result of static/dynamic analysis."""
+    artifact_id: str
+    violations: List[Violation]
+
+
+class GeneratorRequest(BaseModel):
+    """Request to generate code."""
+    spec: str
+    policies: Optional[List[str]] = None  # Policy IDs to consider
+    language: str = "python"
+
+
+class GeneratorResponse(BaseModel):
+    """Response from code generator."""
+    code: str
+    analysis: Optional[List[str]] = None  # Self-assessment
+
+
+class FixRequest(BaseModel):
+    """Request to fix code violations."""
+    code: str
+    violations: List[Violation]
+    language: str = "python"
+
+
+class Argument(BaseModel):
+    """An argument in the argumentation framework."""
+    id: str
+    rule_id: str
+    type: Literal["compliance", "violation", "exception"]
+    evidence: Optional[str] = None
+    details: Optional[str] = None
+
+
+class Attack(BaseModel):
+    """Attack relationship between arguments."""
+    attacker: str
+    target: str
+
+
+class ArgumentationGraph(BaseModel):
+    """Graph of arguments and attacks."""
+    arguments: List[Argument]
+    attacks: List[Attack]
+
+
+class AdjudicationResult(BaseModel):
+    """Result of adjudication."""
+    compliant: bool
+    unsatisfied_rules: List[str]
+    satisfied_rules: List[str]
+    reasoning: List[Dict[str, Any]]
+
+
+class ArtifactMetadata(BaseModel):
+    """Metadata about a code artifact."""
+    name: Optional[str] = None
+    hash: str
+    language: str
+    generator: str = "unknown"
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PolicyOutcome(BaseModel):
+    """Outcome for a single policy rule."""
+    id: str
+    description: str
+    result: Literal["satisfied", "violated", "waived"]
+
+
+class Evidence(BaseModel):
+    """Evidence supporting a compliance decision."""
+    rule_id: str
+    type: str
+    tool: Optional[str] = None
+    test: Optional[str] = None
+    output: str
+
+
+class ProofBundle(BaseModel):
+    """Complete proof-carrying artifact."""
+    artifact: ArtifactMetadata
+    policies: List[PolicyOutcome]
+    evidence: List[Evidence]
+    argumentation: Optional[Dict[str, Any]] = None
+    decision: Literal["Compliant", "Non-compliant"]
+    signed: Dict[str, str]  # signature, signer, algorithm
+
+
+class ComplianceRequest(BaseModel):
+    """Request to check compliance."""
+    code: str
+    language: str = "python"
+    policies: Optional[List[str]] = None
+
+
+class EnforceRequest(BaseModel):
+    """Request to enforce compliance (check + auto-fix)."""
+    code: str
+    language: str = "python"
+    max_iterations: int = 3
+    policies: Optional[List[str]] = None
+
+
+class EnforceResponse(BaseModel):
+    """Response from enforcement."""
+    original_code: str
+    final_code: str
+    iterations: int
+    compliant: bool
+    violations_fixed: List[str]
+    proof_bundle: Optional[ProofBundle] = None

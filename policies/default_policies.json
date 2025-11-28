@@ -1,0 +1,101 @@
+{
+  "policies": [
+    {
+      "id": "SEC-001",
+      "description": "No hardcoded credentials (passwords, API keys) in code",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "(?i)(password\\s*=\\s*['\"]|api[_-]?key\\s*=\\s*['\"]|secret\\s*=\\s*['\"])",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Use environment variables or secure vault for credentials"
+    },
+    {
+      "id": "SEC-002",
+      "description": "Do not log or print sensitive information (like passwords)",
+      "type": "strict",
+      "severity": "medium",
+      "check": {
+        "type": "ast",
+        "function": "find_print_of_variable",
+        "target": "password|secret|key",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Remove sensitive data from logging statements"
+    },
+    {
+      "id": "INPUT-001",
+      "description": "All user inputs must be validated or sanitized",
+      "type": "defeasible",
+      "severity": "high",
+      "check": {
+        "type": "manual",
+        "message": "Check if user input is used in dangerous context without validation",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Add input validation using type checks, regex, or sanitization functions"
+    },
+    {
+      "id": "SEC-003",
+      "description": "Dangerous functions (eval, exec) are disallowed",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "\\beval\\(|\\bexec\\(",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Replace eval/exec with safer alternatives like ast.literal_eval or JSON.parse"
+    },
+    {
+      "id": "SEC-004",
+      "description": "Use secure communication (HTTPS instead of HTTP)",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "http://(?!localhost|127\\.0\\.0\\.1)",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Replace HTTP URLs with HTTPS"
+    },
+    {
+      "id": "ERR-001",
+      "description": "Exceptions should be caught and handled; do not expose stack traces",
+      "type": "strict",
+      "severity": "medium",
+      "check": {
+        "type": "manual",
+        "message": "Check for proper exception handling without exposing internals",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Add try/except blocks and return user-friendly error messages"
+    },
+    {
+      "id": "SQL-001",
+      "description": "Use parameterized queries instead of string concatenation for SQL",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "(SELECT|INSERT|UPDATE|DELETE).*\\+.*|f['\"].*SELECT",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Use parameterized queries with prepared statements"
+    },
+    {
+      "id": "CRYPTO-001",
+      "description": "Do not use weak cryptographic algorithms (MD5, SHA1)",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "hashlib\\.(md5|sha1)\\(",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Use SHA-256 or stronger hashing algorithms"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+"""Configuration management for ACPG."""
+import os
+from pathlib import Path
+from typing import Optional
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Application settings."""
+    
+    # API Configuration
+    API_V1_STR: str = "/api/v1"
+    PROJECT_NAME: str = "ACPG - Agentic Compliance and Policy Governor"
+    
+    # OpenAI Configuration
+    OPENAI_API_KEY: str
+    OPENAI_MODEL: str = "gpt-4"
+    OPENAI_TEMPERATURE: float = 0.3
+    OPENAI_MAX_TOKENS: int = 2000
+    
+    # Policy Configuration
+    POLICIES_DIR: Path = Path(__file__).parent.parent.parent.parent / "policies"
+    DEFAULT_POLICIES_FILE: str = "default_policies.json"
+    
+    # Compliance Configuration
+    MAX_FIX_ITERATIONS: int = 3
+    ENABLE_DYNAMIC_TESTING: bool = False  # Hypothesis testing (optional)
+    
+    # Crypto Configuration
+    SIGNATURE_ALGORITHM: str = "ECDSA-SHA256"
+    SIGNER_NAME: str = "ACPG-Adjudicator"
+    
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+
+
+# Global settings instance
+settings = Settings()
