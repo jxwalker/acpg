@@ -8,7 +8,7 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  ArrowLeftRight, List
+  ArrowLeftRight, List, Plus, Edit2
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -1621,12 +1621,46 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
   );
 }
 
-// Policies View
+// Policies View with Editor
 function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'strict' | 'defeasible'>('all');
+  const [showEditor, setShowEditor] = useState(false);
+  const [editingPolicy, setEditingPolicy] = useState<PolicyRule | null>(null);
+  const [customPolicies, setCustomPolicies] = useState<PolicyRule[]>([]);
+  const [testCode, setTestCode] = useState('');
+  const [testResult, setTestResult] = useState<any>(null);
   
-  const filtered = policies.filter(p => {
+  // Form state for policy editor
+  const [formData, setFormData] = useState({
+    id: '',
+    description: '',
+    type: 'strict' as 'strict' | 'defeasible',
+    severity: 'medium' as 'low' | 'medium' | 'high' | 'critical',
+    checkType: 'regex' as 'regex' | 'ast' | 'manual',
+    pattern: '',
+    message: '',
+    languages: ['python'],
+    fix_suggestion: ''
+  });
+  
+  // Load custom policies
+  useEffect(() => {
+    fetch('http://localhost:8000/api/v1/policies/file/custom_policies.json')
+      .then(res => res.json())
+      .then(data => {
+        if (data.policies) {
+          setCustomPolicies(data.policies);
+        }
+      })
+      .catch(() => {});
+  }, []);
+  
+  const allPolicies = [...policies, ...customPolicies.filter(cp => 
+    !policies.some(p => p.id === cp.id)
+  )];
+  
+  const filtered = allPolicies.filter(p => {
     const matchesSearch = p.id.toLowerCase().includes(search.toLowerCase()) ||
                          p.description.toLowerCase().includes(search.toLowerCase());
     const matchesFilter = filter === 'all' || p.type === filter;
@@ -1640,6 +1674,134 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     return acc;
   }, {} as Record<string, PolicyRule[]>);
   
+  const resetForm = () => {
+    setFormData({
+      id: '',
+      description: '',
+      type: 'strict',
+      severity: 'medium',
+      checkType: 'regex',
+      pattern: '',
+      message: '',
+      languages: ['python'],
+      fix_suggestion: ''
+    });
+    setEditingPolicy(null);
+    setTestResult(null);
+    setTestCode('');
+  };
+  
+  const handleEdit = (policy: PolicyRule) => {
+    setFormData({
+      id: policy.id,
+      description: policy.description,
+      type: policy.type,
+      severity: policy.severity,
+      checkType: policy.check.type,
+      pattern: policy.check.pattern || '',
+      message: policy.check.message || '',
+      languages: policy.check.languages || ['python'],
+      fix_suggestion: policy.fix_suggestion || ''
+    });
+    setEditingPolicy(policy);
+    setShowEditor(true);
+  };
+  
+  const handleTestPolicy = async () => {
+    if (!testCode || !formData.pattern) return;
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/policies/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          policy: {
+            id: formData.id || 'TEST-001',
+            description: formData.description,
+            type: formData.type,
+            severity: formData.severity,
+            check: {
+              type: formData.checkType,
+              pattern: formData.pattern,
+              languages: formData.languages
+            },
+            fix_suggestion: formData.fix_suggestion
+          },
+          code: testCode,
+          language: 'python'
+        })
+      });
+      const result = await response.json();
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ error: 'Test failed' });
+    }
+  };
+  
+  const handleSavePolicy = async () => {
+    const policyData = {
+      id: formData.id,
+      description: formData.description,
+      type: formData.type,
+      severity: formData.severity,
+      check: {
+        type: formData.checkType,
+        pattern: formData.checkType === 'regex' ? formData.pattern : undefined,
+        message: formData.checkType === 'manual' ? formData.message : undefined,
+        languages: formData.languages
+      },
+      fix_suggestion: formData.fix_suggestion || undefined
+    };
+    
+    try {
+      const url = editingPolicy 
+        ? `http://localhost:8000/api/v1/policies/${editingPolicy.id}`
+        : 'http://localhost:8000/api/v1/policies/';
+      
+      const response = await fetch(url, {
+        method: editingPolicy ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(policyData)
+      });
+      
+      if (response.ok) {
+        // Reload custom policies
+        const customRes = await fetch('http://localhost:8000/api/v1/policies/file/custom_policies.json');
+        const customData = await customRes.json();
+        setCustomPolicies(customData.policies || []);
+        setShowEditor(false);
+        resetForm();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to save policy');
+      }
+    } catch (err) {
+      alert('Failed to save policy');
+    }
+  };
+  
+  const handleDeletePolicy = async (policyId: string) => {
+    if (!confirm(`Delete policy "${policyId}"?`)) return;
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/policies/${policyId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        setCustomPolicies(prev => prev.filter(p => p.id !== policyId));
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to delete policy');
+      }
+    } catch (err) {
+      alert('Failed to delete policy');
+    }
+  };
+  
+  const isCustomPolicy = (policyId: string) => 
+    customPolicies.some(p => p.id === policyId);
+  
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1651,9 +1813,18 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
             </div>
             <div>
               <h2 className="text-2xl font-display font-bold text-white">Policy Library</h2>
-              <p className="text-slate-400">{policies.length} security policies loaded</p>
+              <p className="text-slate-400">
+                {allPolicies.length} policies ({customPolicies.length} custom)
+              </p>
             </div>
           </div>
+          <button
+            onClick={() => { resetForm(); setShowEditor(true); }}
+            className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+          >
+            <Plus className="w-5 h-5" />
+            New Policy
+          </button>
         </div>
         
         {/* Search & Filter */}
@@ -1686,6 +1857,192 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
         </div>
       </div>
       
+      {/* Policy Editor Modal */}
+      {showEditor && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-white">
+                {editingPolicy ? `Edit Policy: ${editingPolicy.id}` : 'Create New Policy'}
+              </h3>
+              <button onClick={() => { setShowEditor(false); resetForm(); }} className="text-slate-400 hover:text-white">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* Basic Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Policy ID</label>
+                  <input
+                    type="text"
+                    value={formData.id}
+                    onChange={(e) => setFormData(prev => ({ ...prev, id: e.target.value.toUpperCase() }))}
+                    placeholder="e.g., CUSTOM-001"
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                    disabled={!!editingPolicy}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Description</label>
+                  <input
+                    type="text"
+                    value={formData.description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="What this policy checks for"
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                  />
+                </div>
+              </div>
+              
+              {/* Type & Severity */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Type</label>
+                  <select
+                    value={formData.type}
+                    onChange={(e) => setFormData(prev => ({ ...prev, type: e.target.value as any }))}
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white"
+                  >
+                    <option value="strict">Strict</option>
+                    <option value="defeasible">Defeasible</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Severity</label>
+                  <select
+                    value={formData.severity}
+                    onChange={(e) => setFormData(prev => ({ ...prev, severity: e.target.value as any }))}
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Check Type</label>
+                  <select
+                    value={formData.checkType}
+                    onChange={(e) => setFormData(prev => ({ ...prev, checkType: e.target.value as any }))}
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white"
+                  >
+                    <option value="regex">Regex Pattern</option>
+                    <option value="manual">Manual Review</option>
+                  </select>
+                </div>
+              </div>
+              
+              {/* Pattern */}
+              {formData.checkType === 'regex' && (
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Regex Pattern</label>
+                  <input
+                    type="text"
+                    value={formData.pattern}
+                    onChange={(e) => setFormData(prev => ({ ...prev, pattern: e.target.value }))}
+                    placeholder={'e.g., password\\s*=\\s*[\'"].*[\'"]'}
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white font-mono placeholder-slate-500"
+                  />
+                </div>
+              )}
+              
+              {formData.checkType === 'manual' && (
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Review Message</label>
+                  <input
+                    type="text"
+                    value={formData.message}
+                    onChange={(e) => setFormData(prev => ({ ...prev, message: e.target.value }))}
+                    placeholder="Instructions for manual review"
+                    className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                  />
+                </div>
+              )}
+              
+              {/* Fix Suggestion */}
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">Fix Suggestion</label>
+                <input
+                  type="text"
+                  value={formData.fix_suggestion}
+                  onChange={(e) => setFormData(prev => ({ ...prev, fix_suggestion: e.target.value }))}
+                  placeholder="How to fix violations of this policy"
+                  className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500"
+                />
+              </div>
+              
+              {/* Test Section */}
+              {formData.checkType === 'regex' && formData.pattern && (
+                <div className="border-t border-white/10 pt-6">
+                  <h4 className="text-lg font-semibold text-white mb-4">Test Policy</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-2">Test Code</label>
+                      <textarea
+                        value={testCode}
+                        onChange={(e) => setTestCode(e.target.value)}
+                        placeholder="Paste code to test against this policy..."
+                        className="w-full h-32 px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white font-mono text-sm placeholder-slate-500"
+                      />
+                      <button
+                        onClick={handleTestPolicy}
+                        className="mt-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-lg text-sm font-medium"
+                      >
+                        Run Test
+                      </button>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-2">Test Results</label>
+                      <div className="h-32 px-4 py-3 bg-slate-900/50 border border-white/10 rounded-xl overflow-auto">
+                        {testResult ? (
+                          testResult.error ? (
+                            <p className="text-red-400 text-sm">{testResult.error}</p>
+                          ) : (
+                            <div className="text-sm">
+                              <p className={testResult.violations_found > 0 ? 'text-amber-400' : 'text-emerald-400'}>
+                                {testResult.violations_found} violation(s) found
+                              </p>
+                              {testResult.violations?.map((v: any, i: number) => (
+                                <div key={i} className="mt-2 p-2 bg-slate-800/50 rounded text-xs">
+                                  <span className="text-slate-400">Line {v.line}:</span>{' '}
+                                  <span className="text-white font-mono">{v.evidence}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        ) : (
+                          <p className="text-slate-500 text-sm">Test results will appear here</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {/* Actions */}
+            <div className="p-6 border-t border-white/10 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowEditor(false); resetForm(); }}
+                className="px-6 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSavePolicy}
+                disabled={!formData.id || !formData.description}
+                className="px-6 py-2 bg-violet-500 hover:bg-violet-400 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-medium"
+              >
+                {editingPolicy ? 'Update Policy' : 'Create Policy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Policy Groups */}
       <div className="grid grid-cols-2 gap-6">
         {Object.entries(grouped).map(([category, catPolicies]) => (
@@ -1702,27 +2059,59 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
               {catPolicies.map(policy => (
                 <div
                   key={policy.id}
-                  className="p-4 bg-slate-800/50 rounded-xl border border-white/5 hover:border-violet-500/30 transition-all"
+                  className={`p-4 bg-slate-800/50 rounded-xl border transition-all ${
+                    isCustomPolicy(policy.id) 
+                      ? 'border-violet-500/30 hover:border-violet-500/50' 
+                      : 'border-white/5 hover:border-violet-500/30'
+                  }`}
                 >
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="font-mono text-sm font-semibold text-violet-400">{policy.id}</span>
-                    <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
-                      policy.type === 'strict'
-                        ? 'bg-red-500/10 text-red-400'
-                        : 'bg-amber-500/10 text-amber-400'
-                    }`}>
-                      {policy.type}
-                    </span>
-                    <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
-                      policy.severity === 'critical' ? 'bg-red-500/10 text-red-400' :
-                      policy.severity === 'high' ? 'bg-orange-500/10 text-orange-400' :
-                      policy.severity === 'medium' ? 'bg-amber-500/10 text-amber-400' :
-                      'bg-slate-700 text-slate-400'
-                    }`}>
-                      {policy.severity}
-                    </span>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-semibold text-violet-400">{policy.id}</span>
+                      <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
+                        policy.type === 'strict'
+                          ? 'bg-red-500/10 text-red-400'
+                          : 'bg-amber-500/10 text-amber-400'
+                      }`}>
+                        {policy.type}
+                      </span>
+                      <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded ${
+                        policy.severity === 'critical' ? 'bg-red-500/10 text-red-400' :
+                        policy.severity === 'high' ? 'bg-orange-500/10 text-orange-400' :
+                        policy.severity === 'medium' ? 'bg-amber-500/10 text-amber-400' :
+                        'bg-slate-700 text-slate-400'
+                      }`}>
+                        {policy.severity}
+                      </span>
+                      {isCustomPolicy(policy.id) && (
+                        <span className="px-1.5 py-0.5 text-[10px] uppercase font-semibold tracking-wider rounded bg-violet-500/20 text-violet-400">
+                          Custom
+                        </span>
+                      )}
+                    </div>
+                    {isCustomPolicy(policy.id) && (
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => handleEdit(policy)}
+                          className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeletePolicy(policy.id)}
+                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <p className="text-sm text-slate-400">{policy.description}</p>
+                  {policy.check?.pattern && (
+                    <p className="text-xs text-slate-500 font-mono mt-2 truncate">
+                      Pattern: {policy.check.pattern}
+                    </p>
+                  )}
                   {policy.fix_suggestion && (
                     <p className="text-xs text-cyan-400 mt-2">
                       💡 {policy.fix_suggestion}

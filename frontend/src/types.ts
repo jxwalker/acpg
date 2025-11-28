@@ -136,3 +136,27 @@ export interface ViolationSummary {
   by_detector: Record<string, number>;
   violations: Violation[];
 }
+
+export interface PolicyInput {
+  id: string;
+  description: string;
+  type: 'strict' | 'defeasible';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  check: {
+    type: 'regex' | 'ast' | 'manual';
+    pattern?: string;
+    function?: string;
+    target?: string;
+    message?: string;
+    languages: string[];
+  };
+  fix_suggestion?: string;
+  category?: string;
+}
+
+export interface SampleFile {
+  name: string;
+  path: string;
+  description: string;
+  violations: string[];
+}
