@@ -7,40 +7,48 @@ export default {
   theme: {
     extend: {
       colors: {
-        'acpg': {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          200: '#bbf7d0',
-          300: '#86efac',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-          800: '#166534',
-          900: '#14532d',
-          950: '#052e16',
+        'emerald': {
+          50: '#ecfdf5',
+          100: '#d1fae5',
+          200: '#a7f3d0',
+          300: '#6ee7b7',
+          400: '#34d399',
+          500: '#10b981',
+          600: '#059669',
+          700: '#047857',
+          800: '#065f46',
+          900: '#064e3b',
+          950: '#022c22',
         },
         'slate': {
-          850: '#1a2332',
-          950: '#0c1222',
+          850: '#172033',
+          950: '#0a0f1a',
+        },
+        'gray': {
+          950: '#030712',
         }
       },
       fontFamily: {
-        'mono': ['JetBrains Mono', 'Fira Code', 'Monaco', 'Consolas', 'monospace'],
-        'sans': ['Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
+        'display': ['Space Grotesk', 'sans-serif'],
+        'sans': ['Inter', 'system-ui', 'sans-serif'],
+        'mono': ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'glow': 'glow 2s ease-in-out infinite alternate',
+        'spin-slow': 'spin 3s linear infinite',
+        'bounce-slow': 'bounce 2s infinite',
       },
-      keyframes: {
-        glow: {
-          '0%': { boxShadow: '0 0 5px rgba(34, 197, 94, 0.5)' },
-          '100%': { boxShadow: '0 0 20px rgba(34, 197, 94, 0.8)' },
-        }
-      }
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+        'gradient-conic': 'conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))',
+      },
+      boxShadow: {
+        'glow-emerald': '0 0 20px rgba(16, 185, 129, 0.4), 0 0 60px rgba(16, 185, 129, 0.2)',
+        'glow-red': '0 0 20px rgba(239, 68, 68, 0.4), 0 0 60px rgba(239, 68, 68, 0.2)',
+        'glow-cyan': '0 0 20px rgba(6, 182, 212, 0.4), 0 0 60px rgba(6, 182, 212, 0.2)',
+        'inner-glow': 'inset 0 0 20px rgba(255, 255, 255, 0.05)',
+      },
     },
   },
   plugins: [],
 }
-
