@@ -52,6 +52,73 @@ async def get_info():
 
 
 # ============================================================================
+# Sample Files Endpoints
+# ============================================================================
+
+@router.get("/samples")
+async def list_sample_files():
+    """List available sample code files for testing."""
+    import os
+    from pathlib import Path
+    
+    # Navigate from backend/app/api/routes.py to acpg/samples
+    samples_dir = Path(__file__).parent.parent.parent.parent / "samples"
+    
+    if not samples_dir.exists():
+        return {"samples": []}
+    
+    samples = []
+    for file in sorted(samples_dir.glob("*.py")):
+        # Read first few lines for description
+        with open(file, 'r') as f:
+            content = f.read()
+            lines = content.split('\n')
+            
+            # Extract description from docstring
+            description = ""
+            violations = []
+            for line in lines[:20]:
+                if line.strip().startswith('"""') or line.strip().startswith("'''"):
+                    continue
+                if "Sample" in line and ":" in line:
+                    description = line.split(":", 1)[1].strip()
+                if "Violations:" in line:
+                    violations = [v.strip() for v in line.split(":", 1)[1].strip().split(",")]
+        
+        samples.append({
+            "name": file.name,
+            "path": str(file),
+            "description": description or file.stem.replace("_", " ").title(),
+            "violations": violations,
+            "size": len(content),
+            "lines": len(lines)
+        })
+    
+    return {"samples": samples}
+
+
+@router.get("/samples/{filename}")
+async def get_sample_file(filename: str):
+    """Get contents of a sample file."""
+    from pathlib import Path
+    
+    samples_dir = Path(__file__).parent.parent.parent.parent / "samples"
+    file_path = samples_dir / filename
+    
+    if not file_path.exists() or not file_path.suffix == '.py':
+        raise HTTPException(status_code=404, detail=f"Sample file not found: {filename}")
+    
+    with open(file_path, 'r') as f:
+        content = f.read()
+    
+    return {
+        "name": filename,
+        "content": content,
+        "lines": len(content.split('\n'))
+    }
+
+
+# ============================================================================
 # Policy Endpoints
 # ============================================================================
 
@@ -97,14 +164,23 @@ async def analyze_code(
     
     Runs static analysis (Bandit) and policy checks (regex, AST).
     Returns all violations found without attempting fixes.
+    
+    If no policies specified, uses policies from enabled policy groups.
     """
+    from .policy_routes import get_enabled_policy_ids
+    
     prosecutor = get_prosecutor()
     adjudicator = get_adjudicator()
+    
+    # Use enabled policy groups if no specific policies requested
+    policy_ids = request.policies
+    if not policy_ids:
+        policy_ids = get_enabled_policy_ids()
     
     result = prosecutor.analyze(
         code=request.code,
         language=request.language,
-        policy_ids=request.policies
+        policy_ids=policy_ids if policy_ids else None
     )
     
     # Adjudicate to determine compliance
@@ -178,15 +254,23 @@ async def generate_report(request: ReportRequest):
     - json: Structured JSON report
     - markdown: Human-readable Markdown
     - html: Styled HTML report
+    
+    If no policies specified, uses policies from enabled policy groups.
     """
     from ..services.report_generator import generate_compliance_report
+    from .policy_routes import get_enabled_policy_ids
+    
+    # Use enabled policy groups if no specific policies requested
+    policy_ids = request.policies
+    if not policy_ids:
+        policy_ids = get_enabled_policy_ids()
     
     # Run analysis
     prosecutor = get_prosecutor()
     analysis = prosecutor.analyze(
         code=request.code,
         language=request.language,
-        policy_ids=request.policies
+        policy_ids=policy_ids if policy_ids else None
     )
     
     # Run adjudication
@@ -400,12 +484,20 @@ async def enforce_compliance(
     5. Generate signed proof bundle
     
     This is the main endpoint for automated compliance.
+    If no policies specified, uses policies from enabled policy groups.
     """
+    from .policy_routes import get_enabled_policy_ids
+    
     prosecutor = get_prosecutor()
     adjudicator = get_adjudicator()
     generator = get_generator()
     proof_assembler = get_proof_assembler()
     request_id = str(uuid.uuid4())
+    
+    # Use enabled policy groups if no specific policies requested
+    policy_ids = request.policies
+    if not policy_ids:
+        policy_ids = get_enabled_policy_ids()
     
     code = request.code
     original_code = request.code
@@ -416,11 +508,11 @@ async def enforce_compliance(
         analysis = prosecutor.analyze(
             code=code,
             language=request.language,
-            policy_ids=request.policies
+            policy_ids=policy_ids if policy_ids else None
         )
         
         # Adjudicate
-        adjudication = adjudicator.adjudicate(analysis, request.policies)
+        adjudication = adjudicator.adjudicate(analysis, policy_ids)
         
         if adjudication.compliant:
             # Success! Generate proof bundle

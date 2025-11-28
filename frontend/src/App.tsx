@@ -104,6 +104,8 @@ export default function App() {
   const [complianceReport, setComplianceReport] = useState<any>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
+  const [sampleFiles, setSampleFiles] = useState<Array<{name: string; description: string; violations: string[]}>>([]);
+  const [showSampleMenu, setShowSampleMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load saved codes from localStorage
@@ -114,7 +116,7 @@ export default function App() {
     }
   }, []);
 
-  // Load policies and LLM info on mount
+  // Load policies, LLM info, and sample files on mount
   useEffect(() => {
     api.listPolicies()
       .then(data => setPolicies(data.policies))
@@ -124,6 +126,12 @@ export default function App() {
       .then(res => res.json())
       .then(data => setLlmProvider(data.name || 'Unknown'))
       .catch(() => setLlmProvider('GPT-4'));
+    
+    // Load sample files
+    fetch('/api/v1/samples')
+      .then(res => res.json())
+      .then(data => setSampleFiles(data.samples || []))
+      .catch(() => {});
   }, []);
 
   const handleAnalyze = useCallback(async () => {
@@ -244,6 +252,25 @@ export default function App() {
     setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     setViewMode('editor');
     setCodeViewMode('current');
+  };
+
+  const handleLoadSampleFile = async (filename: string) => {
+    try {
+      const response = await fetch(`/api/v1/samples/${filename}`);
+      if (!response.ok) throw new Error('Failed to load sample');
+      const data = await response.json();
+      setCode(data.content);
+      setOriginalCode(data.content);
+      setAnalysis(null);
+      setAdjudication(null);
+      setEnforceResult(null);
+      setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
+      setViewMode('editor');
+      setCodeViewMode('current');
+      setShowSampleMenu(false);
+    } catch (err) {
+      setError('Failed to load sample file');
+    }
   };
 
   const handleSaveCode = () => {
@@ -415,25 +442,81 @@ export default function App() {
               
               <div className="h-6 w-px bg-slate-700" />
               
-              {/* Sample buttons */}
-              <button
-                onClick={() => handleLoadSample('dirty')}
-                className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
-              >
-                <span className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-400" />
-                  Vulnerable
-                </span>
-              </button>
-              <button
-                onClick={() => handleLoadSample('clean')}
-                className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
-              >
-                <span className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Clean
-                </span>
-              </button>
+              {/* Sample Files Dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowSampleMenu(!showSampleMenu)}
+                  className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all flex items-center gap-2"
+                >
+                  <FolderOpen className="w-4 h-4 text-amber-400" />
+                  Samples
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showSampleMenu ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {showSampleMenu && (
+                  <div className="absolute top-full right-0 mt-2 w-80 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-white/10">
+                      <span className="text-xs text-slate-500 uppercase tracking-wider px-2">Quick Samples</span>
+                    </div>
+                    <div className="p-1">
+                      <button
+                        onClick={() => { handleLoadSample('dirty'); setShowSampleMenu(false); }}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
+                      >
+                        <AlertTriangle className="w-4 h-4 text-red-400" />
+                        <div>
+                          <div className="font-medium">Vulnerable Example</div>
+                          <div className="text-xs text-slate-500">Built-in hardcoded secrets</div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => { handleLoadSample('clean'); setShowSampleMenu(false); }}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <div>
+                          <div className="font-medium">Clean Example</div>
+                          <div className="text-xs text-slate-500">Compliant code sample</div>
+                        </div>
+                      </button>
+                    </div>
+                    
+                    {sampleFiles.length > 0 && (
+                      <>
+                        <div className="p-2 border-t border-white/10">
+                          <span className="text-xs text-slate-500 uppercase tracking-wider px-2">Sample Files</span>
+                        </div>
+                        <div className="p-1 max-h-64 overflow-y-auto">
+                          {sampleFiles.map(sample => (
+                            <button
+                              key={sample.name}
+                              onClick={() => handleLoadSampleFile(sample.name)}
+                              className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg"
+                            >
+                              <div className="flex items-center gap-3">
+                                <FileCode className="w-4 h-4 text-violet-400 flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium font-mono text-xs truncate">{sample.name}</div>
+                                  <div className="text-xs text-slate-500 truncate">{sample.description}</div>
+                                  {sample.violations?.length > 0 && (
+                                    <div className="flex gap-1 mt-1 flex-wrap">
+                                      {sample.violations.slice(0, 3).map(v => (
+                                        <span key={v} className="px-1.5 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded">
+                                          {v}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
