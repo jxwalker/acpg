@@ -8,7 +8,7 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  ArrowLeftRight, List, Plus, Edit2
+  List, Plus, Edit2
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -62,6 +62,7 @@ def login(username: str, password_input: str) -> Optional[dict]:
 
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
 type ViewMode = 'editor' | 'diff' | 'proof' | 'policies';
+type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
 
 interface WorkflowState {
   step: WorkflowStep;
@@ -96,6 +97,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [llmProvider, setLlmProvider] = useState<string>('Loading...');
   const [viewMode, setViewMode] = useState<ViewMode>('editor');
+  const [codeViewMode, setCodeViewMode] = useState<CodeViewMode>('current');
   const [savedCodes, setSavedCodes] = useState<SavedCode[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
@@ -170,7 +172,7 @@ export default function App() {
       if (result.final_code !== code) {
         setCode(result.final_code);
         // Auto-switch to diff view
-        setViewMode('diff');
+        setCodeViewMode('diff');
       }
       
       setWorkflow(w => ({ ...w, step: 'proof', iteration: result.iterations }));
@@ -241,6 +243,7 @@ export default function App() {
     setEnforceResult(null);
     setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     setViewMode('editor');
+    setCodeViewMode('current');
   };
 
   const handleSaveCode = () => {
@@ -269,6 +272,7 @@ export default function App() {
     setEnforceResult(null);
     setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     setViewMode('editor');
+    setCodeViewMode('current');
   };
 
   const handleDeleteSaved = (id: string) => {
@@ -290,6 +294,7 @@ export default function App() {
       setAdjudication(null);
       setEnforceResult(null);
       setViewMode('editor');
+      setCodeViewMode('current');
     };
     reader.readAsText(file);
   };
@@ -359,7 +364,7 @@ export default function App() {
               {/* View Mode Tabs */}
               <div className="flex items-center bg-slate-800/50 rounded-xl p-1">
                 <button
-                  onClick={() => setViewMode('editor')}
+                  onClick={() => { setViewMode('editor'); setCodeViewMode('current'); }}
                   className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                     viewMode === 'editor' 
                       ? 'bg-slate-700 text-white' 
@@ -369,20 +374,6 @@ export default function App() {
                   <span className="flex items-center gap-2">
                     <FileCode className="w-4 h-4" />
                     Editor
-                  </span>
-                </button>
-                <button
-                  onClick={() => setViewMode('diff')}
-                  disabled={!enforceResult}
-                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                    viewMode === 'diff' 
-                      ? 'bg-slate-700 text-white' 
-                      : 'text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <ArrowLeftRight className="w-4 h-4" />
-                    Diff
                   </span>
                 </button>
                 <button
@@ -479,12 +470,28 @@ export default function App() {
                       <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
                     </div>
                     <div className="h-4 w-px bg-slate-700" />
-                    {viewMode === 'diff' ? (
+                    {codeViewMode === 'diff' ? (
                       <>
                         <GitBranch className="w-5 h-5 text-violet-400" />
                         <span className="font-medium text-slate-200">Code Diff</span>
                         <span className="px-2 py-0.5 text-xs font-mono font-medium bg-violet-500/20 text-violet-400 rounded-md">
                           original → fixed
+                        </span>
+                      </>
+                    ) : codeViewMode === 'original' ? (
+                      <>
+                        <FileCode className="w-5 h-5 text-amber-400" />
+                        <span className="font-medium text-slate-200">Original Code</span>
+                        <span className="px-2 py-0.5 text-xs font-mono font-medium bg-amber-500/20 text-amber-400 rounded-md">
+                          before fix
+                        </span>
+                      </>
+                    ) : codeViewMode === 'fixed' ? (
+                      <>
+                        <FileCode className="w-5 h-5 text-emerald-400" />
+                        <span className="font-medium text-slate-200">Fixed Code</span>
+                        <span className="px-2 py-0.5 text-xs font-mono font-medium bg-emerald-500/20 text-emerald-400 rounded-md">
+                          after fix
                         </span>
                       </>
                     ) : (
@@ -497,6 +504,42 @@ export default function App() {
                       </>
                     )}
                   </div>
+                  
+                  {/* Code View Mode Toggle - only show when there's a fix */}
+                  {enforceResult && originalCode !== code && (
+                    <div className="flex items-center bg-slate-800/80 rounded-lg p-1">
+                      <button
+                        onClick={() => setCodeViewMode('original')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                          codeViewMode === 'original'
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Original
+                      </button>
+                      <button
+                        onClick={() => setCodeViewMode('fixed')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                          codeViewMode === 'fixed'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Fixed
+                      </button>
+                      <button
+                        onClick={() => setCodeViewMode('diff')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                          codeViewMode === 'diff'
+                            ? 'bg-violet-500/20 text-violet-400'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Diff
+                      </button>
+                    </div>
+                  )}
                   
                   {/* File Actions */}
                   <div className="flex items-center gap-2">
@@ -524,14 +567,14 @@ export default function App() {
                     <div className="h-4 w-px bg-slate-700" />
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <Terminal className="w-4 h-4" />
-                      <span>{code.split('\n').length} lines</span>
+                      <span>{(codeViewMode === 'original' ? originalCode : code).split('\n').length} lines</span>
                     </div>
                   </div>
                 </div>
                 
                 {/* Editor Content */}
                 <div className="h-[520px] bg-gray-950/50">
-                  {viewMode === 'diff' ? (
+                  {codeViewMode === 'diff' ? (
                     <DiffEditor
                       height="100%"
                       language={language}
@@ -545,6 +588,42 @@ export default function App() {
                         fontSize: 14,
                         fontFamily: "'JetBrains Mono', monospace",
                         padding: { top: 20, bottom: 20 },
+                      }}
+                    />
+                  ) : codeViewMode === 'original' ? (
+                    <Editor
+                      height="100%"
+                      language={language}
+                      value={originalCode}
+                      theme="vs-dark"
+                      options={{
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontLigatures: true,
+                        padding: { top: 20, bottom: 20 },
+                        lineNumbers: 'on',
+                        scrollBeyondLastLine: false,
+                        renderLineHighlight: 'line',
+                      }}
+                    />
+                  ) : codeViewMode === 'fixed' ? (
+                    <Editor
+                      height="100%"
+                      language={language}
+                      value={code}
+                      theme="vs-dark"
+                      options={{
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontLigatures: true,
+                        padding: { top: 20, bottom: 20 },
+                        lineNumbers: 'on',
+                        scrollBeyondLastLine: false,
+                        renderLineHighlight: 'line',
                       }}
                     />
                   ) : (
