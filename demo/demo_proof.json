@@ -1,0 +1,184 @@
+{
+  "artifact": {
+    "name": "compliant_code.py",
+    "hash": "44504e6c1b1d3411e9028ffa3a9db6cd914ba638de0607895057d2cff1375aef",
+    "language": "python",
+    "generator": "ACPG-gpt-4",
+    "timestamp": "2025-11-28 12:16:13.470325"
+  },
+  "policies": [
+    {
+      "id": "SEC-001",
+      "description": "No hardcoded credentials (passwords, API keys) in code",
+      "result": "satisfied"
+    },
+    {
+      "id": "SEC-002",
+      "description": "Do not log or print sensitive information (like passwords)",
+      "result": "satisfied"
+    },
+    {
+      "id": "INPUT-001",
+      "description": "All user inputs must be validated or sanitized",
+      "result": "satisfied"
+    },
+    {
+      "id": "SEC-003",
+      "description": "Dangerous functions (eval, exec) are disallowed",
+      "result": "satisfied"
+    },
+    {
+      "id": "SEC-004",
+      "description": "Use secure communication (HTTPS instead of HTTP)",
+      "result": "satisfied"
+    },
+    {
+      "id": "ERR-001",
+      "description": "Exceptions should be caught and handled; do not expose stack traces",
+      "result": "satisfied"
+    },
+    {
+      "id": "SQL-001",
+      "description": "Use parameterized queries instead of string concatenation for SQL",
+      "result": "satisfied"
+    },
+    {
+      "id": "CRYPTO-001",
+      "description": "Do not use weak cryptographic algorithms (MD5, SHA1)",
+      "result": "satisfied"
+    }
+  ],
+  "evidence": [
+    {
+      "rule_id": "SEC-001",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for SEC-001"
+    },
+    {
+      "rule_id": "SEC-002",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for SEC-002"
+    },
+    {
+      "rule_id": "INPUT-001",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for INPUT-001"
+    },
+    {
+      "rule_id": "SEC-003",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for SEC-003"
+    },
+    {
+      "rule_id": "SEC-004",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for SEC-004"
+    },
+    {
+      "rule_id": "ERR-001",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for ERR-001"
+    },
+    {
+      "rule_id": "SQL-001",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for SQL-001"
+    },
+    {
+      "rule_id": "CRYPTO-001",
+      "type": "compliance",
+      "tool": "analysis",
+      "test": null,
+      "output": "No violations detected for CRYPTO-001"
+    }
+  ],
+  "argumentation": {
+    "reasoning": [
+      {
+        "argument": "C_SEC-001",
+        "type": "compliance",
+        "rule": "SEC-001",
+        "status": "accepted",
+        "details": "Artifact complies with SEC-001: No hardcoded credentials (passwords, API keys) in code"
+      },
+      {
+        "argument": "C_SEC-002",
+        "type": "compliance",
+        "rule": "SEC-002",
+        "status": "accepted",
+        "details": "Artifact complies with SEC-002: Do not log or print sensitive information (like passwords)"
+      },
+      {
+        "argument": "C_INPUT-001",
+        "type": "compliance",
+        "rule": "INPUT-001",
+        "status": "accepted",
+        "details": "Artifact complies with INPUT-001: All user inputs must be validated or sanitized"
+      },
+      {
+        "argument": "C_SEC-003",
+        "type": "compliance",
+        "rule": "SEC-003",
+        "status": "accepted",
+        "details": "Artifact complies with SEC-003: Dangerous functions (eval, exec) are disallowed"
+      },
+      {
+        "argument": "C_SEC-004",
+        "type": "compliance",
+        "rule": "SEC-004",
+        "status": "accepted",
+        "details": "Artifact complies with SEC-004: Use secure communication (HTTPS instead of HTTP)"
+      },
+      {
+        "argument": "C_ERR-001",
+        "type": "compliance",
+        "rule": "ERR-001",
+        "status": "accepted",
+        "details": "Artifact complies with ERR-001: Exceptions should be caught and handled; do not expose stack traces"
+      },
+      {
+        "argument": "C_SQL-001",
+        "type": "compliance",
+        "rule": "SQL-001",
+        "status": "accepted",
+        "details": "Artifact complies with SQL-001: Use parameterized queries instead of string concatenation for SQL"
+      },
+      {
+        "argument": "C_CRYPTO-001",
+        "type": "compliance",
+        "rule": "CRYPTO-001",
+        "status": "accepted",
+        "details": "Artifact complies with CRYPTO-001: Do not use weak cryptographic algorithms (MD5, SHA1)"
+      },
+      {
+        "conclusion": "Compliant",
+        "reason": "No violation arguments accepted",
+        "violations": []
+      }
+    ],
+    "compliant": true,
+    "satisfied_count": 8,
+    "unsatisfied_count": 0
+  },
+  "decision": "Compliant",
+  "signed": {
+    "signature": "MEYCIQCLmfq6cnzaflJ441HvKQx1jAL6FQ0gNZQ1FXTKGkldugIhAOeYPwP5/frmu+QKf0xb8rRsNGun/Ze6/inD/uDncQcZ",
+    "signer": "ACPG-Adjudicator",
+    "algorithm": "ECDSA-SHA256",
+    "public_key_fingerprint": "640f855ef0a17b0c"
+  }
+}

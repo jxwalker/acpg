@@ -61,9 +61,13 @@ class ProofAssembler:
         # Determine decision
         decision = "Compliant" if adjudication.compliant else "Non-compliant"
         
-        # Create unsigned bundle data
+        # Create unsigned bundle data (serialize datetime to ISO format)
+        artifact_dict = artifact.model_dump()
+        if 'timestamp' in artifact_dict and hasattr(artifact_dict['timestamp'], 'isoformat'):
+            artifact_dict['timestamp'] = artifact_dict['timestamp'].isoformat()
+        
         bundle_data = {
-            "artifact": artifact.model_dump(),
+            "artifact": artifact_dict,
             "policies": [p.model_dump() for p in policies],
             "evidence": [e.model_dump() for e in evidence],
             "argumentation": argumentation,
