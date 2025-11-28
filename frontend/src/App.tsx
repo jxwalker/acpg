@@ -1207,148 +1207,7 @@ function ProofBundleView({
       )}
       
       {activeTab === 'formal' && (
-        <div className="glass rounded-2xl p-6 border border-white/5">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <Scale className="w-5 h-5 text-violet-400" />
-            Formal Argumentation Proof
-          </h3>
-          
-          {proof.argumentation && (
-            <div className="space-y-6">
-              {/* Framework Info */}
-              <div className="p-4 bg-violet-500/10 rounded-xl border border-violet-500/30">
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Framework</div>
-                    <div className="text-white font-medium">{proof.argumentation.framework || "Dung's AAF"}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Semantics</div>
-                    <div className="text-white font-medium">{proof.argumentation.semantics || 'Grounded Extension'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Decision</div>
-                    <div className={`font-semibold ${proof.argumentation.decision === 'Compliant' ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {proof.argumentation.decision}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Arguments */}
-              {proof.argumentation.arguments && proof.argumentation.arguments.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-3">Arguments</h4>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {proof.argumentation.arguments.map((arg: any, i: number) => (
-                      <div
-                        key={i}
-                        className={`p-3 rounded-lg border ${
-                          arg.status === 'accepted'
-                            ? 'bg-emerald-500/10 border-emerald-500/30'
-                            : 'bg-slate-800/50 border-slate-700/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`font-mono text-sm ${
-                            arg.status === 'accepted' ? 'text-emerald-400' : 'text-slate-400'
-                          }`}>
-                            {arg.id}
-                          </span>
-                          <span className={`px-2 py-0.5 text-xs rounded ${
-                            arg.type === 'compliance' ? 'bg-emerald-500/20 text-emerald-400' :
-                            arg.type === 'violation' ? 'bg-red-500/20 text-red-400' :
-                            'bg-slate-700 text-slate-400'
-                          }`}>
-                            {arg.type}
-                          </span>
-                          <span className={`px-2 py-0.5 text-xs rounded ${
-                            arg.status === 'accepted' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'
-                          }`}>
-                            {arg.status}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-400">{arg.details}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {/* Attacks */}
-              {proof.argumentation.attacks && proof.argumentation.attacks.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-300 mb-3">Attack Relations</h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    {proof.argumentation.attacks.map((attack: any, i: number) => (
-                      <div
-                        key={i}
-                        className={`p-2 rounded-lg border ${
-                          attack.effective
-                            ? 'bg-orange-500/10 border-orange-500/30'
-                            : 'bg-slate-800/50 border-slate-700/50'
-                        }`}
-                      >
-                        <span className="font-mono text-xs text-slate-300">{attack.relation}</span>
-                        <span className={`ml-2 text-xs ${attack.effective ? 'text-orange-400' : 'text-slate-500'}`}>
-                          ({attack.effective ? 'effective' : 'defeated'})
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {/* Grounded Extension */}
-              {proof.argumentation.grounded_extension && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
-                    <div className="text-xs text-emerald-300 uppercase tracking-wider mb-2">Accepted Arguments</div>
-                    <div className="flex flex-wrap gap-1">
-                      {proof.argumentation.grounded_extension.accepted?.map((id: string, i: number) => (
-                        <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
-                          {id}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
-                    <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Rejected Arguments</div>
-                    <div className="flex flex-wrap gap-1">
-                      {proof.argumentation.grounded_extension.rejected?.map((id: string, i: number) => (
-                        <span key={i} className="px-2 py-1 bg-slate-700 text-slate-400 text-xs font-mono rounded">
-                          {id}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Summary */}
-              {proof.argumentation.summary && (
-                <div className="grid grid-cols-4 gap-4">
-                  <div className="p-3 bg-slate-800/50 rounded-lg text-center">
-                    <div className="text-2xl font-bold text-white">{proof.argumentation.summary.total_arguments}</div>
-                    <div className="text-xs text-slate-400">Total Args</div>
-                  </div>
-                  <div className="p-3 bg-emerald-500/10 rounded-lg text-center">
-                    <div className="text-2xl font-bold text-emerald-400">{proof.argumentation.summary.accepted_arguments}</div>
-                    <div className="text-xs text-slate-400">Accepted</div>
-                  </div>
-                  <div className="p-3 bg-slate-800/50 rounded-lg text-center">
-                    <div className="text-2xl font-bold text-slate-400">{proof.argumentation.summary.rejected_arguments}</div>
-                    <div className="text-xs text-slate-400">Rejected</div>
-                  </div>
-                  <div className="p-3 bg-orange-500/10 rounded-lg text-center">
-                    <div className="text-2xl font-bold text-orange-400">{proof.argumentation.summary.effective_attacks}</div>
-                    <div className="text-xs text-slate-400">Attacks</div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <FormalProofView proof={proof} />
       )}
       
       {activeTab === 'json' && (
@@ -1356,6 +1215,406 @@ function ProofBundleView({
           <pre className="text-sm text-slate-300 font-mono overflow-auto max-h-[600px] p-4 bg-slate-900/50 rounded-xl">
             {JSON.stringify(proof, null, 2)}
           </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Formal Proof View - Step-by-step logical reasoning
+function FormalProofView({ proof }: { proof: ProofBundle }) {
+  const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 5: true });
+  
+  const toggleStep = (step: number) => {
+    setExpandedSteps(prev => ({ ...prev, [step]: !prev[step] }));
+  };
+  
+  // Extract reasoning steps from the proof
+  const reasoningSteps = proof.argumentation?.reasoning_trace?.filter(
+    (item: any) => item.step !== undefined
+  ) || [];
+  
+  // Extract legacy format data
+  const proofArguments = proof.argumentation?.arguments || [];
+  const proofAttacks = proof.argumentation?.attacks || [];
+  const groundedExtension = proof.argumentation?.grounded_extension;
+  const summary = proof.argumentation?.summary;
+  
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center gap-4 mb-4">
+          <div className="p-4 rounded-2xl bg-violet-500/20 border border-violet-500/30">
+            <Scale className="w-10 h-10 text-violet-400" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-display font-bold text-white">Formal Argumentation Proof</h2>
+            <p className="text-slate-400">Step-by-step logical reasoning using Dung's Abstract Argumentation Framework</p>
+          </div>
+        </div>
+        
+        {/* Framework Summary */}
+        <div className="grid grid-cols-4 gap-4 mt-6">
+          <div className="p-4 bg-violet-500/10 rounded-xl border border-violet-500/30 text-center">
+            <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Framework</div>
+            <div className="text-white font-semibold">Dung's AAF</div>
+          </div>
+          <div className="p-4 bg-violet-500/10 rounded-xl border border-violet-500/30 text-center">
+            <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Semantics</div>
+            <div className="text-white font-semibold">Grounded Extension</div>
+          </div>
+          <div className="p-4 bg-violet-500/10 rounded-xl border border-violet-500/30 text-center">
+            <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Arguments</div>
+            <div className="text-white font-semibold">{summary?.total_arguments || proofArguments.length}</div>
+          </div>
+          <div className={`p-4 rounded-xl border text-center ${
+            proof.decision === 'Compliant' 
+              ? 'bg-emerald-500/10 border-emerald-500/30' 
+              : 'bg-red-500/10 border-red-500/30'
+          }`}>
+            <div className={`text-xs uppercase tracking-wider mb-1 ${
+              proof.decision === 'Compliant' ? 'text-emerald-300' : 'text-red-300'
+            }`}>Decision</div>
+            <div className={`font-bold ${
+              proof.decision === 'Compliant' ? 'text-emerald-400' : 'text-red-400'
+            }`}>{proof.decision}</div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Step-by-step Reasoning */}
+      {reasoningSteps.length > 0 ? (
+        <div className="space-y-4">
+          {reasoningSteps.map((step: any) => (
+            <div key={step.step} className="glass rounded-2xl border border-white/5 overflow-hidden">
+              <button
+                onClick={() => toggleStep(step.step)}
+                className="w-full p-5 flex items-center gap-4 hover:bg-white/[0.02] transition-colors text-left"
+              >
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
+                  step.phase === 'decision' 
+                    ? proof.decision === 'Compliant' 
+                      ? 'bg-emerald-500/20 text-emerald-400' 
+                      : 'bg-red-500/20 text-red-400'
+                    : 'bg-violet-500/20 text-violet-400'
+                }`}>
+                  {step.step}
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-white">{step.title}</h3>
+                  <p className="text-sm text-slate-400">{step.description}</p>
+                </div>
+                {expandedSteps[step.step] ? (
+                  <ChevronDown className="w-5 h-5 text-slate-400" />
+                ) : (
+                  <ChevronRight className="w-5 h-5 text-slate-400" />
+                )}
+              </button>
+              
+              {expandedSteps[step.step] && (
+                <div className="px-5 pb-5 border-t border-white/5 animate-fade-in">
+                  {/* Logic Rules */}
+                  {step.logic && (
+                    <div className="mt-4 p-4 bg-slate-900/50 rounded-xl border border-white/5">
+                      <div className="text-xs text-cyan-400 uppercase tracking-wider mb-2">Formal Logic</div>
+                      <div className="space-y-1 font-mono text-sm">
+                        {step.logic.map((rule: string, i: number) => (
+                          <div key={i} className="text-slate-300 flex items-start gap-2">
+                            <span className="text-cyan-500">→</span>
+                            <span>{rule}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Algorithm */}
+                  {step.algorithm && (
+                    <div className="mt-4 p-4 bg-slate-900/50 rounded-xl border border-white/5">
+                      <div className="text-xs text-amber-400 uppercase tracking-wider mb-2">Algorithm</div>
+                      <div className="space-y-1 font-mono text-sm">
+                        {step.algorithm.map((line: string, i: number) => (
+                          <div key={i} className="text-slate-300">{line}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Arguments by type */}
+                  {step.arguments && (
+                    <div className="mt-4 grid grid-cols-2 gap-4">
+                      {step.arguments.compliance?.length > 0 && (
+                        <div className="p-4 bg-emerald-500/5 rounded-xl border border-emerald-500/20">
+                          <div className="text-xs text-emerald-400 uppercase tracking-wider mb-2">
+                            Compliance Arguments ({step.arguments.compliance.length})
+                          </div>
+                          <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {step.arguments.compliance.map((arg: any, i: number) => (
+                              <div key={i} className={`p-2 rounded-lg text-xs ${
+                                arg.status === 'accepted' ? 'bg-emerald-500/10' : 'bg-slate-800/50'
+                              }`}>
+                                <span className={`font-mono font-semibold ${
+                                  arg.status === 'accepted' ? 'text-emerald-400' : 'text-slate-500'
+                                }`}>{arg.id}</span>
+                                <span className={`ml-2 ${
+                                  arg.status === 'accepted' ? 'text-emerald-300' : 'text-slate-500'
+                                }`}>({arg.status})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {step.arguments.violation?.length > 0 && (
+                        <div className="p-4 bg-red-500/5 rounded-xl border border-red-500/20">
+                          <div className="text-xs text-red-400 uppercase tracking-wider mb-2">
+                            Violation Arguments ({step.arguments.violation.length})
+                          </div>
+                          <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {step.arguments.violation.map((arg: any, i: number) => (
+                              <div key={i} className={`p-2 rounded-lg text-xs ${
+                                arg.status === 'accepted' ? 'bg-red-500/10' : 'bg-slate-800/50'
+                              }`}>
+                                <span className={`font-mono font-semibold ${
+                                  arg.status === 'accepted' ? 'text-red-400' : 'text-slate-500'
+                                }`}>{arg.id}</span>
+                                <span className={`ml-2 ${
+                                  arg.status === 'accepted' ? 'text-red-300' : 'text-slate-500'
+                                }`}>({arg.status})</span>
+                                {arg.evidence && (
+                                  <div className="mt-1 text-slate-400 truncate">Evidence: {arg.evidence}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Attacks */}
+                  {step.attacks && step.attacks.length > 0 && (
+                    <div className="mt-4 p-4 bg-orange-500/5 rounded-xl border border-orange-500/20">
+                      <div className="text-xs text-orange-400 uppercase tracking-wider mb-2">
+                        Attack Relations ({step.attacks.length})
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                        {step.attacks.map((attack: any, i: number) => (
+                          <div key={i} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${
+                            attack.effective ? 'bg-orange-500/10' : 'bg-slate-800/50'
+                          }`}>
+                            <span className="font-mono text-slate-300">{attack.attacker}</span>
+                            <span className={attack.effective ? 'text-orange-400' : 'text-slate-500'}>→</span>
+                            <span className="font-mono text-slate-300">{attack.target}</span>
+                            <span className={`ml-auto ${attack.effective ? 'text-orange-400' : 'text-slate-500'}`}>
+                              {attack.effective ? '✓' : '✗'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {step.attacks.some((a: any) => a.reason) && (
+                        <div className="mt-3 pt-3 border-t border-orange-500/20">
+                          {step.attacks.filter((a: any) => a.reason).slice(0, 3).map((attack: any, i: number) => (
+                            <div key={i} className="text-xs text-slate-400 mb-1">
+                              <span className="text-orange-400">{attack.attacker} → {attack.target}:</span> {attack.reason}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Grounded Extension Result */}
+                  {step.result && (
+                    <div className="mt-4 grid grid-cols-2 gap-4">
+                      <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
+                        <div className="text-xs text-emerald-300 uppercase tracking-wider mb-2">
+                          Accepted ({step.result.accepted_count})
+                        </div>
+                        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                          {step.result.accepted.map((id: string, i: number) => (
+                            <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                              {id}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+                        <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">
+                          Rejected ({step.result.rejected_count})
+                        </div>
+                        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                          {step.result.rejected.map((id: string, i: number) => (
+                            <span key={i} className="px-2 py-1 bg-slate-700 text-slate-400 text-xs font-mono rounded">
+                              {id}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Decision */}
+                  {step.phase === 'decision' && (
+                    <div className={`mt-4 p-4 rounded-xl border ${
+                      step.decision === 'COMPLIANT' 
+                        ? 'bg-emerald-500/10 border-emerald-500/30' 
+                        : 'bg-red-500/10 border-red-500/30'
+                    }`}>
+                      <div className="flex items-center gap-3 mb-3">
+                        {step.decision === 'COMPLIANT' ? (
+                          <ShieldCheck className="w-8 h-8 text-emerald-400" />
+                        ) : (
+                          <ShieldAlert className="w-8 h-8 text-red-400" />
+                        )}
+                        <div className={`text-2xl font-bold ${
+                          step.decision === 'COMPLIANT' ? 'text-emerald-400' : 'text-red-400'
+                        }`}>
+                          {step.decision}
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-300">{step.reasoning}</p>
+                      
+                      {step.satisfied_policies?.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-white/10">
+                          <div className="text-xs text-emerald-400 uppercase tracking-wider mb-2">
+                            Satisfied Policies ({step.satisfied_policies.length})
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {step.satisfied_policies.map((id: string, i: number) => (
+                              <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                                {id}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {step.violated_policies?.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-white/10">
+                          <div className="text-xs text-red-400 uppercase tracking-wider mb-2">
+                            Violated Policies ({step.violated_policies.length})
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {step.violated_policies.map((id: string, i: number) => (
+                              <span key={i} className="px-2 py-1 bg-red-500/20 text-red-400 text-xs font-mono rounded">
+                                {id}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Details for framework definition */}
+                  {step.details && (
+                    <div className="mt-4 grid grid-cols-3 gap-4">
+                      <div className="p-3 bg-slate-800/50 rounded-lg text-center">
+                        <div className="text-2xl font-bold text-white">{step.details.total_arguments}</div>
+                        <div className="text-xs text-slate-400">Total Arguments</div>
+                      </div>
+                      <div className="p-3 bg-slate-800/50 rounded-lg text-center">
+                        <div className="text-2xl font-bold text-white">{step.details.total_attacks}</div>
+                        <div className="text-xs text-slate-400">Attack Relations</div>
+                      </div>
+                      <div className="p-3 bg-slate-800/50 rounded-lg text-center">
+                        <div className="text-2xl font-bold text-violet-400">
+                          {step.details.argument_types?.compliance || 0}C / {step.details.argument_types?.violation || 0}V
+                        </div>
+                        <div className="text-xs text-slate-400">Compliance / Violation</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Fallback to simple view if no step-by-step reasoning */
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          {/* Arguments */}
+          {proofArguments.length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-slate-300 mb-3">Arguments</h4>
+              <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto">
+                {proofArguments.map((arg: any, i: number) => (
+                  <div
+                    key={i}
+                    className={`p-3 rounded-lg border ${
+                      arg.status === 'accepted'
+                        ? 'bg-emerald-500/10 border-emerald-500/30'
+                        : 'bg-slate-800/50 border-slate-700/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`font-mono text-sm ${
+                        arg.status === 'accepted' ? 'text-emerald-400' : 'text-slate-400'
+                      }`}>
+                        {arg.id}
+                      </span>
+                      <span className={`px-2 py-0.5 text-xs rounded ${
+                        arg.type === 'compliance' ? 'bg-emerald-500/20 text-emerald-400' :
+                        arg.type === 'violation' ? 'bg-red-500/20 text-red-400' :
+                        'bg-slate-700 text-slate-400'
+                      }`}>
+                        {arg.type}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 truncate">{arg.details}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Attacks */}
+          {proofAttacks.length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-slate-300 mb-3">Attack Relations</h4>
+              <div className="grid grid-cols-3 gap-2">
+                {proofAttacks.map((attack: any, i: number) => (
+                  <div
+                    key={i}
+                    className={`p-2 rounded-lg border text-xs ${
+                      attack.effective
+                        ? 'bg-orange-500/10 border-orange-500/30'
+                        : 'bg-slate-800/50 border-slate-700/50'
+                    }`}
+                  >
+                    <span className="font-mono text-slate-300">{attack.relation}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Grounded Extension */}
+          {groundedExtension && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
+                <div className="text-xs text-emerald-300 uppercase tracking-wider mb-2">Accepted</div>
+                <div className="flex flex-wrap gap-1">
+                  {groundedExtension.accepted?.map((id: string, i: number) => (
+                    <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                      {id}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+                <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Rejected</div>
+                <div className="flex flex-wrap gap-1">
+                  {groundedExtension.rejected?.map((id: string, i: number) => (
+                    <span key={i} className="px-2 py-1 bg-slate-700 text-slate-400 text-xs font-mono rounded">
+                      {id}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

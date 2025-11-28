@@ -300,10 +300,127 @@ class Adjudicator:
     def _build_reasoning_trace(self, graph: ArgumentationGraph,
                                 accepted: Set[str],
                                 accepted_violations: List[Argument]) -> List[Dict[str, Any]]:
-        """Build a human-readable reasoning trace."""
+        """Build a human-readable reasoning trace with formal logic steps."""
         trace = []
         
-        # Document accepted arguments
+        # Step 1: Framework Definition
+        trace.append({
+            "step": 1,
+            "phase": "framework_definition",
+            "title": "Argumentation Framework Definition",
+            "description": "Constructing Dung's Abstract Argumentation Framework (AF = ⟨Args, Attacks⟩)",
+            "details": {
+                "total_arguments": len(graph.arguments),
+                "total_attacks": len(graph.attacks),
+                "argument_types": {
+                    "compliance": len([a for a in graph.arguments if a.type == "compliance"]),
+                    "violation": len([a for a in graph.arguments if a.type == "violation"]),
+                    "exception": len([a for a in graph.arguments if a.type == "exception"])
+                }
+            }
+        })
+        
+        # Step 2: Arguments enumeration
+        arguments_by_type = {"compliance": [], "violation": [], "exception": []}
+        for arg in graph.arguments:
+            status = "accepted" if arg.id in accepted else "rejected"
+            arg_entry = {
+                "id": arg.id,
+                "type": arg.type,
+                "rule": arg.rule_id,
+                "status": status,
+                "claim": arg.details,
+                "evidence": arg.evidence
+            }
+            arguments_by_type.get(arg.type, []).append(arg_entry)
+        
+        trace.append({
+            "step": 2,
+            "phase": "arguments",
+            "title": "Argument Construction",
+            "description": "For each policy P and evidence E, construct arguments:",
+            "logic": [
+                "∀ policy P: Create compliance argument C_P claiming 'artifact satisfies P'",
+                "∀ violation V of policy P: Create violation argument V_P attacking C_P",
+                "∀ exception E defeating V: Create exception argument E defeating V"
+            ],
+            "arguments": arguments_by_type
+        })
+        
+        # Step 3: Attack Relations
+        attack_list = []
+        for attack in graph.attacks:
+            attacker_accepted = attack.attacker in accepted
+            attacker_arg = next((a for a in graph.arguments if a.id == attack.attacker), None)
+            target_arg = next((a for a in graph.arguments if a.id == attack.target), None)
+            
+            attack_list.append({
+                "attacker": attack.attacker,
+                "target": attack.target,
+                "attacker_type": attacker_arg.type if attacker_arg else "unknown",
+                "target_type": target_arg.type if target_arg else "unknown",
+                "effective": attacker_accepted,
+                "reason": self._explain_attack(attacker_arg, target_arg, attacker_accepted)
+            })
+        
+        trace.append({
+            "step": 3,
+            "phase": "attacks",
+            "title": "Attack Relation Construction",
+            "description": "Define attack relations between arguments:",
+            "logic": [
+                "Violation V_P attacks Compliance C_P (evidence contradicts compliance claim)",
+                "Exception E attacks Violation V (exception condition defeats violation)",
+                "Higher priority arguments attack lower priority ones"
+            ],
+            "attacks": attack_list
+        })
+        
+        # Step 4: Grounded Extension Computation
+        trace.append({
+            "step": 4,
+            "phase": "grounded_extension",
+            "title": "Grounded Extension Computation",
+            "description": "Computing the grounded extension using fixpoint iteration:",
+            "algorithm": [
+                "1. Initialize: accepted = ∅, rejected = ∅",
+                "2. Find unattacked arguments → add to accepted",
+                "3. Arguments attacked by accepted → add to rejected",
+                "4. Repeat until fixpoint (no changes)",
+                "5. Result: minimal complete extension"
+            ],
+            "result": {
+                "accepted": list(accepted),
+                "rejected": [a.id for a in graph.arguments if a.id not in accepted],
+                "accepted_count": len(accepted),
+                "rejected_count": len(graph.arguments) - len(accepted)
+            }
+        })
+        
+        # Step 5: Compliance Decision
+        violated_rules = list(set(a.rule_id for a in accepted_violations))
+        satisfied_rules = list(set(
+            a.rule_id for a in graph.arguments 
+            if a.type == "compliance" and a.id in accepted
+        ))
+        
+        trace.append({
+            "step": 5,
+            "phase": "decision",
+            "title": "Compliance Decision",
+            "description": "Deriving compliance decision from grounded extension:",
+            "logic": [
+                "IF ∃ accepted violation argument V_P THEN artifact violates policy P",
+                "IF ∀ policies P: C_P ∈ accepted THEN artifact is COMPLIANT",
+                "ELSE artifact is NON-COMPLIANT"
+            ],
+            "decision": "COMPLIANT" if not accepted_violations else "NON-COMPLIANT",
+            "satisfied_policies": satisfied_rules,
+            "violated_policies": violated_rules,
+            "reasoning": self._explain_decision(accepted_violations, satisfied_rules)
+        })
+        
+        # Legacy format for backwards compatibility
         for arg in graph.arguments:
             status = "accepted" if arg.id in accepted else "rejected"
             trace.append({
@@ -314,7 +431,6 @@ class Adjudicator:
                 "details": arg.details
             })
         
-        # Document attacks
         for attack in graph.attacks:
             attacker_accepted = attack.attacker in accepted
             trace.append({
@@ -323,7 +439,6 @@ class Adjudicator:
                 "explanation": f"{'Successful' if attacker_accepted else 'Defeated'} attack"
             })
         
-        # Summary
         if accepted_violations:
             trace.append({
                 "conclusion": "Non-compliant",
@@ -338,6 +453,33 @@ class Adjudicator:
             })
         
         return trace
+    
+    def _explain_attack(self, attacker: Optional[Argument], target: Optional[Argument], 
+                        effective: bool) -> str:
+        """Generate human-readable explanation for an attack."""
+        if not attacker or not target:
+            return "Unknown attack relation"
+        
+        if attacker.type == "violation" and target.type == "compliance":
+            if effective:
+                return f"Violation evidence at line {attacker.evidence or 'N/A'} defeats compliance claim"
+            else:
+                return "Violation was defeated by exception or higher priority argument"
+        elif attacker.type == "exception" and target.type == "violation":
+            if effective:
+                return "Exception condition applies, defeating the violation"
+            else:
+                return "Exception was overridden"
+        else:
+            return f"{'Effective' if effective else 'Ineffective'} attack"
+    
+    def _explain_decision(self, violations: List[Argument], satisfied: List[str]) -> str:
+        """Generate human-readable explanation for the decision."""
+        if not violations:
+            return f"All {len(satisfied)} policies are satisfied. No violation arguments were accepted in the grounded extension."
+        else:
+            rules = list(set(v.rule_id for v in violations))
+            return f"Violation arguments for {rules} were accepted in the grounded extension, indicating policy violations."
 
 
 # Global adjudicator instance
