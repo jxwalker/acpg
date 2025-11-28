@@ -281,7 +281,11 @@ def get_policy_compiler() -> PolicyCompiler:
         _compiler.load_policies()
         
         # Load additional policy files if they exist
-        additional_files = ['owasp_policies.json', 'nist_policies.json']
+        additional_files = [
+            'owasp_policies.json', 
+            'nist_policies.json',
+            'javascript_policies.json'
+        ]
         for filename in additional_files:
             filepath = settings.POLICIES_DIR / filename
             if filepath.exists():

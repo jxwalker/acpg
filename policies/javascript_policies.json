@@ -1,0 +1,149 @@
+{
+  "policies": [
+    {
+      "id": "JS-SEC-001",
+      "description": "No hardcoded secrets in JavaScript/TypeScript code",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "(api[_-]?key|apikey|secret|password|token|auth)\\s*[:=]\\s*['\"][^'\"]{8,}['\"]",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Use environment variables (process.env) or a secrets manager"
+    },
+    {
+      "id": "JS-SEC-002",
+      "description": "No eval() or Function() constructor",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "\\beval\\s*\\(|new\\s+Function\\s*\\(|setTimeout\\s*\\([^,]*['\"]|setInterval\\s*\\([^,]*['\"]",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Use JSON.parse() for data, avoid dynamic code execution"
+    },
+    {
+      "id": "JS-SEC-003",
+      "description": "No innerHTML with user input (XSS risk)",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "\\.innerHTML\\s*=|document\\.write\\s*\\(|\\$\\([^)]+\\)\\.html\\s*\\(",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Use textContent, createElement, or sanitization libraries"
+    },
+    {
+      "id": "JS-SEC-004",
+      "description": "No synchronous XMLHttpRequest",
+      "type": "strict",
+      "severity": "medium",
+      "check": {
+        "type": "regex",
+        "pattern": "\\.open\\s*\\([^)]*,\\s*[^)]*,\\s*false\\s*\\)",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Use async requests with fetch() or async XMLHttpRequest"
+    },
+    {
+      "id": "JS-SEC-005",
+      "description": "No console.log with sensitive data in production",
+      "type": "defeasible",
+      "severity": "medium",
+      "check": {
+        "type": "regex",
+        "pattern": "console\\.(log|debug|info)\\s*\\([^)]*\\b(password|secret|token|key|auth)\\b",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Remove sensitive data from console output or use proper logging"
+    },
+    {
+      "id": "JS-SEC-006",
+      "description": "Use strict equality (=== instead of ==)",
+      "type": "defeasible",
+      "severity": "low",
+      "check": {
+        "type": "regex",
+        "pattern": "[^!=<>]\\s*==\\s*[^=]|[^!=<>]\\s*!=\\s*[^=]",
+        "languages": ["javascript"]
+      },
+      "fix_suggestion": "Use === and !== for strict equality comparisons"
+    },
+    {
+      "id": "JS-SEC-007",
+      "description": "No disabled security in fetch/axios",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "rejectUnauthorized\\s*:\\s*false|NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*['\"]0['\"]",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Enable TLS certificate verification"
+    },
+    {
+      "id": "JS-SEC-008",
+      "description": "No SQL queries built with string concatenation",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "(SELECT|INSERT|UPDATE|DELETE).*\\$\\{|`.*\\$\\{.*`.*query|\\+\\s*['\"]\\s*(SELECT|INSERT|UPDATE|DELETE)",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Use parameterized queries or an ORM"
+    },
+    {
+      "id": "JS-SEC-009",
+      "description": "No dangerouslySetInnerHTML in React without sanitization",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "dangerouslySetInnerHTML\\s*=\\s*\\{\\{\\s*__html\\s*:",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Sanitize HTML with DOMPurify before using dangerouslySetInnerHTML"
+    },
+    {
+      "id": "JS-SEC-010",
+      "description": "No prototype pollution patterns",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "\\[\\s*['\"]__proto__['\"]\\s*\\]|\\[\\s*['\"]constructor['\"]\\s*\\]|Object\\.assign\\s*\\(\\s*\\{\\s*\\}",
+        "languages": ["javascript", "typescript"]
+      },
+      "fix_suggestion": "Validate object keys, use Object.create(null) or Map"
+    },
+    {
+      "id": "TS-001",
+      "description": "No 'any' type usage (reduces type safety)",
+      "type": "defeasible",
+      "severity": "low",
+      "check": {
+        "type": "regex",
+        "pattern": ":\\s*any\\b|as\\s+any\\b|<any>",
+        "languages": ["typescript"]
+      },
+      "fix_suggestion": "Use specific types or 'unknown' instead of 'any'"
+    },
+    {
+      "id": "TS-002",
+      "description": "No @ts-ignore without explanation",
+      "type": "defeasible",
+      "severity": "low",
+      "check": {
+        "type": "regex",
+        "pattern": "@ts-ignore(?!.*//)|@ts-nocheck",
+        "languages": ["typescript"]
+      },
+      "fix_suggestion": "Fix the type error or add explanation comment"
+    }
+  ]
+}
+
