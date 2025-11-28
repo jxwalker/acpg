@@ -1,0 +1,71 @@
+# ACPG LLM Server Configuration
+# Configure multiple LLM providers and select the active one
+
+# Active provider (change this to switch LLM backends)
+active_provider: local_vllm
+
+providers:
+  # Local vLLM server with Qwen2.5-Coder
+  local_vllm:
+    type: openai_compatible
+    name: "Qwen2.5-Coder-14B (Local vLLM)"
+    base_url: "http://shadow:8001/v1"
+    api_key: "not-needed"  # vLLM doesn't require auth by default
+    model: "/models/vllm/Qwen2.5-Coder-14B-Instruct-AWQ"
+    max_tokens: 4096
+    temperature: 0.3
+    context_window: 32768
+    
+  # OpenAI GPT-4
+  openai_gpt4:
+    type: openai
+    name: "OpenAI GPT-4"
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"  # From environment
+    model: "gpt-4"
+    max_tokens: 2000
+    temperature: 0.3
+    context_window: 8192
+    
+  # OpenAI GPT-4 Turbo
+  openai_gpt4_turbo:
+    type: openai
+    name: "OpenAI GPT-4 Turbo"
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-4-turbo-preview"
+    max_tokens: 4096
+    temperature: 0.3
+    context_window: 128000
+
+  # OpenAI GPT-3.5 Turbo (faster, cheaper)
+  openai_gpt35:
+    type: openai
+    name: "OpenAI GPT-3.5 Turbo"
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-3.5-turbo"
+    max_tokens: 2000
+    temperature: 0.3
+    context_window: 16385
+
+  # Ollama (local)
+  ollama_codellama:
+    type: openai_compatible
+    name: "CodeLlama (Ollama)"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "codellama:13b"
+    max_tokens: 2048
+    temperature: 0.3
+    context_window: 16384
+
+  # Anthropic Claude (if needed in future)
+  # anthropic_claude:
+  #   type: anthropic
+  #   name: "Claude 3 Sonnet"
+  #   api_key: "${ANTHROPIC_API_KEY}"
+  #   model: "claude-3-sonnet-20240229"
+  #   max_tokens: 4096
+  #   temperature: 0.3
+

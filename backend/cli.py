@@ -75,11 +75,15 @@ def cmd_check(args):
 def cmd_enforce(args):
     """Enforce compliance by auto-fixing code."""
     from app.services import get_prosecutor, get_adjudicator, get_generator, get_proof_assembler
+    from app.core.llm_config import get_llm_config
     
-    # Check for OpenAI API key
-    if os.environ.get("OPENAI_API_KEY") == "not-required-for-analysis-only":
-        print("❌ Error: OPENAI_API_KEY environment variable required for auto-fix")
-        print("   Set it with: export OPENAI_API_KEY='your-key-here'")
+    # Check LLM configuration
+    try:
+        llm_config = get_llm_config()
+        provider = llm_config.get_active_provider()
+        print(f"🤖 Using LLM: {provider.name}")
+    except Exception as e:
+        print(f"❌ Error: Could not configure LLM: {e}")
         return 1
     
     # Read input file

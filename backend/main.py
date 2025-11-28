@@ -103,6 +103,13 @@ try:
 except ImportError as e:
     print(f"⚠️  LangGraph not available: {e}")
 
+# Include LLM management routes
+try:
+    from app.api.llm_routes import router as llm_router
+    app.include_router(llm_router, prefix=settings.API_V1_STR)
+except ImportError as e:
+    print(f"⚠️  LLM routes not available: {e}")
+
 
 # Root endpoint
 @app.get("/")

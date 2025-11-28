@@ -1,4 +1,4 @@
-"""Generator Service - AI-powered code generation and fixing using OpenAI."""
+"""Generator Service - AI-powered code generation and fixing using configurable LLMs."""
 import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -10,6 +10,7 @@ from ..models.schemas import (
     Violation, PolicyRule, ArtifactMetadata
 )
 from ..core.config import settings
+from ..core.llm_config import get_llm_config, get_llm_client
 from .policy_compiler import get_policy_compiler
 
 
@@ -17,16 +18,21 @@ class Generator:
     """
     The Generator agent creates and fixes code with policy awareness.
     
-    Uses OpenAI GPT models to:
+    Uses configurable LLM backends (OpenAI, vLLM, Ollama, etc.) to:
     1. Generate code from specifications with policy constraints
     2. Fix code based on violation reports
     3. Provide explanations for changes made
     """
     
     def __init__(self):
-        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = settings.OPENAI_MODEL
+        self.llm_config = get_llm_config()
+        self.client = get_llm_client()
+        self.model = self.llm_config.get_model()
         self.policy_compiler = get_policy_compiler()
+        
+        # Log which LLM we're using
+        provider = self.llm_config.get_active_provider()
+        print(f"🤖 Generator using: {provider.name} ({provider.model})")
     
     def generate_code(self, request: GeneratorRequest) -> GeneratorResponse:
         """
@@ -50,15 +56,15 @@ class Generator:
 Ensure the code follows all the security policies listed in your instructions.
 Return ONLY the code, no explanations."""
 
-        # Call OpenAI
+        # Call LLM
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=settings.OPENAI_TEMPERATURE,
-            max_tokens=settings.OPENAI_MAX_TOKENS
+            temperature=self.llm_config.get_temperature(),
+            max_tokens=self.llm_config.get_max_tokens()
         )
         
         code = response.choices[0].message.content.strip()
@@ -123,8 +129,8 @@ Return ONLY the fixed code, no explanations or markdown."""
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=settings.OPENAI_TEMPERATURE,
-            max_tokens=settings.OPENAI_MAX_TOKENS
+            temperature=self.llm_config.get_temperature(),
+            max_tokens=self.llm_config.get_max_tokens()
         )
         
         fixed_code = response.choices[0].message.content.strip()
