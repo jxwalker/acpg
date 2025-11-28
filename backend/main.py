@@ -95,6 +95,14 @@ app.add_middleware(
 # Include API routes
 app.include_router(router, prefix=settings.API_V1_STR)
 
+# Include LangGraph routes
+try:
+    from app.api.langgraph_routes import router as langgraph_router
+    app.include_router(langgraph_router, prefix=settings.API_V1_STR)
+    print("✅ LangGraph orchestration enabled")
+except ImportError as e:
+    print(f"⚠️  LangGraph not available: {e}")
+
 
 # Root endpoint
 @app.get("/")
