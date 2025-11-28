@@ -1,0 +1,125 @@
+{
+  "policies": [
+    {
+      "id": "OWASP-A01",
+      "description": "Broken Access Control - Check for missing authorization",
+      "type": "defeasible",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "@app\\.(get|post|put|delete).*\\ndef\\s+\\w+\\([^)]*\\)(?!.*(@login_required|@auth|@permission|Depends\\(.*auth))",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Add authentication/authorization decorators to route handlers"
+    },
+    {
+      "id": "OWASP-A02",
+      "description": "Cryptographic Failures - Sensitive data exposure in transit",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "verify\\s*=\\s*False|CERT_NONE|ssl\\._create_unverified_context",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Enable SSL certificate verification"
+    },
+    {
+      "id": "OWASP-A03",
+      "description": "Injection - Command injection via os.system or subprocess",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "os\\.system\\(|subprocess\\.call\\([^,]+shell\\s*=\\s*True|subprocess\\.Popen\\([^,]+shell\\s*=\\s*True",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Use subprocess with shell=False and argument lists"
+    },
+    {
+      "id": "OWASP-A04",
+      "description": "Insecure Design - Debug mode in production",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "debug\\s*=\\s*True|DEBUG\\s*=\\s*True|app\\.run\\([^)]*debug\\s*=\\s*True",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Disable debug mode in production"
+    },
+    {
+      "id": "OWASP-A05",
+      "description": "Security Misconfiguration - CORS allow all origins",
+      "type": "strict",
+      "severity": "medium",
+      "check": {
+        "type": "regex",
+        "pattern": "allow_origins\\s*=\\s*\\[\\s*[\"']\\*[\"']\\s*\\]|Access-Control-Allow-Origin.*\\*",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Specify explicit allowed origins instead of wildcard"
+    },
+    {
+      "id": "OWASP-A06",
+      "description": "Vulnerable Components - Known vulnerable package imports",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "import\\s+pickle|from\\s+pickle\\s+import|yaml\\.load\\([^,)]+\\)|yaml\\.unsafe_load",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Use safe alternatives: json instead of pickle, yaml.safe_load instead of yaml.load"
+    },
+    {
+      "id": "OWASP-A07",
+      "description": "Auth Failures - Weak password policy or storage",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "password.*==|password.*!=|==.*password|!=.*password|password.*in\\s+\\[",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Use constant-time comparison and proper password hashing (bcrypt, argon2)"
+    },
+    {
+      "id": "OWASP-A08",
+      "description": "Software Integrity - Insecure deserialization",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "pickle\\.loads?\\(|marshal\\.loads?\\(|shelve\\.open|dill\\.loads?",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Use JSON or other safe serialization formats"
+    },
+    {
+      "id": "OWASP-A09",
+      "description": "Logging Failures - Insufficient logging",
+      "type": "defeasible",
+      "severity": "medium",
+      "check": {
+        "type": "manual",
+        "message": "Check for adequate security event logging",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Add logging for authentication, authorization, and security events"
+    },
+    {
+      "id": "OWASP-A10",
+      "description": "SSRF - Server-side request forgery",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "requests\\.(get|post|put|delete)\\([^)]*\\+|urllib\\.request\\.urlopen\\([^)]*\\+|fetch\\([^)]*\\+",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Validate and whitelist URLs before making requests"
+    }
+  ]
+}
+

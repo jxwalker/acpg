@@ -1,0 +1,101 @@
+{
+  "policies": [
+    {
+      "id": "NIST-AC-3",
+      "description": "Access Enforcement - All access must be authorized",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "manual",
+        "message": "Verify all endpoints have proper authorization checks",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Implement role-based access control (RBAC)"
+    },
+    {
+      "id": "NIST-AU-2",
+      "description": "Audit Events - Security-relevant events must be logged",
+      "type": "defeasible",
+      "severity": "medium",
+      "check": {
+        "type": "regex",
+        "pattern": "except.*:\\s*pass|except.*:\\s*continue|except.*:\\s*\\.\\.\\.\\s*$",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Log exceptions and security events, don't silently swallow errors"
+    },
+    {
+      "id": "NIST-IA-5",
+      "description": "Authenticator Management - Secure credential storage",
+      "type": "strict",
+      "severity": "critical",
+      "check": {
+        "type": "regex",
+        "pattern": "password.*=.*['\"][^'\"]{4,}['\"]|token.*=.*['\"][^'\"]{8,}['\"]|key.*=.*['\"][^'\"]{8,}['\"]",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Store credentials in environment variables or secure vaults"
+    },
+    {
+      "id": "NIST-SC-8",
+      "description": "Transmission Confidentiality - Encrypt data in transit",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "http://(?!localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0)",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Use HTTPS for all external communications"
+    },
+    {
+      "id": "NIST-SC-13",
+      "description": "Cryptographic Protection - Use approved algorithms",
+      "type": "strict",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "DES|RC4|MD4|SHA1(?!_)|Blowfish|3DES|RC2",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Use AES-256, SHA-256 or stronger algorithms"
+    },
+    {
+      "id": "NIST-SI-10",
+      "description": "Information Input Validation - Validate all inputs",
+      "type": "defeasible",
+      "severity": "high",
+      "check": {
+        "type": "regex",
+        "pattern": "request\\.(args|form|json|data)\\[|request\\.get_json\\(\\)|req\\.body(?!.*validate|.*sanitize|.*schema)",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Validate and sanitize all user inputs using schemas"
+    },
+    {
+      "id": "NIST-SI-11",
+      "description": "Error Handling - Don't expose internal details",
+      "type": "strict",
+      "severity": "medium",
+      "check": {
+        "type": "regex",
+        "pattern": "traceback\\.format_exc|traceback\\.print_exc|raise.*from.*Exception|str\\(e\\)|repr\\(e\\)",
+        "languages": ["python"]
+      },
+      "fix_suggestion": "Return generic error messages to users, log details internally"
+    },
+    {
+      "id": "NIST-CM-7",
+      "description": "Least Functionality - Remove unnecessary code",
+      "type": "defeasible",
+      "severity": "low",
+      "check": {
+        "type": "regex",
+        "pattern": "# TODO|# FIXME|# HACK|# XXX|debugger|breakpoint\\(\\)|pdb\\.set_trace",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Remove debug code and TODO comments before production"
+    }
+  ]
+}
+

@@ -1,7 +1,10 @@
 """API Routes for ACPG system."""
+import hashlib
+import uuid
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ..models.schemas import (
     PolicyRule, PolicySet, Violation, AnalysisResult,
@@ -14,8 +17,17 @@ from ..services import (
     get_adjudicator, get_proof_assembler
 )
 from ..core.config import settings
+from ..core.database import get_db, AuditLogger, ProofStore
 
 router = APIRouter()
+
+
+def get_client_ip(request: Request) -> str:
+    """Get client IP from request."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 # ============================================================================
@@ -75,7 +87,11 @@ async def get_policies_by_severity(severity: str):
 # ============================================================================
 
 @router.post("/analyze", response_model=AnalysisResult)
-async def analyze_code(request: ComplianceRequest):
+async def analyze_code(
+    request: ComplianceRequest,
+    http_request: Request,
+    db: Session = Depends(get_db)
+):
     """
     Analyze code for policy violations.
     
@@ -83,11 +99,31 @@ async def analyze_code(request: ComplianceRequest):
     Returns all violations found without attempting fixes.
     """
     prosecutor = get_prosecutor()
+    adjudicator = get_adjudicator()
+    
     result = prosecutor.analyze(
         code=request.code,
         language=request.language,
         policy_ids=request.policies
     )
+    
+    # Adjudicate to determine compliance
+    adjudication = adjudicator.adjudicate(result, request.policies)
+    
+    # Log to audit trail
+    try:
+        audit = AuditLogger(db)
+        audit.log_analysis(
+            artifact_hash=result.artifact_id,
+            language=request.language,
+            compliant=adjudication.compliant,
+            violations=[v.model_dump() for v in result.violations],
+            ip_address=get_client_ip(http_request),
+            request_id=str(uuid.uuid4())
+        )
+    except Exception:
+        pass  # Don't fail request if audit logging fails
+    
     return result
 
 
@@ -228,7 +264,11 @@ async def get_fix_guidance(analysis: AnalysisResult):
 # ============================================================================
 
 @router.post("/enforce", response_model=EnforceResponse)
-async def enforce_compliance(request: EnforceRequest):
+async def enforce_compliance(
+    request: EnforceRequest,
+    http_request: Request,
+    db: Session = Depends(get_db)
+):
     """
     Full compliance enforcement loop.
     
@@ -244,6 +284,7 @@ async def enforce_compliance(request: EnforceRequest):
     adjudicator = get_adjudicator()
     generator = get_generator()
     proof_assembler = get_proof_assembler()
+    request_id = str(uuid.uuid4())
     
     code = request.code
     original_code = request.code
@@ -302,6 +343,21 @@ async def enforce_compliance(request: EnforceRequest):
             )
     
     # Max iterations reached without compliance
+    # Log enforcement attempt
+    try:
+        audit = AuditLogger(db)
+        audit.log_enforcement(
+            artifact_hash=hashlib.sha256(code.encode()).hexdigest()[:16],
+            language=request.language,
+            compliant=False,
+            violations_fixed=violations_fixed,
+            iterations=request.max_iterations,
+            ip_address=get_client_ip(http_request),
+            request_id=request_id
+        )
+    except Exception:
+        pass
+    
     return EnforceResponse(
         original_code=original_code,
         final_code=code,
@@ -317,7 +373,11 @@ async def enforce_compliance(request: EnforceRequest):
 # ============================================================================
 
 @router.post("/proof/generate", response_model=ProofBundle)
-async def generate_proof(request: ComplianceRequest):
+async def generate_proof(
+    request: ComplianceRequest,
+    http_request: Request,
+    db: Session = Depends(get_db)
+):
     """
     Generate a proof bundle for compliant code.
     
@@ -351,7 +411,118 @@ async def generate_proof(request: ComplianceRequest):
         language=request.language
     )
     
+    # Store proof in database
+    try:
+        proof_store = ProofStore(db)
+        proof_store.store_proof(proof.model_dump())
+        
+        # Log audit trail
+        audit = AuditLogger(db)
+        audit.log_proof_generation(
+            artifact_hash=proof.artifact.hash,
+            language=request.language,
+            ip_address=get_client_ip(http_request)
+        )
+    except Exception:
+        pass  # Don't fail if storage fails
+    
     return proof
+
+
+# ============================================================================
+# Proof Retrieval Endpoints
+# ============================================================================
+
+@router.get("/proof/{artifact_hash}")
+async def get_proof_by_hash(artifact_hash: str, db: Session = Depends(get_db)):
+    """Retrieve a stored proof bundle by artifact hash."""
+    proof_store = ProofStore(db)
+    proof = proof_store.get_proof_by_hash(artifact_hash)
+    
+    if not proof:
+        raise HTTPException(status_code=404, detail="Proof not found")
+    
+    return proof
+
+
+@router.get("/proofs")
+async def list_proofs(
+    limit: int = Query(default=100, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db)
+):
+    """List stored proof bundles."""
+    proof_store = ProofStore(db)
+    proofs = proof_store.list_proofs(limit=limit, offset=offset)
+    return {"proofs": proofs, "count": len(proofs)}
+
+
+# ============================================================================
+# Admin Endpoints
+# ============================================================================
+
+@router.get("/admin/audit-logs")
+async def get_audit_logs(
+    limit: int = Query(default=100, le=1000),
+    action: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get audit logs (admin only in production)."""
+    from ..core.database import AuditLog
+    
+    query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+    
+    if action:
+        query = query.filter(AuditLog.action == action)
+    
+    logs = query.limit(limit).all()
+    
+    return {
+        "logs": [
+            {
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat(),
+                "action": log.action,
+                "artifact_hash": log.artifact_hash,
+                "compliant": log.compliant,
+                "violation_count": log.violation_count
+            }
+            for log in logs
+        ]
+    }
+
+
+@router.get("/admin/stats")
+async def get_system_stats(db: Session = Depends(get_db)):
+    """Get system statistics."""
+    from ..core.database import AuditLog, StoredProof
+    from sqlalchemy import func
+    
+    total_analyses = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == "analyze"
+    ).scalar() or 0
+    
+    compliant_count = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == "analyze",
+        AuditLog.compliant == True
+    ).scalar() or 0
+    
+    total_proofs = db.query(func.count(StoredProof.id)).scalar() or 0
+    
+    total_enforcements = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == "enforce"
+    ).scalar() or 0
+    
+    compiler = get_policy_compiler()
+    
+    return {
+        "total_analyses": total_analyses,
+        "compliant_analyses": compliant_count,
+        "compliance_rate": round(compliant_count / total_analyses * 100, 1) if total_analyses > 0 else 0,
+        "total_proofs_generated": total_proofs,
+        "total_enforcements": total_enforcements,
+        "policies_loaded": len(compiler.get_all_policies())
+    }
 
 
 class VerifyProofRequest(BaseModel):

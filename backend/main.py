@@ -14,15 +14,40 @@ from app.services import get_policy_compiler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler - runs on startup and shutdown."""
-    # Startup: Load policies
+    # Startup: Initialize database and load policies
     print("🚀 Starting ACPG - Agentic Compliance and Policy Governor")
     
+    # Initialize database
+    try:
+        from app.core.database import init_db
+        init_db()
+        print("✅ Database initialized")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not initialize database: {e}")
+    
+    # Initialize persistent key manager
+    try:
+        from app.core.key_manager import get_key_manager
+        km = get_key_manager()
+        key_info = km.get_key_info()
+        print(f"🔑 Signing key loaded: {key_info['fingerprint']}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not load signing key: {e}")
+    
+    # Load policies
     try:
         compiler = get_policy_compiler()
         policies = compiler.get_all_policies()
         print(f"✅ Loaded {len(policies)} policies")
-        for p in policies:
-            print(f"   - {p.id}: {p.description[:50]}...")
+        
+        # Group by source
+        default_count = len([p for p in policies if not p.id.startswith(('OWASP', 'NIST'))])
+        owasp_count = len([p for p in policies if p.id.startswith('OWASP')])
+        nist_count = len([p for p in policies if p.id.startswith('NIST')])
+        
+        print(f"   - Default: {default_count}")
+        print(f"   - OWASP: {owasp_count}")
+        print(f"   - NIST: {nist_count}")
     except Exception as e:
         print(f"⚠️  Warning: Could not load policies: {e}")
     

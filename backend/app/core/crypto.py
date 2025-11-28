@@ -2,7 +2,7 @@
 import json
 import base64
 import hashlib
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
@@ -11,13 +11,35 @@ from cryptography.hazmat.backends import default_backend
 class ProofSigner:
     """Handle cryptographic signing of proof bundles."""
     
-    def __init__(self):
-        """Initialize with a new key pair."""
+    def __init__(self, use_persistent_keys: bool = True):
+        """
+        Initialize the proof signer.
+        
+        Args:
+            use_persistent_keys: If True, uses persistent keys from key_manager.
+                                If False, generates ephemeral keys (for testing).
+        """
+        if use_persistent_keys:
+            try:
+                from .key_manager import get_key_manager
+                km = get_key_manager()
+                self.private_key = km.private_key
+                self.public_key = km.public_key
+                self._persistent = True
+            except Exception:
+                # Fallback to ephemeral keys
+                self._generate_ephemeral_keys()
+        else:
+            self._generate_ephemeral_keys()
+    
+    def _generate_ephemeral_keys(self):
+        """Generate ephemeral key pair."""
         self.private_key = ec.generate_private_key(
             ec.SECP256R1(), 
             backend=default_backend()
         )
         self.public_key = self.private_key.public_key()
+        self._persistent = False
     
     def compute_hash(self, data: str) -> str:
         """Compute SHA-256 hash of data."""
