@@ -73,7 +73,7 @@ def test_get_public_key_pem():
 def test_get_public_key_fingerprint():
     """Test public key fingerprint generation."""
     signer = ProofSigner()
-    fingerprint = signer.get_fingerprint()
+    fingerprint = signer.get_public_key_fingerprint()
     
     assert fingerprint is not None
     assert len(fingerprint) == 16  # First 16 chars of hash
