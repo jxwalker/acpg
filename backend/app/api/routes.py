@@ -217,15 +217,111 @@ async def analyze_code_summary(request: ComplianceRequest):
     """
     Analyze code and return a summary of violations.
     """
+    from .policy_routes import get_enabled_policy_ids
+    
+    policy_ids = request.policies
+    if not policy_ids:
+        policy_ids = get_enabled_policy_ids()
+    
     prosecutor = get_prosecutor()
     result = prosecutor.analyze(
         code=request.code,
         language=request.language,
-        policy_ids=request.policies
+        policy_ids=policy_ids if policy_ids else None
     )
     summary = prosecutor.get_violation_summary(result.violations)
     summary['violations'] = result.violations
     return summary
+
+
+# ============================================================================
+# Batch Analysis Endpoints
+# ============================================================================
+
+class BatchAnalysisItem(BaseModel):
+    """A single item in a batch analysis request."""
+    name: str
+    code: str
+    language: str = "python"
+
+
+class BatchAnalysisRequest(BaseModel):
+    """Request for batch analysis of multiple code snippets."""
+    items: List[BatchAnalysisItem]
+    policies: Optional[List[str]] = None
+
+
+class BatchAnalysisResult(BaseModel):
+    """Result for a single item in batch analysis."""
+    name: str
+    compliant: bool
+    violation_count: int
+    violations: List[Violation]
+    risk_score: int
+
+
+@router.post("/analyze/batch")
+async def batch_analyze(request: BatchAnalysisRequest):
+    """
+    Analyze multiple code snippets in a single request.
+    
+    Returns compliance status and violations for each item.
+    Useful for analyzing multiple files at once.
+    """
+    from .policy_routes import get_enabled_policy_ids
+    
+    prosecutor = get_prosecutor()
+    adjudicator = get_adjudicator()
+    
+    # Use enabled policy groups if no specific policies requested
+    policy_ids = request.policies
+    if not policy_ids:
+        policy_ids = get_enabled_policy_ids()
+    
+    results = []
+    total_violations = 0
+    compliant_count = 0
+    
+    for item in request.items:
+        # Analyze each item
+        analysis = prosecutor.analyze(
+            code=item.code,
+            language=item.language,
+            policy_ids=policy_ids if policy_ids else None
+        )
+        
+        # Adjudicate
+        adjudication = adjudicator.adjudicate(analysis, policy_ids)
+        
+        # Calculate risk score
+        risk_score = 0
+        weights = {"critical": 25, "high": 15, "medium": 8, "low": 3}
+        for v in analysis.violations:
+            risk_score += weights.get(v.severity, 5)
+        risk_score = min(100, risk_score)
+        
+        results.append(BatchAnalysisResult(
+            name=item.name,
+            compliant=adjudication.compliant,
+            violation_count=len(analysis.violations),
+            violations=analysis.violations,
+            risk_score=risk_score
+        ))
+        
+        total_violations += len(analysis.violations)
+        if adjudication.compliant:
+            compliant_count += 1
+    
+    return {
+        "items": [r.model_dump() for r in results],
+        "summary": {
+            "total_items": len(request.items),
+            "compliant_count": compliant_count,
+            "non_compliant_count": len(request.items) - compliant_count,
+            "total_violations": total_violations,
+            "compliance_rate": round(compliant_count / len(request.items) * 100, 1) if request.items else 0
+        }
+    }
 
 
 # ============================================================================

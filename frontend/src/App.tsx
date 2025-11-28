@@ -106,6 +106,7 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [sampleFiles, setSampleFiles] = useState<Array<{name: string; description: string; violations: string[]}>>([]);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
+  const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load saved codes from localStorage
@@ -131,6 +132,15 @@ export default function App() {
     fetch('/api/v1/samples')
       .then(res => res.json())
       .then(data => setSampleFiles(data.samples || []))
+      .catch(() => {});
+    
+    // Load enabled policy groups count
+    fetch('/api/v1/policies/groups/')
+      .then(res => res.json())
+      .then(data => setEnabledGroupsCount({
+        groups: data.enabled_groups || 0,
+        policies: data.enabled_policies || 0
+      }))
       .catch(() => {});
   }, []);
 
@@ -241,6 +251,31 @@ export default function App() {
       setReportLoading(false);
     }
   }, [code, language]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + Enter = Analyze
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleAnalyze();
+      }
+      // Ctrl/Cmd + Shift + Enter = Auto-Fix
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
+        e.preventDefault();
+        handleEnforce();
+      }
+      // Escape = Close modals
+      if (e.key === 'Escape') {
+        setShowSaveDialog(false);
+        setShowReportModal(false);
+        setShowSampleMenu(false);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleAnalyze, handleEnforce]);
 
   const handleLoadSample = (type: 'dirty' | 'clean') => {
     const newCode = type === 'dirty' ? SAMPLE_CODE : CLEAN_SAMPLE;
@@ -438,6 +473,21 @@ export default function App() {
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700/50">
                 <Bot className="w-4 h-4 text-cyan-400" />
                 <span className="text-sm text-slate-300">{llmProvider}</span>
+              </div>
+              
+              {/* Active Policies Badge */}
+              <div 
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/50 border border-emerald-500/30 cursor-pointer hover:bg-emerald-500/10 transition-all"
+                onClick={() => setViewMode('policies')}
+                title="Click to manage policy groups"
+              >
+                <Shield className="w-4 h-4 text-emerald-400" />
+                <span className="text-sm text-slate-300">
+                  {enabledGroupsCount.policies} policies
+                </span>
+                <span className="text-xs text-slate-500">
+                  ({enabledGroupsCount.groups} groups)
+                </span>
               </div>
               
               <div className="h-6 w-px bg-slate-700" />
@@ -777,7 +827,8 @@ export default function App() {
                   ) : (
                     <Search className="w-5 h-5 text-cyan-400" />
                   )}
-                  <span>Analyze Code</span>
+                  <span>Analyze</span>
+                  <kbd className="hidden sm:inline-block ml-2 px-1.5 py-0.5 text-[10px] bg-slate-700/50 text-slate-400 rounded">⌘↵</kbd>
                 </button>
                 <div className="relative group">
                   <button
@@ -843,6 +894,7 @@ export default function App() {
                     <>
                       <Sparkles className="w-5 h-5" />
                       <span>Auto-Fix & Certify</span>
+                      <kbd className="hidden sm:inline-block ml-2 px-1.5 py-0.5 text-[10px] bg-white/10 text-white/60 rounded">⇧⌘↵</kbd>
                     </>
                   )}
                 </button>
