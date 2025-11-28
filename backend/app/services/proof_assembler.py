@@ -245,13 +245,79 @@ class ProofAssembler:
         return evidence_list
     
     def _extract_argumentation(self, adjudication: AdjudicationResult) -> Dict[str, Any]:
-        """Extract argumentation trace for the proof."""
-        return {
-            "reasoning": adjudication.reasoning,
-            "compliant": adjudication.compliant,
-            "satisfied_count": len(adjudication.satisfied_rules),
-            "unsatisfied_count": len(adjudication.unsatisfied_rules)
+        """Extract full formal argumentation proof for the bundle."""
+        # Build the formal proof structure
+        formal_proof = {
+            "framework": "Dung's Abstract Argumentation Framework",
+            "semantics": "Grounded Extension",
+            "decision": "Compliant" if adjudication.compliant else "Non-Compliant",
+            
+            # Arguments in the framework
+            "arguments": [],
+            
+            # Attack relations
+            "attacks": [],
+            
+            # Grounded extension computation
+            "grounded_extension": {
+                "accepted": [],
+                "rejected": []
+            },
+            
+            # Detailed reasoning trace
+            "reasoning_trace": adjudication.reasoning,
+            
+            # Summary statistics
+            "summary": {
+                "total_arguments": 0,
+                "accepted_arguments": 0,
+                "rejected_arguments": 0,
+                "total_attacks": 0,
+                "effective_attacks": 0,
+                "satisfied_rules": len(adjudication.satisfied_rules),
+                "unsatisfied_rules": len(adjudication.unsatisfied_rules)
+            }
         }
+        
+        # Extract arguments and attacks from reasoning trace
+        for item in adjudication.reasoning:
+            if "argument" in item:
+                arg_entry = {
+                    "id": item["argument"],
+                    "type": item.get("type", "unknown"),
+                    "rule_id": item.get("rule", ""),
+                    "status": item.get("status", "unknown"),
+                    "details": item.get("details", "")
+                }
+                formal_proof["arguments"].append(arg_entry)
+                formal_proof["summary"]["total_arguments"] += 1
+                
+                if item.get("status") == "accepted":
+                    formal_proof["grounded_extension"]["accepted"].append(item["argument"])
+                    formal_proof["summary"]["accepted_arguments"] += 1
+                else:
+                    formal_proof["grounded_extension"]["rejected"].append(item["argument"])
+                    formal_proof["summary"]["rejected_arguments"] += 1
+                    
+            elif "attack" in item:
+                attack_entry = {
+                    "relation": item["attack"],
+                    "effective": item.get("effective", False),
+                    "explanation": item.get("explanation", "")
+                }
+                formal_proof["attacks"].append(attack_entry)
+                formal_proof["summary"]["total_attacks"] += 1
+                if item.get("effective"):
+                    formal_proof["summary"]["effective_attacks"] += 1
+                    
+            elif "conclusion" in item:
+                formal_proof["conclusion"] = {
+                    "decision": item["conclusion"],
+                    "reason": item.get("reason", ""),
+                    "violated_rules": item.get("violations", [])
+                }
+        
+        return formal_proof
 
 
 # Global proof assembler instance

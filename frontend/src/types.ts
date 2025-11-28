@@ -61,11 +61,56 @@ export interface Evidence {
   output: string;
 }
 
+export interface ArgumentEntry {
+  id: string;
+  type: string;
+  rule_id: string;
+  status: string;
+  details: string;
+}
+
+export interface AttackEntry {
+  relation: string;
+  effective: boolean;
+  explanation: string;
+}
+
+export interface GroundedExtension {
+  accepted: string[];
+  rejected: string[];
+}
+
+export interface ArgumentationSummary {
+  total_arguments: number;
+  accepted_arguments: number;
+  rejected_arguments: number;
+  total_attacks: number;
+  effective_attacks: number;
+  satisfied_rules: number;
+  unsatisfied_rules: number;
+}
+
+export interface FormalProof {
+  framework: string;
+  semantics: string;
+  decision: string;
+  arguments: ArgumentEntry[];
+  attacks: AttackEntry[];
+  grounded_extension: GroundedExtension;
+  reasoning_trace: Record<string, unknown>[];
+  summary: ArgumentationSummary;
+  conclusion?: {
+    decision: string;
+    reason: string;
+    violated_rules: string[];
+  };
+}
+
 export interface ProofBundle {
   artifact: ArtifactMetadata;
   policies: PolicyOutcome[];
   evidence: Evidence[];
-  argumentation?: Record<string, unknown>;
+  argumentation?: FormalProof;
   decision: 'Compliant' | 'Non-compliant';
   signed: {
     signature: string;
@@ -91,4 +136,3 @@ export interface ViolationSummary {
   by_detector: Record<string, number>;
   violations: Violation[];
 }
-
