@@ -31,7 +31,7 @@
       "severity": "critical",
       "check": {
         "type": "regex",
-        "pattern": "password.*=.*['\"][^'\"]{4,}['\"]|token.*=.*['\"][^'\"]{8,}['\"]|key.*=.*['\"][^'\"]{8,}['\"]",
+        "pattern": "(?<!os\\.environ\\.get\\()(?<!os\\.getenv\\()(?<!process\\.env\\.)(?:password|secret|token|api_key|apikey|auth_token)\\s*=\\s*['\"][a-zA-Z0-9_\\-]{8,}['\"]",
         "languages": ["python", "javascript"]
       },
       "fix_suggestion": "Store credentials in environment variables or secure vaults"

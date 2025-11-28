@@ -18,19 +18,19 @@ import type {
 const SAMPLE_CODE = `def login(username, password_input):
     """Login function with security vulnerabilities."""
     
-    # Hardcoded credentials - SEC-001
-    password = "secret123"
-    api_key = "sk-1234567890abcdef"
+    # Hardcoded credentials - will be fixed!
+    password = "supersecret123"
+    api_key = "sk-prod-abc123xyz"
     
-    # SQL injection - SQL-001
+    # SQL injection vulnerability
     query = "SELECT * FROM users WHERE name = '" + username + "'"
     
-    # Dangerous eval - SEC-003
+    # Dangerous eval usage
     result = eval(password_input)
     
-    # Weak crypto - CRYPTO-001
+    # Weak MD5 hashing
     import hashlib
-    hash = hashlib.md5(password.encode()).hexdigest()
+    pw_hash = hashlib.md5(password.encode()).hexdigest()
     
     return authenticate(username, password)
 `;

@@ -7,8 +7,9 @@
       "severity": "high",
       "check": {
         "type": "regex",
-        "pattern": "(?i)(password\\s*=\\s*['\"]|api[_-]?key\\s*=\\s*['\"]|secret\\s*=\\s*['\"])",
-        "languages": ["python", "javascript"]
+        "pattern": "(?i)(password|api[_-]?key|secret|token|credential)\\s*=\\s*['\"][^'\"]*[a-zA-Z0-9]{4,}[^'\"]*['\"](?!\\s*#.*env)",
+        "languages": ["python", "javascript"],
+        "exclude_patterns": ["os\\.getenv", "os\\.environ", "process\\.env", "getenv\\(", "environ\\.get"]
       },
       "fix_suggestion": "Use environment variables or secure vault for credentials"
     },
