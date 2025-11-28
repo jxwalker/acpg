@@ -153,6 +153,127 @@ async def analyze_code_summary(request: ComplianceRequest):
 
 
 # ============================================================================
+# Report Endpoints
+# ============================================================================
+
+class ReportRequest(BaseModel):
+    """Request for generating a compliance report."""
+    code: str
+    language: str = "python"
+    policies: Optional[List[str]] = None
+    format: str = "json"  # json, markdown, html
+    signed: bool = False
+
+
+@router.post("/report")
+async def generate_report(request: ReportRequest):
+    """
+    Generate a compliance report for code.
+    
+    This endpoint analyzes code and generates a detailed report
+    including violations, recommendations, and risk assessment.
+    Does NOT attempt to fix the code.
+    
+    Report formats:
+    - json: Structured JSON report
+    - markdown: Human-readable Markdown
+    - html: Styled HTML report
+    """
+    from ..services.report_generator import generate_compliance_report
+    
+    # Run analysis
+    prosecutor = get_prosecutor()
+    analysis = prosecutor.analyze(
+        code=request.code,
+        language=request.language,
+        policy_ids=request.policies
+    )
+    
+    # Run adjudication
+    adjudicator = get_adjudicator()
+    adjudication = adjudicator.adjudicate(analysis)
+    
+    # Generate report
+    report = generate_compliance_report(
+        code=request.code,
+        language=request.language,
+        analysis=analysis,
+        adjudication=adjudication,
+        format=request.format,
+        signed=request.signed
+    )
+    
+    # Return appropriate content type
+    if request.format == "markdown":
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(content=report, media_type="text/markdown")
+    elif request.format == "html":
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=report)
+    
+    return report
+
+
+@router.post("/report/download")
+async def download_report(request: ReportRequest):
+    """
+    Generate and download a compliance report.
+    
+    Returns the report as a downloadable file with appropriate headers.
+    """
+    from fastapi.responses import Response
+    from ..services.report_generator import generate_compliance_report
+    import json
+    
+    # Run analysis
+    prosecutor = get_prosecutor()
+    analysis = prosecutor.analyze(
+        code=request.code,
+        language=request.language,
+        policy_ids=request.policies
+    )
+    
+    # Run adjudication
+    adjudicator = get_adjudicator()
+    adjudication = adjudicator.adjudicate(analysis)
+    
+    # Generate report
+    report = generate_compliance_report(
+        code=request.code,
+        language=request.language,
+        analysis=analysis,
+        adjudication=adjudication,
+        format=request.format,
+        signed=request.signed
+    )
+    
+    # Set filename and content type
+    status = "compliant" if adjudication.compliant else "non-compliant"
+    timestamp = analysis.timestamp.strftime("%Y%m%d_%H%M%S") if hasattr(analysis, 'timestamp') else "report"
+    
+    if request.format == "markdown":
+        filename = f"compliance_report_{status}_{timestamp}.md"
+        content_type = "text/markdown"
+        content = report
+    elif request.format == "html":
+        filename = f"compliance_report_{status}_{timestamp}.html"
+        content_type = "text/html"
+        content = report
+    else:
+        filename = f"compliance_report_{status}_{timestamp}.json"
+        content_type = "application/json"
+        content = json.dumps(report, indent=2)
+    
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
+
+# ============================================================================
 # Generator Endpoints
 # ============================================================================
 

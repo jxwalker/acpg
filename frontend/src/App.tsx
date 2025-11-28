@@ -99,6 +99,9 @@ export default function App() {
   const [savedCodes, setSavedCodes] = useState<SavedCode[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const [complianceReport, setComplianceReport] = useState<any>(null);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load saved codes from localStorage
@@ -183,6 +186,49 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Enforcement failed');
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
+    }
+  }, [code, language]);
+
+  const handleGenerateReport = useCallback(async (format: 'json' | 'markdown' | 'html' = 'json') => {
+    setReportLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          language,
+          format,
+          signed: true
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to generate report');
+      }
+      
+      if (format === 'json') {
+        const report = await response.json();
+        setComplianceReport(report);
+        setShowReportModal(true);
+      } else {
+        // Download the file
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `compliance_report.${format === 'markdown' ? 'md' : format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Report generation failed');
+    } finally {
+      setReportLoading(false);
     }
   }, [code, language]);
 
@@ -571,6 +617,46 @@ export default function App() {
                   )}
                   <span>Analyze Code</span>
                 </button>
+                <div className="relative group">
+                  <button
+                    onClick={() => handleGenerateReport('json')}
+                    disabled={isProcessing || reportLoading}
+                    className="flex items-center justify-center gap-3 px-6 py-4 glass rounded-xl
+                             text-white font-semibold transition-all duration-300
+                             hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed
+                             border border-amber-500/30 hover:border-amber-500/50"
+                  >
+                    {reportLoading ? (
+                      <RefreshCw className="w-5 h-5 animate-spin text-amber-400" />
+                    ) : (
+                      <FileCheck className="w-5 h-5 text-amber-400" />
+                    )}
+                    <span className="text-amber-400">Report</span>
+                  </button>
+                  {/* Dropdown for format options */}
+                  <div className="absolute top-full left-0 mt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                    <div className="glass rounded-xl border border-white/10 p-2 min-w-[160px] shadow-xl">
+                      <button
+                        onClick={() => handleGenerateReport('json')}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg"
+                      >
+                        📊 View JSON Report
+                      </button>
+                      <button
+                        onClick={() => handleGenerateReport('markdown')}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg"
+                      >
+                        📝 Download Markdown
+                      </button>
+                      <button
+                        onClick={() => handleGenerateReport('html')}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg"
+                      >
+                        🌐 Download HTML
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 <button
                   onClick={handleEnforce}
                   disabled={isProcessing}
@@ -668,6 +754,181 @@ export default function App() {
               >
                 Save
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Compliance Report Modal */}
+      {showReportModal && complianceReport && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className={`p-3 rounded-xl ${
+                  complianceReport.compliance_status?.compliant 
+                    ? 'bg-emerald-500/20 border border-emerald-500/30' 
+                    : 'bg-red-500/20 border border-red-500/30'
+                }`}>
+                  {complianceReport.compliance_status?.compliant ? (
+                    <ShieldCheck className="w-8 h-8 text-emerald-400" />
+                  ) : (
+                    <ShieldAlert className="w-8 h-8 text-red-400" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold text-white">Compliance Report</h3>
+                  <p className={`text-sm ${complianceReport.compliance_status?.compliant ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {complianceReport.compliance_status?.status}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleGenerateReport('markdown')}
+                  className="px-4 py-2 text-sm text-slate-300 hover:text-white border border-slate-700 rounded-xl flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Markdown
+                </button>
+                <button
+                  onClick={() => handleGenerateReport('html')}
+                  className="px-4 py-2 text-sm text-slate-300 hover:text-white border border-slate-700 rounded-xl flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  HTML
+                </button>
+                <button 
+                  onClick={() => setShowReportModal(false)} 
+                  className="p-2 text-slate-400 hover:text-white"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Executive Summary */}
+              <div className="glass rounded-xl p-6 border border-white/5">
+                <h4 className="text-lg font-semibold text-white mb-3">Executive Summary</h4>
+                <p className="text-slate-300 leading-relaxed">{complianceReport.executive_summary}</p>
+              </div>
+
+              {/* Summary Cards */}
+              <div className="grid grid-cols-4 gap-4">
+                <div className="glass rounded-xl p-4 text-center border border-white/5">
+                  <div className="text-3xl font-bold text-white">{complianceReport.summary?.total_violations ?? 0}</div>
+                  <div className="text-sm text-slate-400">Total Violations</div>
+                </div>
+                <div className="glass rounded-xl p-4 text-center border border-red-500/20">
+                  <div className="text-3xl font-bold text-red-400">{complianceReport.summary?.critical_count ?? 0}</div>
+                  <div className="text-sm text-slate-400">Critical</div>
+                </div>
+                <div className="glass rounded-xl p-4 text-center border border-orange-500/20">
+                  <div className="text-3xl font-bold text-orange-400">{complianceReport.summary?.high_count ?? 0}</div>
+                  <div className="text-sm text-slate-400">High</div>
+                </div>
+                <div className="glass rounded-xl p-4 text-center border border-white/5">
+                  <div className="text-3xl font-bold text-amber-400">{complianceReport.summary?.risk_score ?? 0}/100</div>
+                  <div className="text-sm text-slate-400">Risk Score</div>
+                </div>
+              </div>
+
+              {/* Violations */}
+              {complianceReport.violations?.length > 0 && (
+                <div>
+                  <h4 className="text-lg font-semibold text-white mb-4">Violations</h4>
+                  <div className="space-y-3">
+                    {complianceReport.violations.map((v: any, i: number) => (
+                      <div key={i} className={`glass rounded-xl p-4 border-l-4 ${
+                        v.severity === 'critical' ? 'border-l-red-500 bg-red-500/5' :
+                        v.severity === 'high' ? 'border-l-orange-500 bg-orange-500/5' :
+                        v.severity === 'medium' ? 'border-l-amber-500 bg-amber-500/5' :
+                        'border-l-slate-500 bg-slate-500/5'
+                      }`}>
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-semibold text-violet-400">{v.id}</span>
+                            <span className={`px-2 py-0.5 text-[10px] uppercase font-bold rounded ${
+                              v.severity === 'critical' ? 'bg-red-500 text-white' :
+                              v.severity === 'high' ? 'bg-orange-500 text-white' :
+                              v.severity === 'medium' ? 'bg-amber-500 text-black' :
+                              'bg-slate-600 text-white'
+                            }`}>
+                              {v.severity}
+                            </span>
+                          </div>
+                          {v.location?.line && (
+                            <span className="text-xs text-slate-500">Line {v.location.line}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-300 mb-2">{v.description}</p>
+                        {v.location?.evidence && (
+                          <div className="bg-slate-900/50 rounded-lg p-3 font-mono text-xs text-slate-300 mb-2 overflow-x-auto">
+                            {v.location.evidence}
+                          </div>
+                        )}
+                        {v.fix_suggestion && (
+                          <div className="flex items-start gap-2 text-sm">
+                            <span className="text-cyan-400">💡</span>
+                            <span className="text-cyan-300">{v.fix_suggestion}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Recommendations */}
+              {complianceReport.recommendations?.length > 0 && (
+                <div>
+                  <h4 className="text-lg font-semibold text-white mb-4">Recommendations</h4>
+                  <div className="space-y-3">
+                    {complianceReport.recommendations.map((rec: any, i: number) => (
+                      <div key={i} className="glass rounded-xl p-4 border border-white/5">
+                        <div className="flex items-start gap-4">
+                          <div className="flex-shrink-0 w-8 h-8 bg-violet-500/20 rounded-full flex items-center justify-center text-violet-400 font-bold">
+                            {rec.priority}
+                          </div>
+                          <div className="flex-1">
+                            <h5 className="text-white font-medium mb-1">{rec.title}</h5>
+                            <div className="flex flex-wrap gap-3 text-xs text-slate-400 mb-2">
+                              <span>Severity: <span className={
+                                rec.severity === 'critical' ? 'text-red-400' :
+                                rec.severity === 'high' ? 'text-orange-400' :
+                                rec.severity === 'medium' ? 'text-amber-400' :
+                                'text-slate-400'
+                              }>{rec.severity}</span></span>
+                              <span>Occurrences: {rec.occurrences}</span>
+                              <span>Effort: {rec.effort}</span>
+                            </div>
+                            <p className="text-sm text-slate-300">{rec.action}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Signature */}
+              {complianceReport.signature && (
+                <div className="glass rounded-xl p-4 border border-emerald-500/20 bg-emerald-500/5">
+                  <div className="flex items-center gap-3 mb-2">
+                    <Lock className="w-5 h-5 text-emerald-400" />
+                    <span className="text-sm font-semibold text-emerald-400">Cryptographically Signed</span>
+                  </div>
+                  <div className="font-mono text-xs text-slate-500 break-all">
+                    {complianceReport.signature.value?.slice(0, 64)}...
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    Fingerprint: {complianceReport.signature.public_key_fingerprint}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
