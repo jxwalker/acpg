@@ -34,6 +34,7 @@ The system produces **cryptographically-signed proof bundles** that serve as tam
 - **📜 38+ Security Policies** - OWASP, NIST, custom rules
 - **🔍 Static Analysis Integration** - Bandit, ESLint, Safety with tool-to-policy mapping
 - **🔐 Proof Bundles** - ECDSA-signed compliance certificates with code inclusion
+- **📤 Export Formats** - Export proof bundles as JSON, Markdown, HTML, or Summary
 - **⚡ LangGraph Orchestration** - Stateful agent workflows
 - **🌐 REST API + Web UI** - FastAPI backend, React frontend
 - **🛠️ Tool Management UI** - Configure tools, browse rules, manage mappings
@@ -259,6 +260,17 @@ Proof bundles are **tamper-proof** - the code is included and cryptographically 
 
 **Tamper Detection**: Any modification to code, policies, or evidence invalidates the signature.
 
+### Exporting Proof Bundles
+
+Proof bundles can be exported in multiple formats for sharing and documentation:
+
+- **JSON**: Full structured data (default)
+- **Markdown**: Human-readable report with sections for policies, evidence, and argumentation
+- **HTML**: Styled report with color-coded sections, ready for web viewing
+- **Summary**: Plain text summary with key information
+
+Export options are available in both the proof bundle view and the proof verifier UI.
+
 ## 🔌 API Reference
 
 | Endpoint | Method | Description |
@@ -271,6 +283,7 @@ Proof bundles are **tamper-proof** - the code is included and cryptographically 
 | `/api/v1/enforce` | POST | Full compliance loop |
 | `/api/v1/proof/generate` | POST | Generate proof bundle |
 | `/api/v1/proof/verify` | POST | Verify proof signature |
+| `/api/v1/proof/export` | POST | Export proof bundle (JSON/Markdown/HTML/Summary) |
 | `/api/v1/llm/providers` | GET | List LLM providers |
 | `/api/v1/llm/switch` | POST | Switch active LLM |
 | `/api/v1/langgraph/enforce` | POST | LangGraph workflow |
