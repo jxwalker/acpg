@@ -226,17 +226,33 @@ export default function App() {
   const handleEnforce = useCallback(async () => {
     setError(null);
     setOriginalCode(code); // Save original for diff
+    setAnalysisProgress({ phase: 'starting', message: 'Starting enforcement...' });
     setWorkflow({ step: 'prosecutor', iteration: 1, maxIterations: 3, violations: 0 });
     
     try {
+      setAnalysisProgress({ phase: 'tools', message: 'Running static analysis tools...' });
       const analysisResult = await api.analyze(code, language);
+      
+      if (analysisResult.tool_execution) {
+        const tools = Object.keys(analysisResult.tool_execution);
+        if (tools.length > 0) {
+          setAnalysisProgress({ 
+            phase: 'tools', 
+            message: `Tools executed: ${tools.join(', ')}`,
+            tool: tools[0]
+          });
+        }
+      }
+      
       setAnalysis(analysisResult);
       setWorkflow(w => ({ ...w, violations: analysisResult.violations.length }));
       
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 300));
+      setAnalysisProgress({ phase: 'adjudicating', message: 'Adjudicating compliance...' });
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
       
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 300));
+      setAnalysisProgress({ phase: 'generating', message: 'Generating fixes...' });
       setWorkflow(w => ({ ...w, step: 'generator' }));
       
       const result = await api.enforce(code, language, 3);
@@ -249,17 +265,22 @@ export default function App() {
       }
       
       setWorkflow(w => ({ ...w, step: 'proof', iteration: result.iterations }));
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 300));
       
+      setAnalysisProgress({ phase: 'tools', message: 'Re-analyzing fixed code...' });
       const finalAnalysis = await api.analyze(result.final_code, language);
       setAnalysis(finalAnalysis);
       
+      setAnalysisProgress({ phase: 'adjudicating', message: 'Final adjudication...' });
       const adjResult = await api.adjudicate(finalAnalysis);
       setAdjudication(adjResult);
       
+      setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
       setWorkflow(w => ({ ...w, step: 'complete', violations: finalAnalysis.violations.length }));
+      setTimeout(() => setAnalysisProgress(null), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Enforcement failed');
+      setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
   }, [code, language]);
