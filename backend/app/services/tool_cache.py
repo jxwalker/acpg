@@ -29,6 +29,8 @@ class ToolCache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.ttl = ttl or settings.STATIC_ANALYSIS_CACHE_TTL
+        self._hits = 0
+        self._misses = 0
     
     def _get_cache_key(self, tool_name: str, content_hash: str, tool_version: Optional[str] = None) -> str:
         """Generate cache key."""
@@ -62,6 +64,7 @@ class ToolCache:
         cache_path = self._get_cache_path(cache_key)
         
         if not cache_path.exists():
+            self._misses += 1
             return None
         
         try:
@@ -75,9 +78,11 @@ class ToolCache:
             if age > self.ttl:
                 logger.debug(f"Cache expired for {tool_name} (age: {age:.0f}s > {self.ttl}s)")
                 cache_path.unlink()  # Delete expired cache
+                self._misses += 1
                 return None
             
             logger.debug(f"Cache hit for {tool_name} (age: {age:.0f}s)")
+            self._hits += 1
             return cached_data.get('result')
             
         except Exception as e:
@@ -139,21 +144,24 @@ class ToolCache:
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         try:
-            if not self.cache_dir.exists():
-                return {
-                    "cache_dir": str(self.cache_dir),
-                    "total_entries": 0,
-                    "total_size_bytes": 0,
-                    "ttl_seconds": self.ttl
-                }
+            total_files = 0
+            total_size = 0
             
-            total_files = sum(1 for _ in self.cache_dir.rglob("*.json"))
-            total_size = sum(f.stat().st_size for f in self.cache_dir.rglob("*.json"))
+            if self.cache_dir.exists():
+                total_files = sum(1 for _ in self.cache_dir.rglob("*.json"))
+                total_size = sum(f.stat().st_size for f in self.cache_dir.rglob("*.json"))
+            
+            total_requests = self._hits + self._misses
+            hit_rate = (self._hits / total_requests * 100) if total_requests > 0 else 0.0
             
             return {
                 "cache_dir": str(self.cache_dir),
                 "total_entries": total_files,
                 "total_size_bytes": total_size,
+                "total_size_mb": round(total_size / (1024 * 1024), 2),
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": round(hit_rate, 2),
                 "ttl_seconds": self.ttl
             }
         except Exception as e:
@@ -162,6 +170,10 @@ class ToolCache:
                 "cache_dir": str(self.cache_dir),
                 "total_entries": 0,
                 "total_size_bytes": 0,
+                "total_size_mb": 0.0,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": 0.0,
                 "ttl_seconds": self.ttl
             }
 

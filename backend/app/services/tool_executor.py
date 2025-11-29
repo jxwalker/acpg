@@ -256,8 +256,10 @@ class ToolExecutor:
                         content,
                         {
                             'output': exec_result.output,
-                            'exit_code': exec_result.exit_code
-                        }
+                            'exit_code': exec_result.exit_code,
+                            'tool_version': exec_result.tool_version
+                        },
+                        tool_version=exec_result.tool_version  # Include version in cache key
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cache result for {tool_config.name}: {e}")

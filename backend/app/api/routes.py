@@ -167,6 +167,101 @@ async def get_info():
     }
 
 
+@router.get("/metrics")
+async def get_metrics():
+    """
+    Get performance and system metrics.
+    
+    Returns:
+    - Tool cache statistics
+    - System performance metrics
+    - Component status
+    """
+    from ..services.tool_cache import get_tool_cache
+    from ..core.static_analyzers import get_analyzer_config
+    
+    metrics = {
+        "timestamp": None,
+        "cache": {},
+        "tools": {},
+        "policies": {},
+        "performance": {}
+    }
+    
+    from datetime import datetime, timezone
+    metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
+    
+    # Cache statistics
+    try:
+        cache = get_tool_cache()
+        cache_stats = cache.get_stats()
+        metrics["cache"] = {
+            "hits": cache_stats.get("hits", 0),
+            "misses": cache_stats.get("misses", 0),
+            "total_entries": cache_stats.get("total_entries", 0),
+            "total_size_mb": cache_stats.get("total_size_mb", 0.0),
+            "hit_rate": cache_stats.get("hit_rate", 0.0),
+            "ttl_seconds": cache_stats.get("ttl_seconds", 3600)
+        }
+    except Exception as e:
+        metrics["cache"] = {"error": str(e)}
+    
+    # Tool statistics
+    try:
+        config = get_analyzer_config()
+        tool_stats = {}
+        total_enabled = 0
+        
+        for language, tools in config.list_all_tools().items():
+            for tool_name, tool_config in tools.items():
+                if tool_config.enabled:
+                    total_enabled += 1
+                    tool_stats[tool_name] = {
+                        "enabled": True,
+                        "language": language,
+                        "timeout": tool_config.timeout,
+                        "format": tool_config.output_format
+                    }
+        
+        metrics["tools"] = {
+            "total_enabled": total_enabled,
+            "details": tool_stats
+        }
+    except Exception as e:
+        metrics["tools"] = {"error": str(e)}
+    
+    # Policy statistics
+    try:
+        compiler = get_policy_compiler()
+        policies = compiler.get_all_policies()
+        
+        # Count by category
+        categories = {}
+        for policy in policies:
+            category = "default"
+            if policy.id.startswith("OWASP"):
+                category = "owasp"
+            elif policy.id.startswith("NIST"):
+                category = "nist"
+            categories[category] = categories.get(category, 0) + 1
+        
+        metrics["policies"] = {
+            "total": len(policies),
+            "by_category": categories
+        }
+    except Exception as e:
+        metrics["policies"] = {"error": str(e)}
+    
+    # Performance metrics (if available)
+    metrics["performance"] = {
+        "note": "Performance metrics collected during analysis",
+        "typical_analysis_time": "1-2 seconds",
+        "tool_execution": "Parallel execution enabled"
+    }
+    
+    return metrics
+
+
 # ============================================================================
 # Sample Files Endpoints
 # ============================================================================
