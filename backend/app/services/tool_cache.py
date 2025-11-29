@@ -138,15 +138,32 @@ class ToolCache:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        total_files = sum(1 for _ in self.cache_dir.rglob("*.json"))
-        total_size = sum(f.stat().st_size for f in self.cache_dir.rglob("*.json"))
-        
-        return {
-            "cache_dir": str(self.cache_dir),
-            "total_entries": total_files,
-            "total_size_bytes": total_size,
-            "ttl_seconds": self.ttl
-        }
+        try:
+            if not self.cache_dir.exists():
+                return {
+                    "cache_dir": str(self.cache_dir),
+                    "total_entries": 0,
+                    "total_size_bytes": 0,
+                    "ttl_seconds": self.ttl
+                }
+            
+            total_files = sum(1 for _ in self.cache_dir.rglob("*.json"))
+            total_size = sum(f.stat().st_size for f in self.cache_dir.rglob("*.json"))
+            
+            return {
+                "cache_dir": str(self.cache_dir),
+                "total_entries": total_files,
+                "total_size_bytes": total_size,
+                "ttl_seconds": self.ttl
+            }
+        except Exception as e:
+            logger.warning(f"Error getting cache stats: {e}")
+            return {
+                "cache_dir": str(self.cache_dir),
+                "total_entries": 0,
+                "total_size_bytes": 0,
+                "ttl_seconds": self.ttl
+            }
 
 
 # Global cache instance

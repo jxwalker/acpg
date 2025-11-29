@@ -123,27 +123,44 @@ async def get_sample_file(filename: str):
 @router.get("/static-analysis/tools")
 async def list_static_analysis_tools():
     """List all configured static analysis tools."""
-    config = get_analyzer_config()
-    all_tools = config.list_all_tools()
-    
-    # Format for frontend
-    tools_by_language = {}
-    for language, tools in all_tools.items():
-        tools_by_language[language] = [
-            {
-                "name": tool.name,
-                "enabled": tool.enabled,
-                "timeout": tool.timeout,
-                "output_format": tool.output_format,
-                "requires_config": tool.requires_config
+    try:
+        config = get_analyzer_config()
+        all_tools = config.list_all_tools()
+        
+        # Format for frontend
+        tools_by_language = {}
+        for language, tools in all_tools.items():
+            tools_by_language[language] = [
+                {
+                    "name": tool.name,
+                    "enabled": tool.enabled,
+                    "timeout": tool.timeout,
+                    "output_format": tool.output_format,
+                    "requires_config": tool.requires_config
+                }
+                for tool in tools.values()
+            ]
+        
+        # Get cache stats with error handling
+        try:
+            cache_stats = get_tool_cache().get_stats()
+        except Exception as e:
+            # If cache stats fail, return empty stats
+            cache_stats = {
+                "cache_dir": "unknown",
+                "total_entries": 0,
+                "total_size_bytes": 0,
+                "ttl_seconds": 3600
             }
-            for tool in tools.values()
-        ]
-    
-    return {
-        "tools_by_language": tools_by_language,
-        "cache_stats": get_tool_cache().get_stats()
-    }
+        
+        return {
+            "tools_by_language": tools_by_language,
+            "cache_stats": cache_stats
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error in /static-analysis/tools: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error loading tools configuration: {str(e)}")
 
 
 # ============================================================================
