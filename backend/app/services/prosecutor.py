@@ -4,6 +4,7 @@ import json
 import tempfile
 import os
 import re
+import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from .language_detector import get_language_detector
 from .tool_executor import get_tool_executor
 from .tool_mapper import get_tool_mapper
 from .parsers import BanditParser, ESLintParser, SarifParser
+
+logger = logging.getLogger(__name__)
 
 
 class Prosecutor:
