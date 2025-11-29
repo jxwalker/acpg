@@ -231,9 +231,32 @@ POST /api/v1/analyze
 4. Combined with regex checks
 5. Returned in AnalysisResult
 
-### Option 2: Enable/Disable Tools
+### Option 2: Enable/Disable Tools via UI
 
-Configure in `backend/app/core/static_analyzers.py`:
+**Using the Web Interface:**
+
+1. Navigate to the **Tools** tab in the ACPG UI
+2. Click on the **Tools** sub-tab (default)
+3. You'll see all tools organized by language
+4. Use the toggle switch next to each tool to enable/disable it
+5. Changes are saved automatically to `policies/tool_config.json`
+
+**Example:**
+- Python tools: bandit (enabled), pylint (disabled), safety (enabled)
+- JavaScript tools: eslint (enabled)
+- Toggle pylint ON to enable it for future analyses
+
+**Using the API:**
+
+```bash
+# Enable a tool
+PATCH /api/v1/static-analysis/tools/{language}/{tool_name}?enabled=true
+
+# Disable a tool
+PATCH /api/v1/static-analysis/tools/{language}/{tool_name}?enabled=false
+```
+
+**Using Python Code:**
 
 ```python
 # Enable/disable specific tools
@@ -247,9 +270,45 @@ Or via environment:
 ENABLE_STATIC_ANALYSIS=true  # Enable/disable all tools
 ```
 
-### Option 3: Add Custom Tool Mappings
+### Option 3: View and Manage Tool Mappings
 
-Edit `policies/tool_mappings.json`:
+**Using the Web Interface:**
+
+1. Navigate to the **Tools** tab in the ACPG UI
+2. Click on the **Mappings** sub-tab
+3. View all tool-to-policy mappings organized by tool
+4. See which tool rules map to which ACPG policies
+5. View confidence levels and severity for each mapping
+
+**Example Mapping Display:**
+- **bandit** → B608 → SQL-001 (high confidence, critical severity)
+- **eslint** → no-eval → SEC-003 (high confidence, high severity)
+
+**Using the API:**
+
+```bash
+# Get all mappings
+GET /api/v1/static-analysis/mappings
+
+# Update mappings (requires editing tool_mappings.json file)
+PUT /api/v1/static-analysis/mappings
+{
+  "mappings": {
+    "bandit": {
+      "B999": {
+        "policy_id": "CUSTOM-001",
+        "confidence": "medium",
+        "severity": "high",
+        "description": "Custom rule mapping"
+      }
+    }
+  }
+}
+```
+
+**Editing Mappings File:**
+
+Edit `policies/tool_mappings.json` directly:
 
 ```json
 {
@@ -257,7 +316,8 @@ Edit `policies/tool_mappings.json`:
     "B999": {
       "policy_id": "CUSTOM-001",
       "confidence": "medium",
-      "severity": "high"
+      "severity": "high",
+      "description": "Custom rule mapping"
     }
   }
 }
@@ -417,10 +477,27 @@ STATIC_ANALYSIS_CACHE_TTL = 3600  # seconds
 
 To verify tools are working:
 
-1. **Check Tools Tab**: View enabled tools in UI
-2. **Check Violations**: Look for tool badges (bandit, eslint) on violations
-3. **Check Proof Bundle**: Look for `tools_used` in argumentation section
-4. **Check Evidence**: Evidence objects should have `tool` field populated
+1. **Check Tools Tab**: 
+   - Navigate to **Tools** → **Tools** sub-tab
+   - Verify tools are enabled/disabled as expected
+   - Check cache statistics are displayed
+
+2. **Check Mappings Tab**:
+   - Navigate to **Tools** → **Mappings** sub-tab
+   - Verify tool rules are mapped to policies
+   - Check confidence and severity levels
+
+3. **Check Violations**: 
+   - Look for tool badges (bandit, eslint) on violations
+   - Tool name should appear next to violation description
+
+4. **Check Proof Bundle**: 
+   - Look for `tools_used` in argumentation section
+   - Verify tool metadata in evidence objects
+
+5. **Check Evidence**: 
+   - Evidence objects should have `tool` field populated
+   - Tool rule IDs should be present in evidence
 
 ---
 

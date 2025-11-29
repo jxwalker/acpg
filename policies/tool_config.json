@@ -1,0 +1,23 @@
+{
+  "python": {
+    "bandit": {
+      "enabled": true
+    },
+    "pylint": {
+      "enabled": false
+    },
+    "safety": {
+      "enabled": true
+    }
+  },
+  "javascript": {
+    "eslint": {
+      "enabled": true
+    }
+  },
+  "typescript": {
+    "eslint": {
+      "enabled": true
+    }
+  }
+}
