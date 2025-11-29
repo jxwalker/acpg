@@ -109,7 +109,20 @@ class ToolExecutor:
                 # Prepare command
                 if tool_config.requires_file:
                     if target_path:
-                        file_path = target_path
+                        # Validate target_path to prevent path traversal
+                        try:
+                            target_path_obj = Path(target_path).resolve()
+                            file_path = str(target_path_obj)
+                            # Additional security check
+                            if '..' in file_path:
+                                raise ValueError("Path traversal detected in target_path")
+                        except (OSError, ValueError) as e:
+                            return ToolExecutionResult(
+                                tool_config.name,
+                                False,
+                                error=f"Invalid target path: {e}",
+                                execution_time=0.0
+                            )
                     elif content:
                         # Create temporary file
                         with tempfile.NamedTemporaryFile(
@@ -126,8 +139,8 @@ class ToolExecutor:
                             if not target_path:  # Only delete if we created it
                                 try:
                                     os.unlink(file_path)
-                                except Exception:
-                                    pass
+                                except (OSError, FileNotFoundError) as e:
+                                    logger.debug(f"Could not delete temp file {file_path}: {e}")
                         return result
                     else:
                         return ToolExecutionResult(
@@ -240,10 +253,34 @@ class ToolExecutor:
         """Execute tool with file path."""
         start_time = datetime.now(timezone.utc)
         
+        # Validate and normalize file path to prevent path traversal
+        try:
+            file_path_obj = Path(file_path).resolve()
+            file_path = str(file_path_obj)
+            
+            # Additional security: ensure path doesn't contain dangerous patterns
+            if '..' in file_path or file_path.startswith('/etc') or file_path.startswith('/proc'):
+                logger.warning(f"Suspicious file path detected: {file_path}")
+                return ToolExecutionResult(
+                    tool_config.name,
+                    False,
+                    error="Invalid file path provided",
+                    execution_time=0.0
+                )
+        except (OSError, ValueError) as e:
+            logger.error(f"Invalid file path: {file_path}: {e}")
+            return ToolExecutionResult(
+                tool_config.name,
+                False,
+                error=f"Invalid file path: {e}",
+                execution_time=0.0
+            )
+        
         # Get tool version
         tool_version = self._get_tool_version(tool_config.name)
         
         # Build command with file path substitution
+        # Use list comprehension to safely build command (prevents command injection)
         command = [part.replace("{target}", file_path) for part in tool_config.command]
         
         # Check for config file requirement

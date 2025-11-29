@@ -488,7 +488,7 @@ class ProofAssembler:
             
             # Tools used in analysis
             "tools_used": sorted(list(tools_used)) if tools_used else [],
-            "tool_versions": tool_versions,  # TODO: Extract actual versions from tool execution
+            "tool_versions": tool_versions,  # Tool versions extracted from tool execution
             
             # Arguments in the framework
             "arguments": [],
