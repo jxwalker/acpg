@@ -1,6 +1,6 @@
 """Proof Assembler Service - Compile and sign proof-carrying artifacts."""
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..models.schemas import (
     ProofBundle, ArtifactMetadata, PolicyOutcome, Evidence,
