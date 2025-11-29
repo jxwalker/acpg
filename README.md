@@ -32,9 +32,11 @@ The system produces **cryptographically-signed proof bundles** that serve as tam
 - **🔄 Automated Compliance Loop** - Analyze → Fix → Verify → Certify
 - **🧠 Multi-LLM Support** - OpenAI, local vLLM, Ollama
 - **📜 38+ Security Policies** - OWASP, NIST, custom rules
-- **🔐 Proof Bundles** - ECDSA-signed compliance certificates
+- **🔍 Static Analysis Integration** - Bandit, ESLint, Safety with tool-to-policy mapping
+- **🔐 Proof Bundles** - ECDSA-signed compliance certificates with code inclusion
 - **⚡ LangGraph Orchestration** - Stateful agent workflows
 - **🌐 REST API + Web UI** - FastAPI backend, React frontend
+- **🛠️ Tool Management UI** - Configure tools, browse rules, manage mappings
 - **🐳 Docker Ready** - One-command deployment
 
 ## 🏗️ Architecture
@@ -59,7 +61,7 @@ The system produces **cryptographically-signed proof bundles** that serve as tam
 
 ## 🚀 Quick Start
 
-### Option 1: Local Development
+### Option 1: Using Service Management Scripts (Recommended)
 
 ```bash
 # Clone the repository
@@ -72,17 +74,35 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
+# Install static analysis tools (optional but recommended)
+pip install bandit safety
+
 # Configure LLM (edit llm_config.yaml for local models)
 # Or set OpenAI API key:
 export OPENAI_API_KEY="sk-your-key"
 
-# Start backend
-uvicorn main:app --reload --port 8000
+# Start all services (automatically finds free ports)
+./scripts/start.sh
 
-# Frontend setup (new terminal)
+# Check status
+./scripts/status.sh
+
+# Stop services
+./scripts/stop.sh
+```
+
+### Option 2: Manual Start
+
+```bash
+# Backend
+cd backend
+source venv/bin/activate
+uvicorn main:app --reload --port 6000
+
+# Frontend (new terminal)
 cd frontend
 npm install
-npm run dev
+npm run dev  # Runs on port 6001
 ```
 
 ### Option 2: Docker
@@ -122,10 +142,23 @@ curl -X POST http://localhost:8000/api/v1/llm/switch \
 
 ### Web UI
 
-1. Open http://localhost:3000
-2. Paste code in the editor
-3. Click **"Analyze"** to detect violations
-4. Click **"Auto-Fix & Certify"** to fix and generate proof
+1. Open http://localhost:6001 (or port shown by `./scripts/status.sh`)
+2. **Configure Tools** (Tools tab):
+   - Enable/disable static analysis tools (Bandit, ESLint, etc.)
+   - Browse available tool rules
+   - Create mappings from tool rules to ACPG policies
+3. **Analyze Code** (Editor tab):
+   - Paste code in the editor
+   - Click **"Analyze"** to detect violations
+   - View tool execution status and unmapped findings
+   - See violations with tool badges (e.g., [bandit])
+4. **Create Mappings** (if needed):
+   - Click "Map Rule" on unmapped findings
+   - Or browse rules in Tools → Browse Rules
+   - Map tool rules to policies for automatic violation detection
+5. **Auto-Fix & Certify**:
+   - Click **"Auto-Fix & Certify"** to fix violations and generate proof
+   - View tamper-proof proof bundle with included code
 
 ### REST API
 
@@ -187,6 +220,8 @@ response = requests.post("http://localhost:8000/api/v1/langgraph/enforce", json=
 
 ## 🔐 Proof Bundle Structure
 
+Proof bundles are **tamper-proof** - the code is included and cryptographically signed:
+
 ```json
 {
   "artifact": {
@@ -195,18 +230,34 @@ response = requests.post("http://localhost:8000/api/v1/langgraph/enforce", json=
     "generator": "ACPG-Qwen2.5-Coder",
     "timestamp": "2024-11-28T10:30:00Z"
   },
+  "code": "def secure_function():\n    ...",  // Actual code (tamper-proof)
   "policies": [
     {"id": "SEC-001", "result": "satisfied"},
     {"id": "SQL-001", "result": "satisfied"}
   ],
+  "evidence": [
+    {
+      "rule_id": "SQL-001",
+      "tool": "bandit",
+      "tool_rule_id": "B608",
+      "output": "Line 5: SQL injection detected"
+    }
+  ],
+  "argumentation": {
+    "tools_used": ["bandit", "safety"],
+    "tool_versions": {"bandit": "1.7.5"},
+    "framework": "Dung's Abstract Argumentation Framework"
+  },
   "decision": "Compliant",
   "signed": {
     "signature": "MEUCIQDx...",
     "algorithm": "ECDSA-SHA256",
-    "public_key": "-----BEGIN PUBLIC KEY-----..."
+    "public_key_fingerprint": "516e29c929b926fb"
   }
 }
 ```
+
+**Tamper Detection**: Any modification to code, policies, or evidence invalidates the signature.
 
 ## 🔌 API Reference
 
@@ -223,6 +274,11 @@ response = requests.post("http://localhost:8000/api/v1/langgraph/enforce", json=
 | `/api/v1/llm/providers` | GET | List LLM providers |
 | `/api/v1/llm/switch` | POST | Switch active LLM |
 | `/api/v1/langgraph/enforce` | POST | LangGraph workflow |
+| `/api/v1/static-analysis/tools` | GET | List static analysis tools |
+| `/api/v1/static-analysis/tools/{lang}/{tool}` | PUT | Enable/disable tool |
+| `/api/v1/static-analysis/mappings` | GET/PUT | Get/update tool mappings |
+| `/api/v1/static-analysis/mappings/{tool}/{rule}` | POST/DELETE | Add/delete mapping |
+| `/api/v1/static-analysis/rules` | GET | Browse available tool rules |
 
 ## 🧪 Testing
 
@@ -264,8 +320,11 @@ acpg/
 - Explains all changes made
 
 ### 2. Prosecutor Agent
-- **Bandit** - Python security linter
+- **Static Analysis Tools** - Bandit, ESLint, Safety, Pylint (configurable)
+- **Tool-to-Policy Mapping** - Map tool findings to ACPG policies
 - **40+ regex patterns** - Custom policy rules
+- **Unmapped Findings Discovery** - See what tools found but aren't mapped
+- **Tool Version Tracking** - Traceability for compliance audits
 - Generates detailed violation reports with evidence
 
 ### 3. Adjudicator Engine
@@ -276,11 +335,15 @@ acpg/
 
 ## 🔒 Security Notes
 
-- API keys are loaded from environment variables
-- Proof signatures use ECDSA-SHA256
-- Keys can be ephemeral or persistent (configurable)
-- Rate limiting protects against abuse
-- Audit logs track all compliance decisions
+- **Tamper-Proof Proof Bundles**: Code is included and cryptographically signed
+  - Any modification to code, policies, or evidence invalidates signature
+  - Code hash verified against artifact hash
+  - Full integrity verification available via `/api/v1/proof/verify`
+- **API keys** are loaded from environment variables
+- **Proof signatures** use ECDSA-SHA256 with persistent keys
+- **Rate limiting** protects against abuse
+- **Audit logs** track all compliance decisions
+- **Tool version tracking** for compliance traceability
 
 ## 🛣️ Roadmap
 
