@@ -210,6 +210,7 @@ class Prosecutor:
                 mapped_findings=mapped_count,
                 unmapped_findings=unmapped_count,
                 execution_time=result.execution_time,
+                tool_version=getattr(result, 'tool_version', None),  # Extract tool version
                 findings=raw_findings if findings_count > 0 else None  # Include all findings for visibility
             )
         

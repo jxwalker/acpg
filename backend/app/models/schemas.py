@@ -47,6 +47,7 @@ class ToolExecutionInfo(BaseModel):
     mapped_findings: int = 0
     unmapped_findings: int = 0
     execution_time: Optional[float] = None
+    tool_version: Optional[str] = None  # Tool version (e.g., "1.7.5")
     error: Optional[str] = None
     findings: Optional[List[Dict[str, Any]]] = None  # Raw findings for debugging
 

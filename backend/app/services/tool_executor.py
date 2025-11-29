@@ -21,13 +21,14 @@ class ToolExecutionResult:
     
     def __init__(self, tool_name: str, success: bool, output: Optional[str] = None,
                  error: Optional[str] = None, execution_time: float = 0.0,
-                 exit_code: Optional[int] = None):
+                 exit_code: Optional[int] = None, tool_version: Optional[str] = None):
         self.tool_name = tool_name
         self.success = success
         self.output = output
         self.error = error
         self.execution_time = execution_time
         self.exit_code = exit_code
+        self.tool_version = tool_version
         self.timestamp = datetime.now(timezone.utc)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -39,6 +40,7 @@ class ToolExecutionResult:
             "error": self.error,
             "execution_time": self.execution_time,
             "exit_code": self.exit_code,
+            "tool_version": self.tool_version,
             "timestamp": self.timestamp.isoformat()
         }
 
@@ -137,6 +139,41 @@ class ToolExecutor:
                 execution_time=execution_time
             )
     
+    def _get_tool_version(self, tool_name: str) -> Optional[str]:
+        """Get tool version by running --version or similar."""
+        try:
+            # Try common version flags
+            version_commands = [
+                [tool_name, "--version"],
+                [tool_name, "-v"],
+                [tool_name, "version"]
+            ]
+            
+            for cmd in version_commands:
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=False
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        # Extract version number (e.g., "bandit 1.7.5" -> "1.7.5")
+                        output = result.stdout.strip()
+                        # Try to find version pattern
+                        import re
+                        version_match = re.search(r'(\d+\.\d+\.\d+)', output)
+                        if version_match:
+                            return version_match.group(1)
+                        # Fallback: return first line
+                        return output.split('\n')[0].strip()
+                except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                    continue
+        except Exception:
+            pass
+        return None
+    
     def _execute_with_file(
         self,
         tool_config: ToolConfig,
@@ -147,6 +184,9 @@ class ToolExecutor:
     ) -> ToolExecutionResult:
         """Execute tool with file path."""
         start_time = datetime.now(timezone.utc)
+        
+        # Get tool version
+        tool_version = self._get_tool_version(tool_config.name)
         
         # Build command with file path substitution
         command = [part.replace("{target}", file_path) for part in tool_config.command]
@@ -195,7 +235,8 @@ class ToolExecutor:
                 output=output,
                 error=result.stderr if result.returncode != 0 and not output else None,
                 execution_time=execution_time,
-                exit_code=result.returncode
+                exit_code=result.returncode,
+                tool_version=tool_version
             )
             
             # Cache successful results

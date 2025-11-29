@@ -1067,6 +1067,35 @@ export default function App() {
                 <ToolExecutionStatus toolExecution={analysis.tool_execution} />
               )}
 
+              {/* Unmapped Findings - Prominent Section */}
+              {analysis && analysis.tool_execution && (() => {
+                const allUnmapped: Array<{tool: string; finding: any}> = [];
+                Object.entries(analysis.tool_execution).forEach(([toolName, info]: [string, any]) => {
+                  if (info.success && info.findings) {
+                    info.findings
+                      .filter((f: any) => !f.mapped)
+                      .forEach((finding: any) => {
+                        allUnmapped.push({ tool: toolName, finding });
+                      });
+                  }
+                });
+                return allUnmapped.length > 0 ? (
+                  <UnmappedFindingsSection 
+                    unmappedFindings={allUnmapped}
+                    onCreateMapping={(toolName: string, ruleId: string) => {
+                      setViewMode('tools');
+                      // Navigate to mappings tab and pre-fill form
+                      setTimeout(() => {
+                        const event = new CustomEvent('createMapping', { 
+                          detail: { toolName, toolRuleId: ruleId } 
+                        });
+                        window.dispatchEvent(event);
+                      }, 100);
+                    }}
+                  />
+                ) : null;
+              })()}
+
               {/* Violations List */}
               {analysis && analysis.violations.length > 0 && (
                 <ViolationsList violations={analysis.violations} policies={policies} />
@@ -1607,6 +1636,9 @@ function ToolExecutionStatus({
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                 <span className="px-2 py-1 text-xs font-mono font-semibold rounded-lg bg-violet-500/20 text-violet-400">
                   {toolName}
+                  {info.tool_version && (
+                    <span className="ml-1 text-violet-300/70">v{info.tool_version}</span>
+                  )}
                 </span>
                 <span className="flex-1 text-sm text-slate-300">
                   {info.findings_count || 0} findings
@@ -3429,6 +3461,27 @@ function ToolMappingsView({
     severity: 'medium',
     description: ''
   });
+  
+  // Listen for createMapping events from unmapped findings
+  useEffect(() => {
+    const handleCreateMapping = (event: CustomEvent) => {
+      const { toolName, toolRuleId } = event.detail;
+      setNewMapping({
+        toolName,
+        toolRuleId,
+        policyId: '',
+        confidence: 'medium',
+        severity: 'medium',
+        description: ''
+      });
+      setShowAddForm(true);
+    };
+    
+    window.addEventListener('createMapping', handleCreateMapping as EventListener);
+    return () => {
+      window.removeEventListener('createMapping', handleCreateMapping as EventListener);
+    };
+  }, []);
 
   const loadMappings = useCallback(() => {
     setLoading(true);

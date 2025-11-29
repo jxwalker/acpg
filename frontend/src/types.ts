@@ -34,6 +34,7 @@ export interface ToolExecutionInfo {
   mapped_findings: number;
   unmapped_findings: number;
   execution_time?: number;
+  tool_version?: string;  // Tool version (e.g., "1.7.5")
   error?: string;
   findings?: Array<{
     rule_id: string;
