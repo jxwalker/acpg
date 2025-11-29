@@ -67,6 +67,7 @@ export interface ArgumentEntry {
   rule_id: string;
   status: string;
   details: string;
+  evidence?: string;
 }
 
 export interface AttackEntry {
@@ -111,6 +112,30 @@ export interface ProofExplanation {
   decision_logic: string[];
 }
 
+export interface GraphNode {
+  id: string;
+  label: string;
+  accepted: boolean;
+  evidence?: string;
+}
+
+export interface GraphViolation {
+  rule_id: string;
+  violation: GraphNode;
+  compliance: GraphNode;
+  exception: GraphNode | null;
+}
+
+export interface GraphVisual {
+  violations: GraphViolation[];
+  compliant_policies: string[];
+  legend: {
+    accepted: string;
+    rejected: string;
+    attacks: string;
+  };
+}
+
 export interface FormalProof {
   framework: string;
   semantics: string;
@@ -120,7 +145,7 @@ export interface FormalProof {
   grounded_extension: GroundedExtension;
   reasoning_trace: Record<string, unknown>[];
   summary: ArgumentationSummary;
-  graph_visual?: string;
+  graph_visual?: GraphVisual;
   explanation?: ProofExplanation;
   conclusion?: {
     decision: string;

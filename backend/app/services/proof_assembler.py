@@ -375,15 +375,20 @@ class ProofAssembler:
         return formal_proof
     
     def _generate_graph_visual(self, compliance_args: List, violation_args: List,
-                                exception_args: List, attacks: List) -> str:
-        """Generate an ASCII art visualization of the argumentation graph."""
-        lines = []
-        lines.append("┌" + "─" * 70 + "┐")
-        lines.append("│" + " " * 20 + "ARGUMENTATION GRAPH" + " " * 31 + "│")
-        lines.append("├" + "─" * 70 + "┤")
-        lines.append("│" + " " * 70 + "│")
+                                exception_args: List, attacks: List) -> Dict[str, Any]:
+        """Generate a structured visualization of the argumentation graph for frontend rendering."""
         
-        # Group violations by rule for cleaner display
+        graph = {
+            "violations": [],
+            "compliant_policies": [],
+            "legend": {
+                "accepted": "Argument is in the grounded extension (claim holds)",
+                "rejected": "Argument is defeated by an accepted attacker (claim does not hold)",
+                "attacks": "One argument contradicts/defeats another"
+            }
+        }
+        
+        # Group violations by rule
         rules_shown = set()
         
         for v_arg in violation_args:
@@ -397,47 +402,46 @@ class ProofAssembler:
             # Find any exception args
             e_args = [e for e in exception_args if e.get("rule_id") == rule_id]
             
-            v_status = "✓ ACCEPTED" if v_arg.get("status") == "accepted" else "✗ REJECTED"
-            c_status = "✓ ACCEPTED" if c_arg and c_arg.get("status") == "accepted" else "✗ REJECTED"
+            v_accepted = v_arg.get("status") == "accepted"
+            c_accepted = c_arg and c_arg.get("status") == "accepted"
+            
+            evidence = v_arg.get("evidence", "")
+            if not evidence:
+                evidence = "(pattern match)"
+            
+            violation_entry = {
+                "rule_id": rule_id,
+                "violation": {
+                    "id": f"V_{rule_id}",
+                    "label": "Violation argument",
+                    "accepted": v_accepted,
+                    "evidence": evidence
+                },
+                "compliance": {
+                    "id": f"C_{rule_id}",
+                    "label": "Compliance argument", 
+                    "accepted": c_accepted
+                },
+                "exception": None
+            }
             
             if e_args:
-                # Show exception -> violation -> compliance chain
                 e_arg = e_args[0]
-                e_status = "✓ ACCEPTED" if e_arg.get("status") == "accepted" else "✗ REJECTED"
-                lines.append("│  ┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐  │")
-                lines.append(f"│  │ E_{rule_id:<12} │─attacks─▶│ V_{rule_id:<12} │─attacks─▶│ C_{rule_id:<12} │  │")
-                lines.append(f"│  │ ({e_status:<10})   │         │ ({v_status:<10})   │         │ ({c_status:<10})   │  │")
-                lines.append("│  └──────────────────┘         └──────────────────┘         └──────────────────┘  │")
-            else:
-                # Show violation -> compliance
-                lines.append("│  ┌──────────────────┐         ┌──────────────────┐" + " " * 22 + "│")
-                lines.append(f"│  │ V_{rule_id:<12} │─attacks─▶│ C_{rule_id:<12} │" + " " * 22 + "│")
-                lines.append(f"│  │ ({v_status:<10})   │         │ ({c_status:<10})   │" + " " * 22 + "│")
-                
-                # Show evidence if available
-                evidence = v_arg.get("evidence", "")
-                if evidence:
-                    evidence_display = evidence[:25] + "..." if len(evidence) > 25 else evidence
-                    lines.append(f"│  │ Evidence: {evidence_display:<17} │" + " " * 41 + "│")
-                
-                lines.append("│  └──────────────────┘         └──────────────────┘" + " " * 22 + "│")
+                e_accepted = e_arg.get("status") == "accepted"
+                violation_entry["exception"] = {
+                    "id": f"E_{rule_id}",
+                    "label": "Exception argument",
+                    "accepted": e_accepted
+                }
             
-            lines.append("│" + " " * 70 + "│")
+            graph["violations"].append(violation_entry)
         
-        # Show compliant policies (no violations)
+        # Compliant policies (no violations)
         compliant_only = [c for c in compliance_args 
                          if c.get("rule_id") not in rules_shown and c.get("status") == "accepted"]
-        if compliant_only:
-            lines.append("│  Policies with no violations (compliance arguments accepted):" + " " * 8 + "│")
-            policy_list = ", ".join([c.get("rule_id", "?") for c in compliant_only[:5]])
-            if len(compliant_only) > 5:
-                policy_list += f" ... (+{len(compliant_only)-5} more)"
-            lines.append(f"│    {policy_list:<66} │")
-            lines.append("│" + " " * 70 + "│")
+        graph["compliant_policies"] = [c.get("rule_id", "?") for c in compliant_only]
         
-        lines.append("└" + "─" * 70 + "┘")
-        
-        return "\n".join(lines)
+        return graph
     
     def _generate_detailed_explanation(self, adjudication: AdjudicationResult,
                                         compliance_args: List, violation_args: List,

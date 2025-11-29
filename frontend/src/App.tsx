@@ -1745,6 +1745,202 @@ function ProofBundleView({
   );
 }
 
+// Visual Argumentation Graph Component
+function ArgumentationGraphVisual({ proof }: { proof: ProofBundle }) {
+  const args = proof.argumentation?.arguments || [];
+  
+  // Group arguments by rule
+  const violationArgs = args.filter(a => a.type === 'violation');
+  const complianceArgs = args.filter(a => a.type === 'compliance');
+  const exceptionArgs = args.filter(a => a.type === 'exception');
+  
+  // Get unique violated rules
+  const violatedRules = [...new Set(violationArgs.map(a => a.rule_id))];
+  const satisfiedRules = complianceArgs
+    .filter(a => a.status === 'accepted' && !violatedRules.includes(a.rule_id))
+    .map(a => a.rule_id);
+
+  if (args.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="glass rounded-2xl p-6 border border-white/5">
+      <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <GitBranch className="w-5 h-5 text-violet-400" />
+        Argumentation Graph
+      </h3>
+      
+      {/* Legend */}
+      <div className="flex gap-6 mb-6 text-xs">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
+          <span className="text-slate-400">Accepted (claim holds)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-red-500"></div>
+          <span className="text-slate-400">Rejected (claim defeated)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-0.5 bg-orange-500"></div>
+          <span className="text-orange-400">→</span>
+          <span className="text-slate-400">attacks</span>
+        </div>
+      </div>
+
+      {/* Violation chains */}
+      {violatedRules.length > 0 && (
+        <div className="space-y-4 mb-6">
+          <h4 className="text-sm font-semibold text-red-400 uppercase tracking-wider">
+            Violated Policies ({violatedRules.length})
+          </h4>
+          {violatedRules.map(ruleId => {
+            const violation = violationArgs.find(a => a.rule_id === ruleId);
+            const compliance = complianceArgs.find(a => a.rule_id === ruleId);
+            const exception = exceptionArgs.find(a => a.rule_id === ruleId);
+            
+            return (
+              <div key={ruleId} className="flex items-center gap-3 p-4 bg-slate-800/50 rounded-xl">
+                {/* Exception (if any) */}
+                {exception && (
+                  <>
+                    <div className={`flex-shrink-0 p-3 rounded-lg border-2 ${
+                      exception.status === 'accepted' 
+                        ? 'bg-emerald-500/10 border-emerald-500/50' 
+                        : 'bg-slate-700/50 border-slate-600/50'
+                    }`}>
+                      <div className="text-xs font-mono font-bold text-amber-400">E_{ruleId}</div>
+                      <div className={`text-xs mt-1 ${
+                        exception.status === 'accepted' ? 'text-emerald-400' : 'text-slate-500'
+                      }`}>
+                        {exception.status === 'accepted' ? '✓ ACCEPTED' : '✗ REJECTED'}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">Exception</div>
+                    </div>
+                    <div className="flex items-center text-orange-400">
+                      <div className="w-8 h-0.5 bg-orange-500"></div>
+                      <span className="text-xs mx-1">attacks</span>
+                      <div className="w-0 h-0 border-t-4 border-b-4 border-l-6 border-transparent border-l-orange-500"></div>
+                    </div>
+                  </>
+                )}
+                
+                {/* Violation */}
+                <div className={`flex-shrink-0 p-3 rounded-lg border-2 ${
+                  violation?.status === 'accepted' 
+                    ? 'bg-red-500/10 border-red-500/50' 
+                    : 'bg-slate-700/50 border-slate-600/50'
+                }`}>
+                  <div className="text-xs font-mono font-bold text-red-400">V_{ruleId}</div>
+                  <div className={`text-xs mt-1 ${
+                    violation?.status === 'accepted' ? 'text-red-400' : 'text-slate-500'
+                  }`}>
+                    {violation?.status === 'accepted' ? '✓ ACCEPTED' : '✗ REJECTED'}
+                  </div>
+                  {violation?.evidence && (
+                    <div className="text-xs text-slate-500 mt-1 max-w-32 truncate" title={violation.evidence}>
+                      {violation.evidence}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Attack arrow */}
+                <div className="flex items-center text-orange-400">
+                  <div className="w-8 h-0.5 bg-orange-500"></div>
+                  <span className="text-xs mx-1">attacks</span>
+                  <div className="w-0 h-0 border-t-4 border-b-4 border-l-6 border-transparent border-l-orange-500"></div>
+                </div>
+                
+                {/* Compliance */}
+                <div className={`flex-shrink-0 p-3 rounded-lg border-2 ${
+                  compliance?.status === 'accepted' 
+                    ? 'bg-emerald-500/10 border-emerald-500/50' 
+                    : 'bg-slate-700/50 border-slate-600/50'
+                }`}>
+                  <div className="text-xs font-mono font-bold text-emerald-400">C_{ruleId}</div>
+                  <div className={`text-xs mt-1 ${
+                    compliance?.status === 'accepted' ? 'text-emerald-400' : 'text-slate-500'
+                  }`}>
+                    {compliance?.status === 'accepted' ? '✓ ACCEPTED' : '✗ REJECTED'}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">Compliance</div>
+                </div>
+                
+                {/* Result explanation */}
+                <div className="flex-1 pl-4 border-l border-slate-700">
+                  <div className="text-sm text-red-400 font-semibold">Policy Violated</div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    {violation?.status === 'accepted' 
+                      ? `Violation V_${ruleId} was accepted (undefeated), so C_${ruleId} was rejected.`
+                      : `Violation was defeated by exception.`
+                    }
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      
+      {/* Satisfied policies summary */}
+      {satisfiedRules.length > 0 && (
+        <div className="p-4 bg-emerald-500/5 rounded-xl border border-emerald-500/20">
+          <h4 className="text-sm font-semibold text-emerald-400 mb-2">
+            Satisfied Policies ({satisfiedRules.length})
+          </h4>
+          <p className="text-xs text-slate-400 mb-3">
+            No violations found - compliance arguments accepted in grounded extension
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {satisfiedRules.slice(0, 10).map(ruleId => (
+              <span key={ruleId} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                C_{ruleId} ✓
+              </span>
+            ))}
+            {satisfiedRules.length > 10 && (
+              <span className="px-2 py-1 bg-slate-700 text-slate-400 text-xs rounded">
+                +{satisfiedRules.length - 10} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {/* Grounded Extension Summary */}
+      <div className="mt-6 p-4 bg-violet-500/5 rounded-xl border border-violet-500/20">
+        <h4 className="text-sm font-semibold text-violet-400 mb-2">Grounded Extension Result</h4>
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <div className="text-slate-400 mb-1">Accepted Arguments:</div>
+            <div className="text-emerald-400 font-mono">
+              {proof.argumentation?.grounded_extension?.accepted?.length || 0} arguments
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-400 mb-1">Rejected Arguments:</div>
+            <div className="text-slate-500 font-mono">
+              {proof.argumentation?.grounded_extension?.rejected?.length || 0} arguments
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 pt-3 border-t border-violet-500/20">
+          <div className={`text-sm font-bold ${
+            proof.decision === 'Compliant' ? 'text-emerald-400' : 'text-red-400'
+          }`}>
+            Decision: {proof.decision}
+          </div>
+          <div className="text-xs text-slate-400 mt-1">
+            {proof.decision === 'Compliant' 
+              ? 'All compliance arguments accepted, no violations in grounded extension.'
+              : 'Violation arguments accepted in grounded extension indicate policy failures.'
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Formal Proof View - Step-by-step logical reasoning
 function FormalProofView({ proof }: { proof: ProofBundle }) {
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 5: true });
@@ -1866,28 +2062,7 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
       )}
       
       {/* Visual Argumentation Graph */}
-      {proof.argumentation?.graph_visual && (
-        <div className="glass rounded-2xl p-6 border border-white/5">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <GitBranch className="w-5 h-5 text-violet-400" />
-            Argumentation Graph
-          </h3>
-          <pre className="font-mono text-xs text-slate-300 bg-slate-900/70 p-4 rounded-xl overflow-x-auto whitespace-pre">
-            {proof.argumentation.graph_visual}
-          </pre>
-          <div className="mt-3 flex gap-4 text-xs text-slate-400">
-            <span className="flex items-center gap-1">
-              <span className="text-emerald-400">✓ ACCEPTED</span> = Claim holds
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="text-red-400">✗ REJECTED</span> = Claim defeated
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="text-orange-400">─attacks─▶</span> = Contradicts
-            </span>
-          </div>
-        </div>
-      )}
+      <ArgumentationGraphVisual proof={proof} />
       
       {/* Step-by-step Reasoning */}
       {reasoningSteps.length > 0 ? (
