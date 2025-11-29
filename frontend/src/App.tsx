@@ -160,26 +160,65 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  const [analysisProgress, setAnalysisProgress] = useState<{
+    phase: string;
+    tool?: string;
+    message?: string;
+  } | null>(null);
+
   const handleAnalyze = useCallback(async () => {
     setError(null);
     setEnforceResult(null);
+    setAnalysisProgress({ phase: 'starting', message: 'Initializing analysis...' });
     setWorkflow({ step: 'prosecutor', iteration: 0, maxIterations: 3, violations: 0 });
     
     try {
+      // Show language detection
+      setAnalysisProgress({ phase: 'detecting', message: 'Detecting language...' });
+      await new Promise(r => setTimeout(r, 200));
+      
+      // Show tool execution
+      setAnalysisProgress({ phase: 'tools', message: 'Running static analysis tools...' });
       const analysisResult = await api.analyze(code, language);
+      
+      // Show tool results
+      if (analysisResult.tool_execution) {
+        const tools = Object.keys(analysisResult.tool_execution);
+        if (tools.length > 0) {
+          setAnalysisProgress({ 
+            phase: 'tools', 
+            message: `Tools executed: ${tools.join(', ')}`,
+            tool: tools[0]
+          });
+        }
+      }
+      
       setAnalysis(analysisResult);
       setWorkflow(w => ({ ...w, violations: analysisResult.violations.length }));
       
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
       
+      // Show policy checks
+      setAnalysisProgress({ phase: 'policies', message: 'Running policy checks...' });
+      await new Promise(r => setTimeout(r, 200));
+      
+      // Show adjudication
+      setAnalysisProgress({ phase: 'adjudicating', message: 'Adjudicating compliance...' });
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
       const adjResult = await api.adjudicate(analysisResult);
       setAdjudication(adjResult);
       
-      await new Promise(r => setTimeout(r, 300));
-      setWorkflow(w => ({ ...w, step: 'complete' }));
+      await new Promise(r => setTimeout(r, 200));
+      setAnalysisProgress({ phase: 'complete', message: 'Analysis complete' });
+        setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
+        setWorkflow(w => ({ ...w, step: 'complete' }));
+        setTimeout(() => setAnalysisProgress(null), 2000);
+      
+      // Clear progress after a moment
+      setTimeout(() => setAnalysisProgress(null), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
+      setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
   }, [code, language]);
