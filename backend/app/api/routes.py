@@ -1112,12 +1112,19 @@ async def fix_code(request: FixCodeRequest):
             language=request.language
         )
         
-        # Generate explanation
-        explanation = generator.explain_fix(
-            original=request.code,
-            fixed=fixed_code,
-            violations=request.violations
-        )
+        # Generate explanation (optional - don't fail if this errors)
+        explanation = None
+        try:
+            explanation = generator.explain_fix(
+                original=request.code,
+                fixed=fixed_code,
+                violations=request.violations
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to generate explanation: {e}")
+            # Continue without explanation rather than failing
         
         return FixCodeResponse(
             original_code=request.code,
