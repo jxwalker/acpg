@@ -345,6 +345,18 @@ acpg/
 - **Audit logs** track all compliance decisions
 - **Tool version tracking** for compliance traceability
 
+## 🆕 Recent Features
+
+- ✅ **Static Analysis Integration** - Bandit, ESLint, Safety with automatic execution
+- ✅ **Tool Configuration UI** - Enable/disable tools, view execution status
+- ✅ **Tool Rules Browser** - Browse available rules, see mapping status
+- ✅ **Tool Mappings Management** - Map tool findings to ACPG policies
+- ✅ **Unmapped Findings Discovery** - Prominent display of unmapped findings
+- ✅ **Quick Mapping Creation** - One-click mapping from unmapped findings
+- ✅ **Tool Version Tracking** - Automatic version extraction and display
+- ✅ **Code in Proof Bundles** - Code included for tamper detection
+- ✅ **Service Management Scripts** - YAML config, graceful startup/shutdown
+
 ## 🛣️ Roadmap
 
 See [ROADMAP.md](./ROADMAP.md) for planned features:
@@ -353,6 +365,7 @@ See [ROADMAP.md](./ROADMAP.md) for planned features:
 - [ ] Team workspaces
 - [ ] Custom policy editor
 - [ ] Compliance dashboards
+- [ ] More static analysis tools (Semgrep, CodeQL)
 
 ## 📄 License
 
