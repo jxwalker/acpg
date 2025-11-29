@@ -1113,8 +1113,18 @@ async def verify_proof_bundle(request: VerifyProofRequest):
                 artifact_data["timestamp"] = ts.isoformat()
         
         # This is the data structure that was signed
+        # Must include code to verify it hasn't been tampered with
+        code_content = proof.get("code", "")
+        if not code_content:
+            result["errors"].append("✗ Code content missing from proof bundle")
+            result["details"]["code_present"] = False
+        else:
+            result["details"]["code_present"] = True
+            result["checks"].append(f"✓ Code content present ({len(code_content)} characters)")
+        
         signed_data = {
             "artifact": artifact_data,
+            "code": code_content,  # Include code in signed data verification
             "policies": proof.get("policies", []),
             "evidence": proof.get("evidence", []),
             "argumentation": proof.get("argumentation", {}),
@@ -1147,11 +1157,28 @@ async def verify_proof_bundle(request: VerifyProofRequest):
             result["errors"].append(f"✗ Signature verification FAILED: {str(e)}")
             result["errors"].append("  The proof bundle data has been modified since signing")
         
-        # Verify artifact hash
+        # Verify artifact hash matches code
         if "artifact" in proof and "hash" in proof["artifact"]:
             result["original_hash"] = proof["artifact"]["hash"]
-            result["details"]["hash_valid"] = True
+            result["details"]["hash_present"] = True
             result["checks"].append(f"✓ Artifact hash present: {proof['artifact']['hash'][:16]}...")
+            
+            # Verify code hash matches artifact hash
+            if code_content:
+                import hashlib
+                computed_hash = hashlib.sha256(code_content.encode()).hexdigest()
+                if computed_hash == proof["artifact"]["hash"]:
+                    result["details"]["hash_valid"] = True
+                    result["checks"].append("✓ Code hash matches artifact hash (code integrity verified)")
+                else:
+                    result["details"]["hash_valid"] = False
+                    result["errors"].append("✗ Code hash MISMATCH - code has been modified!")
+                    result["errors"].append(f"  Expected: {proof['artifact']['hash'][:16]}...")
+                    result["errors"].append(f"  Computed: {computed_hash[:16]}...")
+                    result["tampered"] = True
+            else:
+                result["details"]["hash_valid"] = False
+                result["errors"].append("✗ Cannot verify code hash - code content missing")
         
         # Check timestamp
         if artifact_data.get("timestamp"):

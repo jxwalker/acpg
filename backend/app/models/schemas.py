@@ -140,6 +140,7 @@ class Evidence(BaseModel):
 class ProofBundle(BaseModel):
     """Complete proof-carrying artifact."""
     artifact: ArtifactMetadata
+    code: str  # The actual code artifact (included for tamper detection)
     policies: List[PolicyOutcome]
     evidence: List[Evidence]
     argumentation: Optional[Dict[str, Any]] = None

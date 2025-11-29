@@ -69,8 +69,11 @@ class ProofAssembler:
         
         signing_timestamp = datetime.utcnow().isoformat()
         
+        # Include code in bundle data for tamper detection
+        # The signature will cover the code, so any modification will invalidate it
         bundle_data = {
             "artifact": artifact_dict,
+            "code": code,  # Include actual code in signed data
             "policies": [p.model_dump() for p in policies],
             "evidence": [e.model_dump() for e in evidence],
             "argumentation": argumentation,
@@ -78,7 +81,7 @@ class ProofAssembler:
             "timestamp": signing_timestamp
         }
         
-        # Sign the bundle
+        # Sign the bundle (includes code, so tampering with code invalidates signature)
         signature = self.signer.sign_proof(bundle_data)
         
         signed_info = {
@@ -91,6 +94,7 @@ class ProofAssembler:
         
         return ProofBundle(
             artifact=artifact,
+            code=code,  # Include code in bundle
             policies=policies,
             evidence=evidence,
             argumentation=argumentation,
@@ -109,17 +113,33 @@ class ProofAssembler:
             True if signature is valid
         """
         # Reconstruct the data that was signed
+        # Must include code to verify it hasn't been tampered with
+        artifact_dict = bundle.artifact.model_dump()
+        if 'timestamp' in artifact_dict and hasattr(artifact_dict['timestamp'], 'isoformat'):
+            artifact_dict['timestamp'] = artifact_dict['timestamp'].isoformat()
+        
         bundle_data = {
-            "artifact": bundle.artifact.model_dump(),
+            "artifact": artifact_dict,
+            "code": bundle.code,  # Include code in verification
             "policies": [p.model_dump() for p in bundle.policies],
             "evidence": [e.model_dump() for e in bundle.evidence],
             "argumentation": bundle.argumentation,
             "decision": bundle.decision,
-            # Note: timestamp would need to be stored/recovered for verification
+            "timestamp": bundle.signed.get("signed_at", "")  # Use stored timestamp
         }
         
+        # Verify signature covers code
         signature = bundle.signed.get("signature", "")
-        return self.signer.verify_signature(bundle_data, signature)
+        if not self.signer.verify_signature(bundle_data, signature):
+            return False
+        
+        # Verify code hash matches artifact hash
+        import hashlib
+        code_hash = hashlib.sha256(bundle.code.encode()).hexdigest()
+        if code_hash != bundle.artifact.hash:
+            return False  # Code has been modified
+        
+        return True
     
     def export_proof(self, bundle: ProofBundle, format: str = "json") -> str:
         """

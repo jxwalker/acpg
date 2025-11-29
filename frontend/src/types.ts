@@ -175,6 +175,7 @@ export interface FormalProof {
 
 export interface ProofBundle {
   artifact: ArtifactMetadata;
+  code: string;  // The actual code artifact (included for tamper detection)
   policies: PolicyOutcome[];
   evidence: Evidence[];
   argumentation?: FormalProof;
