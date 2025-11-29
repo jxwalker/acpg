@@ -2455,6 +2455,152 @@ interface PolicyGroup {
   policy_count?: number;
 }
 
+// Tools Configuration View
+function ToolsConfigurationView() {
+  const [tools, setTools] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/v1/static-analysis/tools')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setTools(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tools configuration...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading tools: {error}</p>
+      </div>
+    );
+  }
+
+  if (!tools || !tools.tools_by_language) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <p className="text-slate-400">No tools configured</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center gap-4 mb-4">
+          <div className="p-4 rounded-2xl bg-violet-500/20 border border-violet-500/30">
+            <Settings className="w-10 h-10 text-violet-400" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-display font-bold text-white">Static Analysis Tools</h2>
+            <p className="text-slate-400">Configure and manage static analysis tools</p>
+          </div>
+        </div>
+
+        {/* Cache Stats */}
+        {tools.cache_stats && (
+          <div className="mt-4 p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="w-4 h-4 text-cyan-400" />
+              <span className="text-sm font-semibold text-slate-300">Cache Statistics</span>
+            </div>
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="text-slate-500">Entries:</span>
+                <span className="ml-2 text-slate-300 font-mono">{tools.cache_stats.total_entries}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">Size:</span>
+                <span className="ml-2 text-slate-300 font-mono">
+                  {(tools.cache_stats.total_size_bytes / 1024).toFixed(1)} KB
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500">TTL:</span>
+                <span className="ml-2 text-slate-300 font-mono">{tools.cache_stats.ttl_seconds}s</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tools by Language */}
+      {Object.entries(tools.tools_by_language).map(([language, langTools]: [string, any]) => (
+        <div key={language} className="glass rounded-2xl p-6 border border-white/5">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <FileCode className="w-5 h-5 text-violet-400" />
+            {language.charAt(0).toUpperCase() + language.slice(1)}
+          </h3>
+          
+          <div className="space-y-3">
+            {langTools.map((tool: any) => (
+              <div
+                key={tool.name}
+                className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 flex items-center justify-between"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="px-3 py-1 bg-violet-500/20 text-violet-400 text-sm font-mono font-semibold rounded-lg">
+                      {tool.name}
+                    </span>
+                    {tool.enabled ? (
+                      <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded">
+                        Enabled
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-slate-700 text-slate-500 text-xs rounded">
+                        Disabled
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 text-xs text-slate-400">
+                    <div>
+                      <span className="text-slate-500">Timeout:</span> {tool.timeout}s
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Format:</span> {tool.output_format}
+                    </div>
+                    {tool.requires_config && (
+                      <div>
+                        <span className="text-slate-500">Config:</span> {tool.requires_config}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <div className={`w-3 h-3 rounded-full ${
+                    tool.enabled ? 'bg-emerald-500' : 'bg-slate-600'
+                  }`} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Proof Bundle Verifier - Check for tampering
 function ProofVerifier() {
   const [proofJson, setProofJson] = useState('');
