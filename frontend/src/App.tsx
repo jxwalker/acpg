@@ -61,7 +61,7 @@ def login(username: str, password_input: str) -> Optional[dict]:
 `;
 
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
-type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools';
+type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools' | 'metrics';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
 
 interface WorkflowState {
