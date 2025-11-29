@@ -27,28 +27,28 @@ def process_user_input(user_input):
     result = eval(user_input)  # Dangerous eval usage
     return result
 
-# B601 - Shell injection (unmapped - will show in tool execution status)
+# B601 - Shell injection (mapped to SQL-001)
 def run_command(command):
     import subprocess
     subprocess.call(command, shell=True)  # Shell injection risk
 
-# B602 - Shell injection via os.system (unmapped)
+# B602 - Shell injection via os.system (mapped to SEC-003)
 def execute_system_command(cmd):
     import os
     os.system(cmd)  # Shell injection risk
 
-# B104 - Hardcoded bind to all interfaces (unmapped)
+# B104 - Hardcoded bind to all interfaces (mapped to SEC-001)
 def start_server():
     import socket
     s = socket.socket()
     s.bind(('0.0.0.0', 8080))  # Binds to all interfaces
     s.listen(5)
 
-# B102 - Use of exec (unmapped)
+# B102 - Use of exec (unmapped - will show in tool execution status)
 def dynamic_code_execution(code):
     exec(code)  # Dangerous exec usage
 
-# B101 - Use of assert (low severity, unmapped)
+# B101 - Use of assert (low severity, unmapped - will show in tool execution status)
 def validate_input(value):
     assert value is not None  # Assert used in production code
     return value

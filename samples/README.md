@@ -11,26 +11,27 @@ This directory contains sample code files demonstrating various security policy 
 - `B608` - SQL injection (mapped to SQL-001) → Will appear as violation
 - `B105` - Hardcoded password (mapped to SEC-001) → Will appear as violation  
 - `B307` - Use of eval (mapped to SEC-003) → Will appear as violation
-- `B601` - Shell injection (unmapped) → Will show in tool execution status
-- `B602` - Shell injection (unmapped) → Will show in tool execution status
-- `B104` - Bind to all interfaces (unmapped) → Will show in tool execution status
+- `B601` - Shell injection (mapped to SQL-001) → Will appear as violation
+- `B602` - Shell injection (mapped to SEC-003) → Will appear as violation
+- `B104` - Bind to all interfaces (mapped to SEC-001) → Will appear as violation
 - `B102` - Use of exec (unmapped) → Will show in tool execution status
 - `B101` - Use of assert (unmapped) → Will show in tool execution status
 
 **Workflow Test**:
 1. Load this sample in the editor
 2. Go to Tools → Browse Rules → Select "bandit"
-3. See that B608, B105, B307 are mapped
-4. See that B601, B602, B104, B102, B101 are unmapped
+3. See that B608, B105, B307, B601, B602, B104 are mapped
+4. See that B102, B101 are unmapped
 5. Click "Analyze" to run tools
 6. Check "Tool Execution" panel:
    - See bandit ran successfully
-   - See 8 findings total (3 mapped, 5 unmapped)
+   - See 8 findings total (6 mapped, 2 unmapped)
+   - Expand to see unmapped findings (B102, B101)
 7. Check "Violations" panel:
-   - See 3 violations with [bandit] badges
-   - SQL-001, SEC-001, SEC-003
-8. Expand tool execution to see unmapped findings
-9. Create mappings for unmapped rules if desired
+   - See 6 violations with [bandit] badges
+   - SQL-001 (B608, B601), SEC-001 (B105, B104), SEC-003 (B307, B602)
+8. Expand tool execution to see unmapped findings (B102, B101)
+9. Optionally create mappings for B102, B101 if desired
 10. Re-analyze to see new violations appear
 
 ## Sample Files
