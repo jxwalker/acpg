@@ -108,6 +108,7 @@ export default function App() {
   const [sampleFilesLoading, setSampleFilesLoading] = useState(true);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
+  const [policyCreationData, setPolicyCreationData] = useState<{toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load saved codes from localStorage
@@ -631,9 +632,14 @@ export default function App() {
         {viewMode === 'verify' ? (
           <ProofVerifier />
         ) : viewMode === 'tools' ? (
-          <ToolsConfigurationView />
+          <ToolsConfigurationView 
+            onCreatePolicy={(data) => {
+              setPolicyCreationData(data);
+              setViewMode('policies');
+            }}
+          />
         ) : viewMode === 'policies' ? (
-          <PoliciesView policies={policies} />
+          <PoliciesView policies={policies} initialPolicyData={policyCreationData} onPolicyCreated={() => setPolicyCreationData(null)} />
         ) : viewMode === 'proof' && enforceResult?.proof_bundle ? (
           <ProofBundleView 
             proof={enforceResult.proof_bundle} 
@@ -2458,7 +2464,11 @@ interface PolicyGroup {
 }
 
 // Tools Configuration View
-function ToolsConfigurationView() {
+function ToolsConfigurationView({ 
+  onCreatePolicy 
+}: { 
+  onCreatePolicy?: (data: {toolName: string; toolRuleId: string; description?: string; severity?: string}) => void;
+}) {
   const [activeTab, setActiveTab] = useState<'tools' | 'mappings'>('tools');
   const [tools, setTools] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -2680,19 +2690,34 @@ function ToolsConfigurationView() {
           </div>
         )
       ) : (
-        <ToolMappingsView />
+        <ToolMappingsView onCreatePolicy={onCreatePolicy} />
       )}
     </div>
   );
 }
 
 // Tool Mappings View
-function ToolMappingsView() {
+function ToolMappingsView({ 
+  onCreatePolicy 
+}: { 
+  onCreatePolicy?: (data: {toolName: string; toolRuleId: string; description?: string; severity?: string}) => void;
+}) {
   const [mappings, setMappings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingMapping, setEditingMapping] = useState<{toolName: string; ruleId: string; mapping: any} | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newMapping, setNewMapping] = useState({
+    toolName: '',
+    toolRuleId: '',
+    policyId: '',
+    confidence: 'medium',
+    severity: 'medium',
+    description: ''
+  });
 
-  useEffect(() => {
+  const loadMappings = useCallback(() => {
+    setLoading(true);
     fetch('/api/v1/static-analysis/mappings')
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2707,6 +2732,10 @@ function ToolMappingsView() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    loadMappings();
+  }, [loadMappings]);
 
   if (loading) {
     return (
@@ -2735,6 +2764,239 @@ function ToolMappingsView() {
     );
   }
 
+  const handleEdit = (toolName: string, ruleId: string, mapping: any) => {
+    setEditingMapping({ toolName, ruleId, mapping });
+    setNewMapping({
+      toolName,
+      toolRuleId: ruleId,
+      policyId: mapping.policy_id,
+      confidence: mapping.confidence || 'medium',
+      severity: mapping.severity || 'medium',
+      description: mapping.description || ''
+    });
+    setShowAddForm(true);
+  };
+
+  const handleDelete = async (toolName: string, ruleId: string) => {
+    if (!confirm(`Delete mapping for ${toolName}:${ruleId}?`)) return;
+    
+    try {
+      const response = await fetch(`/api/v1/static-analysis/mappings/${toolName}/${ruleId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        loadMappings();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to delete mapping');
+      }
+    } catch (err) {
+      alert('Failed to delete mapping');
+    }
+  };
+
+  const handleSaveMapping = async () => {
+    try {
+      const response = await fetch(
+        `/api/v1/static-analysis/mappings/${newMapping.toolName}/${newMapping.toolRuleId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            policy_id: newMapping.policyId,
+            confidence: newMapping.confidence,
+            severity: newMapping.severity,
+            description: newMapping.description
+          })
+        }
+      );
+      
+      if (response.ok) {
+        loadMappings();
+        setShowAddForm(false);
+        setEditingMapping(null);
+        setNewMapping({
+          toolName: '',
+          toolRuleId: '',
+          policyId: '',
+          confidence: 'medium',
+          severity: 'medium',
+          description: ''
+        });
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to save mapping');
+      }
+    } catch (err) {
+      alert('Failed to save mapping');
+    }
+  };
+
+  const handleCreatePolicy = (toolName: string, ruleId: string, mapping: any) => {
+    if (onCreatePolicy) {
+      onCreatePolicy({
+        toolName,
+        toolRuleId: ruleId,
+        description: mapping.description || `${toolName} rule ${ruleId}`,
+        severity: mapping.severity || 'medium'
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tool mappings...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading mappings: {error}</p>
+        <button
+          onClick={() => { setError(null); loadMappings(); }}
+          className="mt-4 px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!mappings || Object.keys(mappings).length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Tool-to-Policy Mappings</h3>
+              <p className="text-sm text-slate-400 mt-1">
+                Map static analysis tool rules to ACPG policies
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Mapping
+            </button>
+          </div>
+        </div>
+        {showAddForm && (
+          <div className="glass rounded-2xl p-6 border border-white/5">
+            <h4 className="text-md font-semibold text-white mb-4">
+              {editingMapping ? 'Edit Mapping' : 'Add New Mapping'}
+            </h4>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Tool Name</label>
+                <input
+                  type="text"
+                  value={newMapping.toolName}
+                  onChange={(e) => setNewMapping({...newMapping, toolName: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="e.g., bandit"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Tool Rule ID</label>
+                <input
+                  type="text"
+                  value={newMapping.toolRuleId}
+                  onChange={(e) => setNewMapping({...newMapping, toolRuleId: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="e.g., B608"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Policy ID</label>
+                <input
+                  type="text"
+                  value={newMapping.policyId}
+                  onChange={(e) => setNewMapping({...newMapping, policyId: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="e.g., SQL-001"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Confidence</label>
+                  <select
+                    value={newMapping.confidence}
+                    onChange={(e) => setNewMapping({...newMapping, confidence: e.target.value})}
+                    className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                  <select
+                    value={newMapping.severity}
+                    onChange={(e) => setNewMapping({...newMapping, severity: e.target.value})}
+                    className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Description</label>
+                <textarea
+                  value={newMapping.description}
+                  onChange={(e) => setNewMapping({...newMapping, description: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  rows={2}
+                  placeholder="Description of the mapping"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveMapping}
+                  className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddForm(false);
+                    setEditingMapping(null);
+                    setNewMapping({
+                      toolName: '',
+                      toolRuleId: '',
+                      policyId: '',
+                      confidence: 'medium',
+                      severity: 'medium',
+                      description: ''
+                    });
+                  }}
+                  className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+          <p className="text-slate-400">No tool mappings configured</p>
+          <p className="text-slate-500 text-sm mt-2">Click "Add Mapping" to create your first mapping</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="glass rounded-2xl p-6 border border-white/5">
@@ -2745,8 +3007,130 @@ function ToolMappingsView() {
               Map static analysis tool rules to ACPG policies
             </p>
           </div>
+          <button
+            onClick={() => {
+              setShowAddForm(true);
+              setEditingMapping(null);
+              setNewMapping({
+                toolName: '',
+                toolRuleId: '',
+                policyId: '',
+                confidence: 'medium',
+                severity: 'medium',
+                description: ''
+              });
+            }}
+            className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Add Mapping
+          </button>
         </div>
       </div>
+
+      {showAddForm && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <h4 className="text-md font-semibold text-white mb-4">
+            {editingMapping ? 'Edit Mapping' : 'Add New Mapping'}
+          </h4>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Tool Name</label>
+              <input
+                type="text"
+                value={newMapping.toolName}
+                onChange={(e) => setNewMapping({...newMapping, toolName: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., bandit"
+                disabled={!!editingMapping}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Tool Rule ID</label>
+              <input
+                type="text"
+                value={newMapping.toolRuleId}
+                onChange={(e) => setNewMapping({...newMapping, toolRuleId: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., B608"
+                disabled={!!editingMapping}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Policy ID</label>
+              <input
+                type="text"
+                value={newMapping.policyId}
+                onChange={(e) => setNewMapping({...newMapping, policyId: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., SQL-001"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Confidence</label>
+                <select
+                  value={newMapping.confidence}
+                  onChange={(e) => setNewMapping({...newMapping, confidence: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                <select
+                  value={newMapping.severity}
+                  onChange={(e) => setNewMapping({...newMapping, severity: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Description</label>
+              <textarea
+                value={newMapping.description}
+                onChange={(e) => setNewMapping({...newMapping, description: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                rows={2}
+                placeholder="Description of the mapping"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveMapping}
+                className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddForm(false);
+                  setEditingMapping(null);
+                  setNewMapping({
+                    toolName: '',
+                    toolRuleId: '',
+                    policyId: '',
+                    confidence: 'medium',
+                    severity: 'medium',
+                    description: ''
+                  });
+                }}
+                className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {Object.entries(mappings).map(([toolName, toolMappings]: [string, any]) => (
         <div key={toolName} className="glass rounded-2xl p-6 border border-white/5">
@@ -2803,20 +3187,38 @@ function ToolMappingsView() {
                       </div>
                     </div>
                   </div>
+                  <div className="flex gap-2 ml-4">
+                    <button
+                      onClick={() => handleCreatePolicy(toolName, ruleId, mapping)}
+                      className="px-3 py-1.5 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors text-xs flex items-center gap-1"
+                      title="Create Policy from this mapping"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Policy
+                    </button>
+                    <button
+                      onClick={() => handleEdit(toolName, ruleId, mapping)}
+                      className="px-3 py-1.5 bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors text-xs flex items-center gap-1"
+                      title="Edit mapping"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(toolName, ruleId)}
+                      className="px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors text-xs flex items-center gap-1"
+                      title="Delete mapping"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
       ))}
-
-      <div className="glass rounded-2xl p-4 border border-slate-700/50 bg-slate-800/30">
-        <p className="text-xs text-slate-500">
-          <Info className="w-3 h-3 inline mr-1" />
-          Mappings are stored in <code className="text-slate-400">policies/tool_mappings.json</code>.
-          To modify mappings, edit the file directly or use the API.
-        </p>
-      </div>
     </div>
   );
 }
@@ -3115,7 +3517,15 @@ function ProofVerifier() {
 }
 
 // Policies View with Editor and Groups
-function PoliciesView({ policies }: { policies: PolicyRule[] }) {
+function PoliciesView({ 
+  policies, 
+  initialPolicyData,
+  onPolicyCreated 
+}: { 
+  policies: PolicyRule[];
+  initialPolicyData?: {toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null;
+  onPolicyCreated?: () => void;
+}) {
   const [activeTab, setActiveTab] = useState<'policies' | 'groups'>('policies');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'strict' | 'defeasible'>('all');
@@ -3163,6 +3573,31 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     
     loadPolicyGroups();
   }, []);
+
+  // Handle initial policy data from tool mappings
+  useEffect(() => {
+    if (initialPolicyData) {
+      const suggestedId = initialPolicyData.toolRuleId 
+        ? `${initialPolicyData.toolName?.toUpperCase() || 'TOOL'}-${initialPolicyData.toolRuleId}`
+        : 'NEW-001';
+      
+      setFormData({
+        id: suggestedId,
+        description: initialPolicyData.description || `Policy for ${initialPolicyData.toolName}:${initialPolicyData.toolRuleId}`,
+        type: 'strict',
+        severity: (initialPolicyData.severity as 'low' | 'medium' | 'high' | 'critical') || 'medium',
+        checkType: 'manual',
+        pattern: '',
+        message: initialPolicyData.description || '',
+        languages: ['python'],
+        fix_suggestion: ''
+      });
+      setShowEditor(true);
+      if (onPolicyCreated) {
+        onPolicyCreated();
+      }
+    }
+  }, [initialPolicyData, onPolicyCreated]);
   
   const loadPolicyGroups = () => {
     fetch('/api/v1/policies/groups/')
@@ -3290,6 +3725,9 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
         setCustomPolicies(customData.policies || []);
         setShowEditor(false);
         resetForm();
+        if (onPolicyCreated) {
+          onPolicyCreated();
+        }
       } else {
         const error = await response.json();
         alert(error.detail || 'Failed to save policy');

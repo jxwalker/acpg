@@ -77,15 +77,9 @@ class ToolMapper:
         description: Optional[str] = None
     ):
         """Add a custom mapping."""
-        if tool_name not in self._mappings:
-            self._mappings[tool_name] = {}
-        
-        self._mappings[tool_name][tool_rule_id] = {
-            "policy_id": policy_id,
-            "confidence": confidence,
-            "severity": severity,
-            "description": description
-        }
+        self.add_or_update_mapping(
+            tool_name, tool_rule_id, policy_id, confidence, severity, description
+        )
     
     def get_all_mappings(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
         """Get all mappings."""
@@ -95,6 +89,37 @@ class ToolMapper:
         """Update all mappings."""
         self._mappings = mappings
         self._save_mappings()
+    
+    def add_or_update_mapping(
+        self,
+        tool_name: str,
+        tool_rule_id: str,
+        policy_id: str,
+        confidence: str = "medium",
+        severity: Optional[str] = None,
+        description: Optional[str] = None
+    ):
+        """Add or update a single mapping."""
+        if tool_name not in self._mappings:
+            self._mappings[tool_name] = {}
+        
+        self._mappings[tool_name][tool_rule_id] = {
+            "policy_id": policy_id,
+            "confidence": confidence,
+            "severity": severity,
+            "description": description
+        }
+        self._save_mappings()
+    
+    def delete_mapping(self, tool_name: str, tool_rule_id: str):
+        """Delete a mapping."""
+        if tool_name in self._mappings and tool_rule_id in self._mappings[tool_name]:
+            del self._mappings[tool_name][tool_rule_id]
+            if not self._mappings[tool_name]:
+                del self._mappings[tool_name]
+            self._save_mappings()
+            return True
+        return False
     
     def _save_mappings(self):
         """Save mappings to JSON file."""

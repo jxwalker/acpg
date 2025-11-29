@@ -230,6 +230,55 @@ async def update_tool_mappings(request: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error updating tool mappings: {e}")
 
 
+@router.post("/static-analysis/mappings/{tool_name}/{tool_rule_id}")
+async def add_tool_mapping(
+    tool_name: str,
+    tool_rule_id: str,
+    request: Dict[str, Any]
+):
+    """Add or update a single tool mapping."""
+    try:
+        mapper = get_tool_mapper()
+        mapper.add_or_update_mapping(
+            tool_name=tool_name,
+            tool_rule_id=tool_rule_id,
+            policy_id=request.get("policy_id"),
+            confidence=request.get("confidence", "medium"),
+            severity=request.get("severity"),
+            description=request.get("description")
+        )
+        return {
+            "message": f"Mapping for {tool_name}:{tool_rule_id} updated successfully",
+            "mapping": mapper.get_mapping(tool_name, tool_rule_id)
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error adding tool mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error adding tool mapping: {e}")
+
+
+@router.delete("/static-analysis/mappings/{tool_name}/{tool_rule_id}")
+async def delete_tool_mapping(tool_name: str, tool_rule_id: str):
+    """Delete a tool mapping."""
+    try:
+        mapper = get_tool_mapper()
+        if mapper.delete_mapping(tool_name, tool_rule_id):
+            return {
+                "message": f"Mapping for {tool_name}:{tool_rule_id} deleted successfully"
+            }
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Mapping not found: {tool_name}:{tool_rule_id}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error deleting tool mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting tool mapping: {e}")
+
+
 # ============================================================================
 # Policy Endpoints
 # ============================================================================
