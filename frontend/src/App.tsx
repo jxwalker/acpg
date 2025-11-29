@@ -1011,6 +1011,29 @@ export default function App() {
 
             {/* Right Panel - Results (2 cols) */}
             <div className="xl:col-span-2 space-y-5">
+              {/* Analysis Progress */}
+              {analysisProgress && analysisProgress.phase !== 'complete' && (
+                <div className="glass rounded-2xl p-4 border border-violet-500/30 bg-violet-500/5 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <RefreshCw className="w-5 h-5 text-violet-400 animate-spin" />
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-violet-400">
+                        {analysisProgress.phase === 'detecting' && 'Detecting Language'}
+                        {analysisProgress.phase === 'tools' && 'Running Static Analysis Tools'}
+                        {analysisProgress.phase === 'policies' && 'Running Policy Checks'}
+                        {analysisProgress.phase === 'adjudicating' && 'Adjudicating Compliance'}
+                        {analysisProgress.phase === 'starting' && 'Starting Analysis'}
+                        {analysisProgress.phase === 'generating' && 'Generating Fixes'}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {analysisProgress.message}
+                        {analysisProgress.tool && ` (${analysisProgress.tool})`}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Compliance Status */}
               <ComplianceStatus 
                 adjudication={adjudication} 
