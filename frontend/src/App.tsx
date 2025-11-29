@@ -3734,6 +3734,68 @@ function ToolMappingsView({
     }
   };
 
+  const handleBulkAdd = () => {
+    setBulkMappings([...bulkMappings, {
+      toolName: '',
+      toolRuleId: '',
+      policyId: '',
+      confidence: 'medium',
+      severity: 'medium',
+      description: ''
+    }]);
+  };
+
+  const handleBulkRemove = (index: number) => {
+    setBulkMappings(bulkMappings.filter((_, i) => i !== index));
+  };
+
+  const handleBulkUpdate = (index: number, field: string, value: string) => {
+    const updated = [...bulkMappings];
+    updated[index] = { ...updated[index], [field]: value };
+    setBulkMappings(updated);
+  };
+
+  const handleBulkSave = async () => {
+    // Validate all mappings have required fields
+    const invalid = bulkMappings.filter(m => !m.toolName || !m.toolRuleId || !m.policyId);
+    if (invalid.length > 0) {
+      alert(`Please fill in all required fields for ${invalid.length} mapping(s)`);
+      return;
+    }
+
+    setBulkProcessing(true);
+    setBulkResults(null);
+
+    try {
+      const response = await fetch('/api/v1/static-analysis/mappings/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mappings: bulkMappings })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      setBulkResults(result);
+      
+      if (result.failed === 0) {
+        // All succeeded, reload mappings and close form
+        loadMappings();
+        setTimeout(() => {
+          setShowBulkForm(false);
+          setBulkMappings([]);
+          setBulkResults(null);
+        }, 2000);
+      }
+    } catch (err: any) {
+      alert(`Failed to save bulk mappings: ${err.message}`);
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="glass rounded-2xl p-12 border border-white/5 text-center">
@@ -3930,6 +3992,155 @@ function ToolMappingsView({
           </div>
         </div>
       </div>
+
+      {showBulkForm && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-md font-semibold text-white">Bulk Mapping</h4>
+              <p className="text-sm text-slate-400 mt-1">
+                Create multiple mappings at once
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setShowBulkForm(false);
+                setBulkMappings([]);
+                setBulkResults(null);
+              }}
+              className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors text-sm"
+            >
+              Close
+            </button>
+          </div>
+
+          {bulkResults && (
+            <div className={`mb-4 p-4 rounded-lg border ${
+              bulkResults.failed === 0 
+                ? 'bg-emerald-500/10 border-emerald-500/30' 
+                : 'bg-amber-500/10 border-amber-500/30'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                {bulkResults.failed === 0 ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                )}
+                <span className={`font-semibold ${
+                  bulkResults.failed === 0 ? 'text-emerald-400' : 'text-amber-400'
+                }`}>
+                  {bulkResults.succeeded} succeeded, {bulkResults.failed} failed
+                </span>
+              </div>
+              {bulkResults.results.failed.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {bulkResults.results.failed.slice(0, 5).map((f: any, i: number) => (
+                    <div key={i} className="text-xs text-red-400">
+                      {f.mapping.toolName}:{f.mapping.toolRuleId} - {f.error}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-3 max-h-96 overflow-y-auto mb-4">
+            {bulkMappings.length === 0 ? (
+              <div className="text-center py-8 text-slate-400">
+                <p>No mappings added yet</p>
+                <p className="text-sm mt-1">Click "Add Row" to start</p>
+              </div>
+            ) : (
+              bulkMappings.map((mapping, index) => (
+                <div key={index} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                  <div className="flex items-start gap-2 mb-3">
+                    <span className="px-2 py-1 bg-violet-500/20 text-violet-400 text-xs font-mono rounded">
+                      #{index + 1}
+                    </span>
+                    <button
+                      onClick={() => handleBulkRemove(index)}
+                      className="ml-auto px-2 py-1 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors text-xs"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <input
+                      type="text"
+                      placeholder="Tool (e.g., bandit)"
+                      value={mapping.toolName}
+                      onChange={(e) => handleBulkUpdate(index, 'toolName', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Rule ID (e.g., B608)"
+                      value={mapping.toolRuleId}
+                      onChange={(e) => handleBulkUpdate(index, 'toolRuleId', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Policy ID (e.g., SQL-001)"
+                      value={mapping.policyId}
+                      onChange={(e) => handleBulkUpdate(index, 'policyId', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={mapping.confidence}
+                      onChange={(e) => handleBulkUpdate(index, 'confidence', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    >
+                      <option value="low">Low Confidence</option>
+                      <option value="medium">Medium Confidence</option>
+                      <option value="high">High Confidence</option>
+                    </select>
+                    <select
+                      value={mapping.severity}
+                      onChange={(e) => handleBulkUpdate(index, 'severity', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    >
+                      <option value="low">Low Severity</option>
+                      <option value="medium">Medium Severity</option>
+                      <option value="high">High Severity</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleBulkAdd}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Row
+            </button>
+            <button
+              onClick={handleBulkSave}
+              disabled={bulkMappings.length === 0 || bulkProcessing}
+              className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {bulkProcessing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save All ({bulkMappings.length})
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showAddForm && (
         <div className="glass rounded-2xl p-6 border border-white/5">
