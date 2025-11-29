@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import settings
 from app.core.llm_config import get_llm_config
+from app.core.service_config import get_cors_origins
 from app.services import get_policy_compiler
 
 
@@ -94,14 +95,19 @@ app = FastAPI(
 )
 
 # Configure CORS for frontend
+cors_origins = get_cors_origins()
+# Add common dev ports
+cors_origins.extend([
+    "http://localhost:3000",
+    "http://localhost:5173"
+])
+# Remove duplicates while preserving order
+seen = set()
+cors_origins = [x for x in cors_origins if not (x in seen or seen.add(x))]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://localhost:5173",
-        "http://localhost:6001",
-        "http://localhost:6002"
-    ],  # React dev servers
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
