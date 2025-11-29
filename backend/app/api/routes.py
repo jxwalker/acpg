@@ -146,6 +146,8 @@ async def list_static_analysis_tools():
             cache_stats = get_tool_cache().get_stats()
         except Exception as e:
             # If cache stats fail, return empty stats
+            import logging
+            logging.warning(f"Cache stats unavailable: {e}")
             cache_stats = {
                 "cache_dir": "unknown",
                 "total_entries": 0,
@@ -153,14 +155,19 @@ async def list_static_analysis_tools():
                 "ttl_seconds": 3600
             }
         
-        return {
+        response = {
             "tools_by_language": tools_by_language,
             "cache_stats": cache_stats
         }
+        
+        return response
     except Exception as e:
         import logging
-        logging.error(f"Error in /static-analysis/tools: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error loading tools configuration: {str(e)}")
+        import traceback
+        error_msg = str(e)
+        logging.error(f"Error in /static-analysis/tools: {error_msg}", exc_info=True)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error loading tools configuration: {error_msg}")
 
 
 # ============================================================================
