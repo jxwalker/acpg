@@ -100,7 +100,7 @@ class ToolExecutor:
                         file_path = tmp_file.name
                     # Clean up temp file after execution
                     try:
-                        result = self._execute_with_file(tool_config, file_path)
+                        result = self._execute_with_file(tool_config, file_path, use_cache=use_cache, content=content, target_path=target_path)
                     finally:
                         if not target_path:  # Only delete if we created it
                             try:
@@ -140,7 +140,10 @@ class ToolExecutor:
     def _execute_with_file(
         self,
         tool_config: ToolConfig,
-        file_path: str
+        file_path: str,
+        use_cache: bool = True,
+        content: Optional[str] = None,
+        target_path: Optional[str] = None
     ) -> ToolExecutionResult:
         """Execute tool with file path."""
         start_time = datetime.now(timezone.utc)
@@ -305,7 +308,8 @@ class ToolExecutor:
                         self.execute_tool,
                         tool_config,
                         target_path,
-                        content
+                        content,
+                        True  # use_cache
                     ): (tool_name, tool_config)
                     for tool_name, tool_config in tools.items()
                 }
@@ -338,7 +342,7 @@ class ToolExecutor:
             # Execute tools sequentially
             for tool_name, tool_config in tools.items():
                 logger.info(f"Executing tool {tool_name} for {language}")
-                result = self.execute_tool(tool_config, target_path, content)
+                result = self.execute_tool(tool_config, target_path, content, use_cache=True)
                 results.append(result)
                 
                 # Detailed audit logging

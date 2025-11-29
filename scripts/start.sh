@@ -101,10 +101,15 @@ cd "$PROJECT_ROOT/frontend"
 # Update vite config with actual port
 FRONTEND_LOG=$(grep "frontend_log:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
 
-# Create temporary vite config override
-cat > vite.config.override.ts <<EOF
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+# Backup original vite config if not already backed up
+if [ ! -f "vite.config.ts.bak" ]; then
+    cp vite.config.ts vite.config.ts.bak
+fi
+
+# Update vite config with actual ports
+cat > vite.config.ts <<EOF
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
@@ -117,7 +122,7 @@ export default defineConfig({
       },
     },
   },
-});
+})
 EOF
 
 nohup npm run dev > "$FRONTEND_LOG" 2>&1 &
