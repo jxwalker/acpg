@@ -222,13 +222,16 @@ class Prosecutor:
                     policy_id, metadata = mapping
                     
                     # Create violation
+                    # Ensure severity is never None (default to "medium" if missing)
+                    severity = metadata.get("severity") or finding.severity or "medium"
+                    
                     violation = Violation(
                         rule_id=policy_id,
                         description=metadata.get("description", finding.message),
                         line=finding.line_number,
                         evidence=finding.message,
                         detector=tool_name,
-                        severity=metadata.get("severity", finding.severity)
+                        severity=severity
                     )
                     violations.append(violation)
                 else:
