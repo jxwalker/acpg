@@ -630,6 +630,8 @@ export default function App() {
       <main className="max-w-[1920px] mx-auto px-8 pb-12">
         {viewMode === 'verify' ? (
           <ProofVerifier />
+        ) : viewMode === 'tools' ? (
+          <ToolsConfigurationView />
         ) : viewMode === 'policies' ? (
           <PoliciesView policies={policies} />
         ) : viewMode === 'proof' && enforceResult?.proof_bundle ? (
