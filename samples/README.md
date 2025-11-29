@@ -4,6 +4,37 @@ This directory contains sample code files demonstrating various security policy 
 
 ## Sample Files
 
+### 12_tool_demo.py
+**Purpose**: Demonstrates static analysis tool findings and the complete tool integration workflow.
+
+**Expected Tool Findings**:
+- `B608` - SQL injection (mapped to SQL-001) → Will appear as violation
+- `B105` - Hardcoded password (mapped to SEC-001) → Will appear as violation  
+- `B307` - Use of eval (mapped to SEC-003) → Will appear as violation
+- `B601` - Shell injection (unmapped) → Will show in tool execution status
+- `B602` - Shell injection (unmapped) → Will show in tool execution status
+- `B104` - Bind to all interfaces (unmapped) → Will show in tool execution status
+- `B102` - Use of exec (unmapped) → Will show in tool execution status
+- `B101` - Use of assert (unmapped) → Will show in tool execution status
+
+**Workflow Test**:
+1. Load this sample in the editor
+2. Go to Tools → Browse Rules → Select "bandit"
+3. See that B608, B105, B307 are mapped
+4. See that B601, B602, B104, B102, B101 are unmapped
+5. Click "Analyze" to run tools
+6. Check "Tool Execution" panel:
+   - See bandit ran successfully
+   - See 8 findings total (3 mapped, 5 unmapped)
+7. Check "Violations" panel:
+   - See 3 violations with [bandit] badges
+   - SQL-001, SEC-001, SEC-003
+8. Expand tool execution to see unmapped findings
+9. Create mappings for unmapped rules if desired
+10. Re-analyze to see new violations appear
+
+## Sample Files
+
 | File | Description | Violations |
 |------|-------------|------------|
 | `01_hardcoded_secrets.py` | Embedded credentials and API keys | SEC-001 |
