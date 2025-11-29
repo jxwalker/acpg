@@ -6,7 +6,8 @@ import type {
   AdjudicationResult,
   EnforceResponse,
   ViolationSummary,
-  Violation
+  Violation,
+  ProofBundle
 } from './types';
 
 const API_BASE = '/api/v1';
@@ -85,6 +86,13 @@ export const api = {
     fetchApi<{ code: string; analysis?: string[] }>('/generate', {
       method: 'POST',
       body: JSON.stringify({ spec, language, policies }),
+    }),
+
+  // Proof Export
+  exportProof: (proofBundle: ProofBundle, format: string = 'json') =>
+    fetchApi<{ format: string; content: string }>('/proof/export', {
+      method: 'POST',
+      body: JSON.stringify({ proof_bundle: proofBundle, format }),
     }),
 };
 

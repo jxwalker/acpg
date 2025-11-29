@@ -447,15 +447,45 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadProof = () => {
+  const handleDownloadProof = async (format: string = 'json') => {
     if (!enforceResult?.proof_bundle) return;
-    const blob = new Blob([JSON.stringify(enforceResult.proof_bundle, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'proof_bundle.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    
+    try {
+      const response = await api.exportProof(enforceResult.proof_bundle, format);
+      const content = response.content;
+      
+      // Determine file extension and MIME type
+      let extension = 'json';
+      let mimeType = 'application/json';
+      if (format === 'markdown') {
+        extension = 'md';
+        mimeType = 'text/markdown';
+      } else if (format === 'html') {
+        extension = 'html';
+        mimeType = 'text/html';
+      } else if (format === 'summary') {
+        extension = 'txt';
+        mimeType = 'text/plain';
+      }
+      
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `proof_bundle.${extension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      // Fallback to client-side JSON export
+      const blob = new Blob([JSON.stringify(enforceResult.proof_bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'proof_bundle.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleCopyProof = useCallback(() => {
@@ -2058,10 +2088,19 @@ function ProofBundleView({
   proof: ProofBundle;
   iterations: number;
   onCopy: () => void;
-  onDownload: () => void;
+  onDownload: (format: string) => void;
   copied: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'formal' | 'json'>('overview');
+  const [exportFormat, setExportFormat] = useState<string>('json');
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  
+  const exportFormats = [
+    { value: 'json', label: 'JSON', icon: '{}' },
+    { value: 'markdown', label: 'Markdown', icon: '📝' },
+    { value: 'html', label: 'HTML', icon: '🌐' },
+    { value: 'summary', label: 'Summary', icon: '📄' },
+  ];
   
   return (
     <div className="space-y-6">
@@ -2085,13 +2124,36 @@ function ProofBundleView({
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied!' : 'Copy JSON'}
             </button>
-            <button
-              onClick={onDownload}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl"
-            >
-              <Download className="w-4 h-4" />
-              Download
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl"
+              >
+                <Download className="w-4 h-4" />
+                Download
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-white/10 rounded-xl shadow-xl z-10 overflow-hidden">
+                  {exportFormats.map((fmt) => (
+                    <button
+                      key={fmt.value}
+                      onClick={() => {
+                        setExportFormat(fmt.value);
+                        onDownload(fmt.value);
+                        setShowExportMenu(false);
+                      }}
+                      className={`w-full text-left px-4 py-3 hover:bg-slate-700 transition-colors flex items-center gap-3 ${
+                        exportFormat === fmt.value ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-300'
+                      }`}
+                    >
+                      <span>{fmt.icon}</span>
+                      <span>{fmt.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         
@@ -4411,6 +4473,40 @@ function ProofVerifier() {
     }
   };
 
+  const handleExportProof = async (format: string = 'json') => {
+    if (!proofJson) return;
+    try {
+      const proofBundle = JSON.parse(proofJson);
+      const response = await api.exportProof(proofBundle, format);
+      const content = response.content;
+      
+      // Determine file extension and MIME type
+      let extension = 'json';
+      let mimeType = 'application/json';
+      if (format === 'markdown') {
+        extension = 'md';
+        mimeType = 'text/markdown';
+      } else if (format === 'html') {
+        extension = 'html';
+        mimeType = 'text/html';
+      } else if (format === 'summary') {
+        extension = 'txt';
+        mimeType = 'text/plain';
+      }
+      
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `proof_bundle.${extension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      setError('Export failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -4583,6 +4679,48 @@ function ProofVerifier() {
                   </div>
                 </div>
               )}
+
+              {/* Export Options */}
+              <div className="p-4 bg-slate-800/50 rounded-xl">
+                <h5 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                  <Download className="w-4 h-4" />
+                  Export Proof Bundle
+                </h5>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleExportProof('json')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    JSON
+                  </button>
+                  <button
+                    onClick={() => handleExportProof('markdown')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Markdown
+                  </button>
+                  <button
+                    onClick={() => handleExportProof('html')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    HTML
+                  </button>
+                  <button
+                    onClick={() => handleExportProof('summary')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Summary
+                  </button>
+                </div>
+              </div>
 
               {/* Errors */}
               {verificationResult.errors?.length > 0 && (
