@@ -76,9 +76,17 @@ async def health_check():
     # Check database
     try:
         from sqlalchemy import text
-        db = next(get_db())
-        db.execute(text("SELECT 1"))
-        health_status["components"]["database"]["status"] = "healthy"
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            db.execute(text("SELECT 1"))
+            health_status["components"]["database"]["status"] = "healthy"
+        finally:
+            # Ensure the database session is closed
+            try:
+                next(db_gen, None)  # Advance generator to finally block
+            except StopIteration:
+                pass
     except Exception as e:
         health_status["components"]["database"]["status"] = "unhealthy"
         health_status["components"]["database"]["error"] = str(e)
