@@ -17,6 +17,7 @@ from ..services import (
     get_adjudicator, get_proof_assembler
 )
 from ..core.static_analyzers import get_analyzer_config
+from ..core.tool_rules_registry import get_tool_rules, get_all_tool_rules, get_tool_rule
 from ..services.tool_cache import get_tool_cache
 from ..services.tool_mapper import get_tool_mapper
 from ..core.config import settings
@@ -277,6 +278,79 @@ async def delete_tool_mapping(tool_name: str, tool_rule_id: str):
         import logging
         logging.error(f"Error deleting tool mapping: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error deleting tool mapping: {e}")
+
+
+@router.get("/static-analysis/tools/{tool_name}/rules")
+async def get_tool_rules_endpoint(tool_name: str):
+    """Get all available rules for a specific tool."""
+    try:
+        rules = get_tool_rules(tool_name)
+        if not rules:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No rules found for tool '{tool_name}' or tool not supported"
+            )
+        
+        # Get existing mappings to show which rules are already mapped
+        mapper = get_tool_mapper()
+        existing_mappings = mapper.get_all_mappings().get(tool_name, {})
+        
+        # Enrich rules with mapping status
+        enriched_rules = {}
+        for rule_id, rule_info in rules.items():
+            mapping = existing_mappings.get(rule_id)
+            enriched_rules[rule_id] = {
+                **rule_info,
+                "mapped": mapping is not None,
+                "mapped_to_policy": mapping.get("policy_id") if mapping else None
+            }
+        
+        return {
+            "tool_name": tool_name,
+            "rules": enriched_rules,
+            "total_rules": len(rules),
+            "mapped_rules": len(existing_mappings),
+            "unmapped_rules": len(rules) - len(existing_mappings)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error getting tool rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting tool rules: {e}")
+
+
+@router.get("/static-analysis/tools/rules")
+async def get_all_tool_rules_endpoint():
+    """Get all available rules for all tools."""
+    try:
+        all_rules = get_all_tool_rules()
+        mapper = get_tool_mapper()
+        existing_mappings = mapper.get_all_mappings()
+        
+        # Enrich with mapping status
+        enriched = {}
+        for tool_name, rules in all_rules.items():
+            tool_mappings = existing_mappings.get(tool_name, {})
+            enriched[tool_name] = {
+                "rules": {
+                    rule_id: {
+                        **rule_info,
+                        "mapped": rule_id in tool_mappings,
+                        "mapped_to_policy": tool_mappings.get(rule_id, {}).get("policy_id") if rule_id in tool_mappings else None
+                    }
+                    for rule_id, rule_info in rules.items()
+                },
+                "total_rules": len(rules),
+                "mapped_rules": len(tool_mappings),
+                "unmapped_rules": len(rules) - len(tool_mappings)
+            }
+        
+        return enriched
+    except Exception as e:
+        import logging
+        logging.error(f"Error getting all tool rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting all tool rules: {e}")
 
 
 # ============================================================================
