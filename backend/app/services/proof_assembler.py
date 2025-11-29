@@ -67,7 +67,7 @@ class ProofAssembler:
         if 'timestamp' in artifact_dict and hasattr(artifact_dict['timestamp'], 'isoformat'):
             artifact_dict['timestamp'] = artifact_dict['timestamp'].isoformat()
         
-        signing_timestamp = datetime.utcnow().isoformat()
+        signing_timestamp = datetime.now(timezone.utc).isoformat()
         
         # Include code in bundle data for tamper detection
         # The signature will cover the code, so any modification will invalidate it
@@ -415,7 +415,7 @@ class ProofAssembler:
             hash=code_hash,
             language=language,
             generator=f"ACPG-{llm_name}",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
     
     def _compile_policy_outcomes(self, adjudication: AdjudicationResult) -> List[PolicyOutcome]:

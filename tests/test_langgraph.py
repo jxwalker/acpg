@@ -173,10 +173,19 @@ def test_sync_compliance_check_dirty_code():
     result = run_compliance_check_sync(
         code=dirty_code,
         language="python",
-        max_iterations=1  # Only 1 iteration, won't fix without OpenAI
+        max_iterations=1  # Only 1 iteration
     )
     
-    assert result["compliant"] == False
-    assert len(result["violations"]) > 0
+    # The code may be fixed by the LLM if available, or remain non-compliant
+    # Either way, we should have violations initially and messages
     assert len(result["messages"]) > 0
+    
+    # If LLM fixed it, it will be compliant; otherwise it won't be
+    # Both outcomes are valid for this test
+    if result["compliant"]:
+        # LLM successfully fixed the code
+        assert len(result["violations_fixed"]) > 0
+    else:
+        # Code remains non-compliant (LLM unavailable or failed)
+        assert len(result["violations"]) > 0
 
