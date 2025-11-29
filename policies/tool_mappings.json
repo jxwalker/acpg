@@ -1,0 +1,95 @@
+{
+  "bandit": {
+    "B105": {
+      "policy_id": "SEC-001",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Hardcoded password"
+    },
+    "B106": {
+      "policy_id": "SEC-001",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Hardcoded password in function call"
+    },
+    "B107": {
+      "policy_id": "SEC-001",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Hardcoded password string"
+    },
+    "B608": {
+      "policy_id": "SQL-001",
+      "confidence": "high",
+      "severity": "critical",
+      "description": "SQL injection via string formatting"
+    },
+    "B601": {
+      "policy_id": "SQL-001",
+      "confidence": "high",
+      "severity": "critical",
+      "description": "SQL injection via shell injection"
+    },
+    "B602": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Shell injection"
+    },
+    "B307": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Use of possibly insecure function - consider using safer ast.literal_eval"
+    },
+    "B104": {
+      "policy_id": "SEC-001",
+      "confidence": "medium",
+      "severity": "medium",
+      "description": "Hardcoded bind to all interfaces"
+    }
+  },
+  "eslint": {
+    "no-eval": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Use of eval()"
+    },
+    "no-implied-eval": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Use of implied eval()"
+    },
+    "no-new-func": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Use of Function constructor"
+    },
+    "no-script-url": {
+      "policy_id": "SEC-003",
+      "confidence": "medium",
+      "severity": "medium",
+      "description": "Script URL"
+    }
+  },
+  "pylint": {
+    "eval-used": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Use of eval()"
+    }
+  },
+  "safety": {
+    "vulnerability": {
+      "policy_id": "SEC-002",
+      "confidence": "high",
+      "severity": "high",
+      "description": "Known security vulnerability in dependency"
+    }
+  }
+}
+

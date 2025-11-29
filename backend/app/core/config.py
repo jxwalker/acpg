@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     
+    # Static Analysis Configuration
+    ENABLE_STATIC_ANALYSIS: bool = True
+    STATIC_ANALYSIS_TIMEOUT: int = 30  # Default timeout in seconds
+    STATIC_ANALYSIS_CACHE_TTL: int = 3600  # Cache TTL in seconds (1 hour)
+    
     model_config = {
         "env_file": ".env",
         "case_sensitive": True

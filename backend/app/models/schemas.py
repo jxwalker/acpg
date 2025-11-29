@@ -114,9 +114,14 @@ class Evidence(BaseModel):
     """Evidence supporting a compliance decision."""
     rule_id: str
     type: str
-    tool: Optional[str] = None
+    tool: Optional[str] = None  # Tool name (e.g., "bandit", "eslint", "regex", "ast")
+    tool_version: Optional[str] = None  # Tool version
+    tool_rule_id: Optional[str] = None  # Tool-specific rule ID (e.g., "B608")
+    detector: Optional[str] = None  # Keep for backward compatibility (same as tool)
     test: Optional[str] = None
     output: str
+    confidence: Optional[str] = None  # "low", "medium", "high"
+    location: Optional[Dict[str, Any]] = None  # file, line, column
 
 
 class ProofBundle(BaseModel):

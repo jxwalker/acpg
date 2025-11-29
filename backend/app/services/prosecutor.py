@@ -10,6 +10,10 @@ from pathlib import Path
 from ..models.schemas import Violation, AnalysisResult, PolicyRule
 from ..core.config import settings
 from .policy_compiler import get_policy_compiler
+from .language_detector import get_language_detector
+from .tool_executor import get_tool_executor
+from .tool_mapper import get_tool_mapper
+from .parsers import BanditParser, ESLintParser, SarifParser
 
 
 class Prosecutor:
@@ -17,51 +21,33 @@ class Prosecutor:
     The Prosecutor agent finds policy violations in code artifacts.
     
     Uses multiple detection strategies:
-    1. Bandit - Python security scanner
+    1. Static analysis tools (Bandit, ESLint, etc.) - Configurable
     2. Regex pattern matching - From policy definitions
     3. AST analysis - For semantic checks
     4. Dynamic testing - Hypothesis fuzzing (optional)
     """
     
-    # Mapping of Bandit test IDs to our policy IDs
-    BANDIT_POLICY_MAP = {
-        'B105': 'SEC-001',  # hardcoded_password_string
-        'B106': 'SEC-001',  # hardcoded_password_funcarg
-        'B107': 'SEC-001',  # hardcoded_password_default
-        'B108': 'SEC-001',  # hardcoded_tmp_directory (related)
-        'B301': 'SEC-003',  # pickle
-        'B302': 'SEC-003',  # marshal
-        'B303': 'CRYPTO-001',  # md5, sha1
-        'B304': 'CRYPTO-001',  # insecure ciphers
-        'B305': 'CRYPTO-001',  # insecure cipher modes
-        'B306': 'SEC-003',  # mktemp
-        'B307': 'SEC-003',  # eval
-        'B308': 'SEC-003',  # mark_safe
-        'B310': 'SEC-004',  # urllib_urlopen (http)
-        'B311': 'CRYPTO-001',  # random
-        'B312': 'SEC-004',  # telnetlib
-        'B501': 'SEC-004',  # request_with_no_cert_validation
-        'B502': 'SEC-004',  # ssl_with_bad_version
-        'B503': 'SEC-004',  # ssl_with_bad_defaults
-        'B504': 'SEC-004',  # ssl_with_no_version
-        'B506': 'SEC-003',  # yaml_load
-        'B608': 'SQL-001',  # sql_injection (hardcoded)
-        'B609': 'SQL-001',  # linux_commands_wildcard_injection
-        'B610': 'SEC-003',  # django_extra_used
-        'B611': 'SEC-003',  # django_rawsql_used
-    }
-    
     def __init__(self):
         self.policy_compiler = get_policy_compiler()
+        self.language_detector = get_language_detector()
+        self.tool_executor = get_tool_executor()
+        self.tool_mapper = get_tool_mapper()
+        
+        # Parser registry
+        self.parsers = {
+            "bandit": BanditParser(),
+            "eslint": ESLintParser(),
+            "sarif": SarifParser()
+        }
     
-    def analyze(self, code: str, language: str = "python", 
+    def analyze(self, code: str, language: Optional[str] = None, 
                 policy_ids: Optional[List[str]] = None) -> AnalysisResult:
         """
         Run full analysis on code artifact.
         
         Args:
             code: Source code to analyze
-            language: Programming language
+            language: Programming language (auto-detected if None)
             policy_ids: Optional list of policies to check (None = all)
             
         Returns:
@@ -70,22 +56,26 @@ class Prosecutor:
         import hashlib
         artifact_id = hashlib.sha256(code.encode()).hexdigest()[:16]
         
+        # Auto-detect language if not provided
+        if language is None:
+            language = self.language_detector.detect_from_content(code) or "python"
+        
         all_violations = []
         
-        # Run Bandit for Python code
-        if language.lower() == 'python':
-            bandit_violations = self.run_bandit(code)
-            all_violations.extend(bandit_violations)
+        # Run static analysis tools if enabled
+        if settings.ENABLE_STATIC_ANALYSIS:
+            tool_violations = self.run_static_analysis_tools(code, language)
+            all_violations.extend(tool_violations)
         
         # Run policy regex/AST checks
         policy_violations = self.run_policy_checks(code, language, policy_ids)
         all_violations.extend(policy_violations)
         
-        # Deduplicate violations (same rule + same line)
+        # Deduplicate violations (same rule + same line + same detector)
         seen = set()
         unique_violations = []
         for v in all_violations:
-            key = (v.rule_id, v.line)
+            key = (v.rule_id, v.line, v.detector)
             if key not in seen:
                 seen.add(key)
                 unique_violations.append(v)
@@ -95,66 +85,66 @@ class Prosecutor:
             violations=unique_violations
         )
     
-    def run_bandit(self, code: str) -> List[Violation]:
+    def run_static_analysis_tools(self, code: str, language: str) -> List[Violation]:
         """
-        Run Bandit security scanner on Python code.
+        Run all enabled static analysis tools for the given language.
         
         Args:
-            code: Python source code
+            code: Source code to analyze
+            language: Programming language
             
         Returns:
-            List of violations detected by Bandit
+            List of violations from static analysis tools
         """
         violations = []
         
-        # Write code to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
-            temp_path = f.name
+        # Execute all enabled tools for this language
+        execution_results = self.tool_executor.execute_tools_for_language(
+            language=language,
+            content=code
+        )
         
-        try:
-            # Run Bandit with JSON output
-            result = subprocess.run(
-                ['bandit', '-f', 'json', '-q', temp_path],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+        for result in execution_results:
+            if not result.success or not result.output:
+                continue  # Skip failed tools
             
-            # Parse Bandit output
-            if result.stdout:
-                try:
-                    bandit_output = json.loads(result.stdout)
-                    for issue in bandit_output.get('results', []):
-                        # Map Bandit test ID to our policy ID
-                        test_id = issue.get('test_id', '')
-                        policy_id = self.BANDIT_POLICY_MAP.get(test_id, f'BANDIT-{test_id}')
-                        
-                        # Get severity from Bandit or policy
-                        bandit_severity = issue.get('issue_severity', 'MEDIUM').lower()
-                        
-                        violations.append(Violation(
-                            rule_id=policy_id,
-                            description=issue.get('issue_text', 'Security issue detected'),
-                            line=issue.get('line_number'),
-                            evidence=issue.get('code', '').strip(),
-                            detector='bandit',
-                            severity=bandit_severity
-                        ))
-                except json.JSONDecodeError:
-                    pass  # Bandit didn't produce valid JSON
-                    
-        except subprocess.TimeoutExpired:
-            pass  # Bandit timed out
-        except FileNotFoundError:
-            # Bandit not installed - skip
-            pass
-        finally:
-            # Clean up temp file
+            # Get parser for this tool
+            parser = self.parsers.get(result.tool_name)
+            if not parser:
+                # Try to determine parser from tool name
+                if "bandit" in result.tool_name.lower():
+                    parser = self.parsers["bandit"]
+                elif "eslint" in result.tool_name.lower():
+                    parser = self.parsers["eslint"]
+                else:
+                    continue  # No parser available
+            
+            # Parse tool output
             try:
-                os.unlink(temp_path)
-            except:
-                pass
+                findings = parser.parse(result.output)
+            except Exception as e:
+                # Log parsing error but continue
+                import logging
+                logging.warning(f"Error parsing {result.tool_name} output: {e}")
+                continue
+            
+            # Map findings to violations
+            for finding in findings:
+                mapping = self.tool_mapper.map_finding_to_policy(result.tool_name, finding)
+                
+                if mapping:
+                    policy_id, metadata = mapping
+                    
+                    # Create violation
+                    violation = Violation(
+                        rule_id=policy_id,
+                        description=metadata.get("description", finding.message),
+                        line=finding.line_number,
+                        evidence=finding.message,
+                        detector=result.tool_name,
+                        severity=metadata.get("severity", finding.severity)
+                    )
+                    violations.append(violation)
         
         return violations
     

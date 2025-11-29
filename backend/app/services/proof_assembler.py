@@ -56,8 +56,8 @@ class ProofAssembler:
         # Gather evidence
         evidence = self._gather_evidence(analysis, adjudication)
         
-        # Extract argumentation trace
-        argumentation = self._extract_argumentation(adjudication)
+        # Extract argumentation trace (with tool metadata)
+        argumentation = self._extract_argumentation(adjudication, analysis)
         
         # Determine decision
         decision = "Compliant" if adjudication.compliant else "Non-compliant"
@@ -254,13 +254,26 @@ class ProofAssembler:
         
         return evidence_list
     
-    def _extract_argumentation(self, adjudication: AdjudicationResult) -> Dict[str, Any]:
+    def _extract_argumentation(self, adjudication: AdjudicationResult, 
+                                analysis: Optional[AnalysisResult] = None) -> Dict[str, Any]:
         """Extract full formal argumentation proof for the bundle."""
+        # Extract tools used from violations
+        tools_used = set()
+        tool_versions = {}
+        if analysis:
+            for violation in analysis.violations:
+                if violation.detector and violation.detector != "regex" and violation.detector != "ast":
+                    tools_used.add(violation.detector)
+        
         # Build the formal proof structure
         formal_proof = {
             "framework": "Dung's Abstract Argumentation Framework",
             "semantics": "Grounded Extension",
             "decision": "Compliant" if adjudication.compliant else "Non-Compliant",
+            
+            # Tools used in analysis
+            "tools_used": sorted(list(tools_used)) if tools_used else [],
+            "tool_versions": tool_versions,  # TODO: Extract actual versions from tool execution
             
             # Arguments in the framework
             "arguments": [],
@@ -288,7 +301,7 @@ class ProofAssembler:
                 "unsatisfied_rules": len(adjudication.unsatisfied_rules)
             },
             
-            # Visual graph representation (ASCII art)
+            # Visual graph representation
             "graph_visual": "",
             
             # Plain English explanation
