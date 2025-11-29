@@ -105,6 +105,7 @@ export default function App() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
   const [sampleFiles, setSampleFiles] = useState<Array<{name: string; description: string; violations: string[]}>>([]);
+  const [sampleFilesLoading, setSampleFilesLoading] = useState(true);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -129,10 +130,24 @@ export default function App() {
       .catch(() => setLlmProvider('GPT-4'));
     
     // Load sample files
+    setSampleFilesLoading(true);
     fetch('/api/v1/samples')
-      .then(res => res.json())
-      .then(data => setSampleFiles(data.samples || []))
-      .catch(() => {});
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        return res.json();
+      })
+      .then(data => {
+        console.log('Loaded samples:', data.samples?.length || 0);
+        setSampleFiles(data.samples || []);
+        setSampleFilesLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to load samples:', err);
+        setSampleFiles([]);
+        setSampleFilesLoading(false);
+      });
     
     // Load enabled policy groups count
     fetch('/api/v1/policies/groups/')
@@ -544,10 +559,14 @@ export default function App() {
                       </button>
                     </div>
                     
-                    {sampleFiles.length > 0 && (
+                    {sampleFilesLoading ? (
+                      <div className="p-4 text-center text-slate-400 text-sm">
+                        Loading samples...
+                      </div>
+                    ) : sampleFiles.length > 0 ? (
                       <>
                         <div className="p-2 border-t border-white/10">
-                          <span className="text-xs text-slate-500 uppercase tracking-wider px-2">Sample Files</span>
+                          <span className="text-xs text-slate-500 uppercase tracking-wider px-2">Sample Files ({sampleFiles.length})</span>
                         </div>
                         <div className="p-1 max-h-64 overflow-y-auto">
                           {sampleFiles.map(sample => (
@@ -576,6 +595,10 @@ export default function App() {
                           ))}
                         </div>
                       </>
+                    ) : (
+                      <div className="p-4 text-center text-slate-500 text-sm">
+                        No sample files found
+                      </div>
                     )}
                   </div>
                 )}
