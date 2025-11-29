@@ -158,20 +158,29 @@ class ToolExecutor:
                         timeout=5,
                         check=False
                     )
-                    if result.returncode == 0 and result.stdout:
+                    # Some tools return non-zero for --version but still output version
+                    if result.stdout or result.stderr:
+                        output = (result.stdout or result.stderr).strip()
                         # Extract version number (e.g., "bandit 1.7.5" -> "1.7.5")
-                        output = result.stdout.strip()
-                        # Try to find version pattern
                         import re
                         version_match = re.search(r'(\d+\.\d+\.\d+)', output)
                         if version_match:
                             return version_match.group(1)
-                        # Fallback: return first line
-                        return output.split('\n')[0].strip()
-                except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                        # Fallback: return first line if it looks like a version
+                        first_line = output.split('\n')[0].strip()
+                        if re.search(r'\d+\.\d+', first_line):
+                            return first_line
+                except subprocess.TimeoutExpired:
+                    logger.debug(f"Tool {tool_name} version check timed out")
                     continue
-        except Exception:
-            pass
+                except FileNotFoundError:
+                    logger.debug(f"Tool {tool_name} not found for version check")
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error checking {tool_name} version: {e}")
+                    continue
+        except Exception as e:
+            logger.warning(f"Failed to get version for {tool_name}: {e}")
         return None
     
     def _execute_with_file(

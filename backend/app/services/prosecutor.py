@@ -117,13 +117,24 @@ class Prosecutor:
             raw_findings = []
             
             if not result.success:
-                # Tool failed
+                # Tool failed - provide helpful error message
+                error_msg = result.error or "Tool execution failed"
+                
+                # Enhance error messages for common issues
+                if "No such file or directory" in error_msg or "not found" in error_msg.lower():
+                    error_msg = f"Tool '{tool_name}' is not installed. Install it with: pip install {tool_name}"
+                elif "timeout" in error_msg.lower():
+                    error_msg = f"Tool '{tool_name}' execution timed out. The code may be too large or the tool is slow."
+                elif "ModuleNotFoundError" in error_msg or "ImportError" in error_msg:
+                    error_msg = f"Tool '{tool_name}' has missing dependencies. Check tool installation."
+                
                 tool_execution_info[tool_name] = ToolExecutionInfo(
                     tool_name=tool_name,
                     success=False,
-                    error=result.error or "Tool execution failed",
+                    error=error_msg,
                     execution_time=result.execution_time
                 )
+                logger.warning(f"Tool {tool_name} failed: {error_msg}")
                 continue
             
             if not result.output:

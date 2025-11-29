@@ -40,8 +40,119 @@ def get_client_ip(request: Request) -> str:
 
 @router.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "ACPG"}
+    """
+    Comprehensive health check endpoint.
+    
+    Returns detailed status of system components:
+    - API status
+    - Database connectivity
+    - Static analysis tools availability
+    - LLM provider status
+    - Policy loading status
+    """
+    import subprocess
+    from ..core.llm_config import get_llm_config
+    from ..core.key_manager import get_key_manager
+    
+    health_status = {
+        "status": "healthy",
+        "service": "ACPG",
+        "version": "1.0.0",
+        "components": {
+            "api": {"status": "healthy"},
+            "database": {"status": "unknown"},
+            "tools": {"status": "unknown", "available": []},
+            "llm": {"status": "unknown"},
+            "policies": {"status": "unknown", "count": 0},
+            "signing": {"status": "unknown"}
+        },
+        "timestamp": None
+    }
+    
+    from datetime import datetime, timezone
+    health_status["timestamp"] = datetime.now(timezone.utc).isoformat()
+    
+    # Check database
+    try:
+        db = next(get_db())
+        db.execute("SELECT 1")
+        health_status["components"]["database"]["status"] = "healthy"
+    except Exception as e:
+        health_status["components"]["database"]["status"] = "unhealthy"
+        health_status["components"]["database"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check static analysis tools
+    try:
+        config = get_analyzer_config()
+        available_tools = []
+        tool_status = {}
+        
+        # Check Python tools
+        python_tools = config.get_tools_for_language("python")
+        for tool_name, tool_config in python_tools.items():
+            if tool_config.enabled:
+                try:
+                    # Try to run tool with --version or --help
+                    result = subprocess.run(
+                        [tool_name, "--version"] if tool_name != "safety" else [tool_name, "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if result.returncode == 0 or result.returncode == 1:  # Some tools return 1 for --version
+                        available_tools.append(tool_name)
+                        tool_status[tool_name] = "available"
+                    else:
+                        tool_status[tool_name] = "unavailable"
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    tool_status[tool_name] = "not_installed"
+                except Exception:
+                    tool_status[tool_name] = "error"
+        
+        health_status["components"]["tools"]["status"] = "healthy" if available_tools else "degraded"
+        health_status["components"]["tools"]["available"] = available_tools
+        health_status["components"]["tools"]["details"] = tool_status
+    except Exception as e:
+        health_status["components"]["tools"]["status"] = "error"
+        health_status["components"]["tools"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check LLM provider
+    try:
+        llm_config = get_llm_config()
+        provider = llm_config.get_active_provider()
+        health_status["components"]["llm"]["status"] = "healthy"
+        health_status["components"]["llm"]["provider"] = provider.name
+        health_status["components"]["llm"]["model"] = provider.model
+    except Exception as e:
+        health_status["components"]["llm"]["status"] = "unhealthy"
+        health_status["components"]["llm"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check policies
+    try:
+        compiler = get_policy_compiler()
+        policies = compiler.get_all_policies()
+        health_status["components"]["policies"]["status"] = "healthy"
+        health_status["components"]["policies"]["count"] = len(policies)
+    except Exception as e:
+        health_status["components"]["policies"]["status"] = "unhealthy"
+        health_status["components"]["policies"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check signing key
+    try:
+        km = get_key_manager()
+        key_info = km.get_key_info()
+        health_status["components"]["signing"]["status"] = "healthy"
+        health_status["components"]["signing"]["fingerprint"] = key_info.get("fingerprint", "unknown")
+    except Exception as e:
+        health_status["components"]["signing"]["status"] = "unhealthy"
+        health_status["components"]["signing"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    return health_status
 
 
 @router.get("/info")
