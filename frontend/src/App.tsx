@@ -1855,11 +1855,13 @@ function ArgumentationGraphVisual({ proof }: { proof: ProofBundle }) {
                 <div className={`flex-shrink-0 p-3 rounded-lg border-2 ${
                   compliance?.status === 'accepted' 
                     ? 'bg-emerald-500/10 border-emerald-500/50' 
-                    : 'bg-slate-700/50 border-slate-600/50'
+                    : 'bg-red-500/10 border-red-500/50'
                 }`}>
-                  <div className="text-xs font-mono font-bold text-emerald-400">C_{ruleId}</div>
+                  <div className={`text-xs font-mono font-bold ${
+                    compliance?.status === 'accepted' ? 'text-emerald-400' : 'text-red-400'
+                  }`}>C_{ruleId}</div>
                   <div className={`text-xs mt-1 ${
-                    compliance?.status === 'accepted' ? 'text-emerald-400' : 'text-slate-500'
+                    compliance?.status === 'accepted' ? 'text-emerald-400' : 'text-red-400'
                   }`}>
                     {compliance?.status === 'accepted' ? '✓ ACCEPTED' : '✗ REJECTED'}
                   </div>
