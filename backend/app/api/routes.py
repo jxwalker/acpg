@@ -1159,9 +1159,11 @@ async def generate_proof(
     db: Session = Depends(get_db)
 ):
     """
-    Generate a proof bundle for compliant code.
+    Generate a proof bundle for code (compliant or non-compliant).
     
-    First analyzes and adjudicates, then generates proof if compliant.
+    First analyzes and adjudicates, then generates proof bundle.
+    Proof bundles are generated for both compliant and non-compliant code
+    to show the formal logic and evidence.
     """
     prosecutor = get_prosecutor()
     adjudicator = get_adjudicator()
@@ -1175,15 +1177,8 @@ async def generate_proof(
     
     adjudication = adjudicator.adjudicate(analysis, request.policies)
     
-    if not adjudication.compliant:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Code is not compliant, cannot generate proof",
-                "violations": [v.model_dump() for v in analysis.violations]
-            }
-        )
-    
+    # Generate proof bundle for both compliant and non-compliant code
+    # This allows viewing the formal logic even when code fails
     proof = proof_assembler.assemble_proof(
         code=request.code,
         analysis=analysis,
