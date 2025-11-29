@@ -5,7 +5,7 @@ import tempfile
 import os
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -28,7 +28,7 @@ class ToolExecutionResult:
         self.error = error
         self.execution_time = execution_time
         self.exit_code = exit_code
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.now(timezone.utc)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -82,7 +82,7 @@ class ToolExecutor:
                     exit_code=cached_result.get('exit_code')
                 )
         
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         try:
             # Prepare command
@@ -119,7 +119,7 @@ class ToolExecutor:
                 return self._execute_with_stdin(tool_config, content or "")
             
         except subprocess.TimeoutExpired:
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.warning(f"Tool {tool_config.name} timed out after {execution_time}s")
             return ToolExecutionResult(
                 tool_config.name,
@@ -128,7 +128,7 @@ class ToolExecutor:
                 execution_time=execution_time
             )
         except Exception as e:
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.error(f"Error executing tool {tool_config.name}: {e}", exc_info=True)
             return ToolExecutionResult(
                 tool_config.name,
@@ -143,7 +143,7 @@ class ToolExecutor:
         file_path: str
     ) -> ToolExecutionResult:
         """Execute tool with file path."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         # Build command with file path substitution
         command = [part.replace("{target}", file_path) for part in tool_config.command]
@@ -164,7 +164,7 @@ class ToolExecutor:
                 check=False  # Don't raise on non-zero exit
             )
             
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             
             # Some tools return non-zero on findings (not errors)
             # Check if we got valid output
@@ -212,7 +212,7 @@ class ToolExecutor:
             return exec_result
             
         except subprocess.TimeoutExpired:
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             raise
     
     def _execute_with_stdin(
@@ -221,7 +221,7 @@ class ToolExecutor:
         content: str
     ) -> ToolExecutionResult:
         """Execute tool with stdin input."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         command = [part.replace("{target}", "-") for part in tool_config.command]
         
@@ -235,7 +235,7 @@ class ToolExecutor:
                 check=False
             )
             
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             
             output = result.stdout if result.stdout else result.stderr
             
@@ -249,7 +249,7 @@ class ToolExecutor:
             )
             
         except subprocess.TimeoutExpired:
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             raise
     
     def _get_suffix_for_language(self, language: str) -> str:
