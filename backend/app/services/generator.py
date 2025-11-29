@@ -148,18 +148,23 @@ Return ONLY the fixed code, no explanations or markdown."""
             import logging
             logger = logging.getLogger(__name__)
             error_msg = str(e)
+            error_type = type(e).__name__
             
-            # Provide helpful error messages
-            if "api_key" in error_msg.lower() or "authentication" in error_msg.lower():
+            # Check for specific exception types first
+            if "ConnectionError" in error_type or "ConnectTimeout" in error_type or "ConnectionRefusedError" in error_type:
+                raise ValueError(f"LLM connection failed. Cannot reach {self.provider.name} at {self.llm_config.get_active_provider().base_url}. Is the service running? Error: {error_msg}")
+            elif "Timeout" in error_type or "timeout" in error_msg.lower():
+                raise ValueError(f"LLM request timed out. The service at {self.llm_config.get_active_provider().base_url} may be slow or overloaded. Error: {error_msg}")
+            elif "api_key" in error_msg.lower() or "authentication" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
                 raise ValueError(f"LLM authentication failed. Check your API key configuration. Error: {error_msg}")
             elif "rate limit" in error_msg.lower() or "429" in error_msg:
                 raise ValueError(f"LLM rate limit exceeded. Please try again later. Error: {error_msg}")
-            elif "connection" in error_msg.lower() or "network" in error_msg.lower():
-                raise ValueError(f"LLM connection failed. Check your network and LLM service configuration. Error: {error_msg}")
-            elif "model" in error_msg.lower() and "not found" in error_msg.lower():
+            elif "connection" in error_msg.lower() or "network" in error_msg.lower() or "NameResolutionError" in error_type:
+                raise ValueError(f"LLM connection failed. Cannot reach {self.provider.name} at {self.llm_config.get_active_provider().base_url}. Check your network and LLM service configuration. Error: {error_msg}")
+            elif "model" in error_msg.lower() and "not found" in error_msg.lower() or "404" in error_msg:
                 raise ValueError(f"LLM model '{self.model}' not found. Check your LLM configuration. Error: {error_msg}")
             else:
-                logger.error(f"LLM fix_violations error: {e}", exc_info=True)
+                logger.error(f"LLM fix_violations error ({error_type}): {e}", exc_info=True)
                 raise ValueError(f"Failed to fix code with LLM ({self.provider.name}): {error_msg}")
     
     def explain_fix(self, original: str, fixed: str, violations: List[Violation]) -> str:

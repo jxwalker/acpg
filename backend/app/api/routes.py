@@ -1124,7 +1124,13 @@ async def fix_code(request: FixCodeRequest):
             fixed_code=fixed_code,
             explanation=explanation
         )
+    except ValueError as e:
+        # ValueError from generator contains helpful error messages
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Unexpected error in fix_code: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Fix failed: {str(e)}")
 
 
