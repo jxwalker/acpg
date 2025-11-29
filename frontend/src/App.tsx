@@ -3572,6 +3572,10 @@ function ToolMappingsView({
   const [error, setError] = useState<string | null>(null);
   const [editingMapping, setEditingMapping] = useState<{toolName: string; ruleId: string; mapping: any} | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showBulkForm, setShowBulkForm] = useState(false);
+  const [bulkMappings, setBulkMappings] = useState<Array<{toolName: string; toolRuleId: string; policyId: string; confidence: string; severity: string; description: string}>>([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkResults, setBulkResults] = useState<{succeeded: number; failed: number; results: any} | null>(null);
   const [newMapping, setNewMapping] = useState({
     toolName: '',
     toolRuleId: '',
@@ -3893,24 +3897,37 @@ function ToolMappingsView({
               Map static analysis tool rules to ACPG policies
             </p>
           </div>
-          <button
-            onClick={() => {
-              setShowAddForm(true);
-              setEditingMapping(null);
-              setNewMapping({
-                toolName: '',
-                toolRuleId: '',
-                policyId: '',
-                confidence: 'medium',
-                severity: 'medium',
-                description: ''
-              });
-            }}
-            className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Add Mapping
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setShowBulkForm(true);
+                setBulkMappings([]);
+                setBulkResults(null);
+              }}
+              className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-2"
+            >
+              <List className="w-4 h-4" />
+              Bulk Mapping
+            </button>
+            <button
+              onClick={() => {
+                setShowAddForm(true);
+                setEditingMapping(null);
+                setNewMapping({
+                  toolName: '',
+                  toolRuleId: '',
+                  policyId: '',
+                  confidence: 'medium',
+                  severity: 'medium',
+                  description: ''
+                });
+              }}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Mapping
+            </button>
+          </div>
         </div>
       </div>
 
