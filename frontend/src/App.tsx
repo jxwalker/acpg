@@ -1496,6 +1496,11 @@ function ViolationsList({
                 <span className={`px-2.5 py-1 text-xs font-mono font-semibold rounded-lg ${severity.bg} ${severity.color}`}>
                   {violation.rule_id}
                 </span>
+                {violation.detector && violation.detector !== 'regex' && violation.detector !== 'ast' && (
+                  <span className="px-2 py-1 text-xs font-medium rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20" title={`Found by ${violation.detector}`}>
+                    {violation.detector}
+                  </span>
+                )}
                 <span className="flex-1 text-sm text-slate-300 truncate">
                   {violation.description}
                 </span>

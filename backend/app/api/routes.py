@@ -16,6 +16,8 @@ from ..services import (
     get_policy_compiler, get_prosecutor, get_generator,
     get_adjudicator, get_proof_assembler
 )
+from ..core.static_analyzers import get_analyzer_config
+from ..services.tool_cache import get_tool_cache
 from ..core.config import settings
 from ..core.database import get_db, AuditLogger, ProofStore
 
@@ -115,6 +117,32 @@ async def get_sample_file(filename: str):
         "name": filename,
         "content": content,
         "lines": len(content.split('\n'))
+    }
+
+
+@router.get("/static-analysis/tools")
+async def list_static_analysis_tools():
+    """List all configured static analysis tools."""
+    config = get_analyzer_config()
+    all_tools = config.list_all_tools()
+    
+    # Format for frontend
+    tools_by_language = {}
+    for language, tools in all_tools.items():
+        tools_by_language[language] = [
+            {
+                "name": tool.name,
+                "enabled": tool.enabled,
+                "timeout": tool.timeout,
+                "output_format": tool.output_format,
+                "requires_config": tool.requires_config
+            }
+            for tool in tools.values()
+        ]
+    
+    return {
+        "tools_by_language": tools_by_language,
+        "cache_stats": get_tool_cache().get_stats()
     }
 
 

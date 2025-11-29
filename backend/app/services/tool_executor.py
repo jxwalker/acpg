@@ -7,9 +7,11 @@ from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..core.static_analyzers import ToolConfig, get_analyzer_config
 from ..core.config import settings
+from .tool_cache import get_tool_cache
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +48,14 @@ class ToolExecutor:
     
     def __init__(self):
         self.config = get_analyzer_config()
+        self.cache = get_tool_cache()
     
     def execute_tool(
         self,
         tool_config: ToolConfig,
         target_path: Optional[str] = None,
-        content: Optional[str] = None
+        content: Optional[str] = None,
+        use_cache: bool = True
     ) -> ToolExecutionResult:
         """
         Execute a static analysis tool.
@@ -60,10 +64,24 @@ class ToolExecutor:
             tool_config: Tool configuration
             target_path: Path to file/directory to analyze
             content: File content (if target_path is None, creates temp file)
+            use_cache: Whether to use cached results if available
             
         Returns:
             ToolExecutionResult
         """
+        # Check cache if using content
+        if use_cache and content and not target_path:
+            cached_result = self.cache.get(tool_config.name, content)
+            if cached_result:
+                logger.debug(f"Using cached result for {tool_config.name}")
+                return ToolExecutionResult(
+                    tool_config.name,
+                    True,
+                    output=cached_result.get('output'),
+                    execution_time=0.0,  # Cached, no execution time
+                    exit_code=cached_result.get('exit_code')
+                )
+        
         start_time = datetime.utcnow()
         
         try:
@@ -159,15 +177,16 @@ class ToolExecutor:
                 except json.JSONDecodeError:
                     # Not valid JSON, might be error message
                     if result.returncode != 0:
-                        return ToolExecutionResult(
+                        exec_result = ToolExecutionResult(
                             tool_config.name,
                             False,
                             error=output or result.stderr,
                             execution_time=execution_time,
                             exit_code=result.returncode
                         )
+                        return exec_result
             
-            return ToolExecutionResult(
+            exec_result = ToolExecutionResult(
                 tool_config.name,
                 True,
                 output=output,
@@ -175,6 +194,22 @@ class ToolExecutor:
                 execution_time=execution_time,
                 exit_code=result.returncode
             )
+            
+            # Cache successful results
+            if use_cache and content and not target_path and exec_result.success:
+                try:
+                    self.cache.set(
+                        tool_config.name,
+                        content,
+                        {
+                            'output': exec_result.output,
+                            'exit_code': exec_result.exit_code
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to cache result for {tool_config.name}: {e}")
+            
+            return exec_result
             
         except subprocess.TimeoutExpired:
             execution_time = (datetime.utcnow() - start_time).total_seconds()
@@ -232,7 +267,9 @@ class ToolExecutor:
         self,
         language: str,
         target_path: Optional[str] = None,
-        content: Optional[str] = None
+        content: Optional[str] = None,
+        parallel: bool = True,
+        max_workers: Optional[int] = None
     ) -> List[ToolExecutionResult]:
         """
         Execute all enabled tools for a language.
@@ -241,6 +278,8 @@ class ToolExecutor:
             language: Programming language
             target_path: Path to analyze
             content: File content
+            parallel: Whether to execute tools in parallel
+            max_workers: Max parallel workers (default: number of tools)
             
         Returns:
             List of ToolExecutionResult
@@ -248,13 +287,77 @@ class ToolExecutor:
         tools = self.config.get_tools_for_language(language)
         results = []
         
-        for tool_name, tool_config in tools.items():
-            logger.info(f"Executing tool {tool_name} for {language}")
-            result = self.execute_tool(tool_config, target_path, content)
-            results.append(result)
+        if not tools:
+            logger.info(f"No enabled tools for {language}")
+            return results
+        
+        logger.info(f"Starting static analysis for {language} with {len(tools)} tool(s)")
+        
+        if parallel and len(tools) > 1:
+            # Execute tools in parallel
+            if max_workers is None:
+                max_workers = len(tools)
             
-            if not result.success:
-                logger.warning(f"Tool {tool_name} failed: {result.error}")
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_tool = {
+                    executor.submit(
+                        self.execute_tool,
+                        tool_config,
+                        target_path,
+                        content
+                    ): (tool_name, tool_config)
+                    for tool_name, tool_config in tools.items()
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_tool):
+                    tool_name, tool_config = future_to_tool[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        
+                        # Detailed audit logging
+                        if result.success:
+                            logger.info(
+                                f"Tool {tool_name} completed successfully in {result.execution_time:.2f}s "
+                                f"(exit_code={result.exit_code})"
+                            )
+                        else:
+                            logger.warning(
+                                f"Tool {tool_name} failed after {result.execution_time:.2f}s: {result.error}"
+                            )
+                    except Exception as e:
+                        logger.error(f"Tool {tool_name} raised exception: {e}", exc_info=True)
+                        results.append(ToolExecutionResult(
+                            tool_name,
+                            False,
+                            error=str(e)
+                        ))
+        else:
+            # Execute tools sequentially
+            for tool_name, tool_config in tools.items():
+                logger.info(f"Executing tool {tool_name} for {language}")
+                result = self.execute_tool(tool_config, target_path, content)
+                results.append(result)
+                
+                # Detailed audit logging
+                if result.success:
+                    logger.info(
+                        f"Tool {tool_name} completed successfully in {result.execution_time:.2f}s "
+                        f"(exit_code={result.exit_code})"
+                    )
+                else:
+                    logger.warning(
+                        f"Tool {tool_name} failed after {result.execution_time:.2f}s: {result.error}"
+                    )
+        
+        successful = sum(1 for r in results if r.success)
+        total_time = sum(r.execution_time for r in results)
+        logger.info(
+            f"Static analysis completed: {successful}/{len(results)} tools succeeded "
+            f"in {total_time:.2f}s total for {language}"
+        )
         
         return results
 
