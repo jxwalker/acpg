@@ -27,9 +27,28 @@ export interface Violation {
   severity: string;
 }
 
+export interface ToolExecutionInfo {
+  tool_name: string;
+  success: boolean;
+  findings_count: number;
+  mapped_findings: number;
+  unmapped_findings: number;
+  execution_time?: number;
+  error?: string;
+  findings?: Array<{
+    rule_id: string;
+    line: number;
+    message: string;
+    severity: string;
+    mapped?: boolean;
+    policy_id?: string;
+  }>;
+}
+
 export interface AnalysisResult {
   artifact_id: string;
   violations: Violation[];
+  tool_execution?: Record<string, ToolExecutionInfo>;
 }
 
 export interface AdjudicationResult {

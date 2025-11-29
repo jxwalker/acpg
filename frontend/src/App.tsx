@@ -979,6 +979,11 @@ export default function App() {
                 enforceResult={enforceResult}
               />
 
+              {/* Tool Execution Status */}
+              {analysis && analysis.tool_execution && Object.keys(analysis.tool_execution).length > 0 && (
+                <ToolExecutionStatus toolExecution={analysis.tool_execution} />
+              )}
+
               {/* Violations List */}
               {analysis && analysis.violations.length > 0 && (
                 <ViolationsList violations={analysis.violations} policies={policies} />
@@ -1455,6 +1460,194 @@ function ComplianceStatus({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Tool Execution Status Component
+function ToolExecutionStatus({ 
+  toolExecution 
+}: { 
+  toolExecution: Record<string, any>;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showUnmapped, setShowUnmapped] = useState<Record<string, boolean>>({});
+
+  const toggleExpand = (toolName: string) => {
+    setExpanded(prev => ({ ...prev, [toolName]: !prev[toolName] }));
+  };
+
+  const toggleUnmapped = (toolName: string) => {
+    setShowUnmapped(prev => ({ ...prev, [toolName]: !prev[toolName] }));
+  };
+
+  const tools = Object.entries(toolExecution);
+  const successfulTools = tools.filter(([_, info]) => info.success);
+  const failedTools = tools.filter(([_, info]) => !info.success);
+  const totalFindings = tools.reduce((sum, [_, info]) => sum + (info.findings_count || 0), 0);
+  const totalMapped = tools.reduce((sum, [_, info]) => sum + (info.mapped_findings || 0), 0);
+  const totalUnmapped = tools.reduce((sum, [_, info]) => sum + (info.unmapped_findings || 0), 0);
+
+  return (
+    <div className="glass rounded-2xl overflow-hidden border border-white/5 animate-slide-up">
+      <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-violet-500/10">
+            <Terminal className="w-5 h-5 text-violet-400" />
+          </div>
+          <span className="font-semibold text-slate-200">Tool Execution</span>
+        </div>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-slate-400">
+            {successfulTools.length}/{tools.length} tools ran
+          </span>
+          {totalFindings > 0 && (
+            <span className="text-slate-400">
+              {totalFindings} findings ({totalMapped} mapped, {totalUnmapped} unmapped)
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="max-h-[300px] overflow-y-auto">
+        {/* Successful Tools */}
+        {successfulTools.map(([toolName, info]: [string, any]) => {
+          const isExpanded = expanded[toolName];
+          const showUnmappedFindings = showUnmapped[toolName];
+          
+          return (
+            <div key={toolName} className="border-b border-white/5 last:border-b-0">
+              <button
+                onClick={() => toggleExpand(toolName)}
+                className="w-full px-5 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors text-left"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="px-2 py-1 text-xs font-mono font-semibold rounded-lg bg-violet-500/20 text-violet-400">
+                  {toolName}
+                </span>
+                <span className="flex-1 text-sm text-slate-300">
+                  {info.findings_count || 0} findings
+                </span>
+                <div className="flex items-center gap-2 text-xs">
+                  {info.mapped_findings > 0 && (
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">
+                      {info.mapped_findings} mapped
+                    </span>
+                  )}
+                  {info.unmapped_findings > 0 && (
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                      {info.unmapped_findings} unmapped
+                    </span>
+                  )}
+                  {info.execution_time && (
+                    <span className="text-slate-500">
+                      {(info.execution_time * 1000).toFixed(0)}ms
+                    </span>
+                  )}
+                </div>
+                {isExpanded ? (
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                )}
+              </button>
+              {isExpanded && (
+                <div className="px-5 pb-3 pl-12 space-y-2 animate-fade-in">
+                  <div className="grid grid-cols-3 gap-3 text-xs">
+                    <div className="p-2 bg-slate-800/50 rounded">
+                      <div className="text-slate-500">Total Findings</div>
+                      <div className="text-white font-semibold">{info.findings_count || 0}</div>
+                    </div>
+                    <div className="p-2 bg-emerald-500/10 rounded">
+                      <div className="text-slate-500">Mapped</div>
+                      <div className="text-emerald-400 font-semibold">{info.mapped_findings || 0}</div>
+                    </div>
+                    <div className="p-2 bg-amber-500/10 rounded">
+                      <div className="text-slate-500">Unmapped</div>
+                      <div className="text-amber-400 font-semibold">{info.unmapped_findings || 0}</div>
+                    </div>
+                  </div>
+                  {info.unmapped_findings > 0 && (
+                    <div>
+                      <button
+                        onClick={() => toggleUnmapped(toolName)}
+                        className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                      >
+                        {showUnmappedFindings ? (
+                          <ChevronDown className="w-3 h-3" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3" />
+                        )}
+                        Show {info.unmapped_findings} unmapped finding{info.unmapped_findings !== 1 ? 's' : ''}
+                      </button>
+                      {showUnmappedFindings && info.findings && (
+                        <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                          {info.findings
+                            .filter((f: any) => !f.mapped)
+                            .map((finding: any, i: number) => (
+                            <div key={i} className="p-2 bg-amber-500/5 rounded border border-amber-500/20 text-xs">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 font-mono rounded">
+                                  {finding.rule_id}
+                                </span>
+                                {finding.line && (
+                                  <span className="text-slate-500">Line {finding.line}</span>
+                                )}
+                                <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-[10px]">
+                                  Unmapped
+                                </span>
+                              </div>
+                              <div className="text-slate-300">{finding.message}</div>
+                            </div>
+                          ))}
+                          {info.findings.filter((f: any) => f.mapped).length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-slate-700">
+                              <div className="text-xs text-slate-500 mb-1">Mapped findings:</div>
+                              {info.findings
+                                .filter((f: any) => f.mapped)
+                                .map((finding: any, i: number) => (
+                                <div key={i} className="p-2 bg-emerald-500/5 rounded border border-emerald-500/20 text-xs mb-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 font-mono rounded">
+                                      {finding.rule_id}
+                                    </span>
+                                    <span className="text-slate-400">→</span>
+                                    <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 font-mono rounded">
+                                      {finding.policy_id}
+                                    </span>
+                                    {finding.line && (
+                                      <span className="text-slate-500">Line {finding.line}</span>
+                                    )}
+                                  </div>
+                                  <div className="text-slate-300">{finding.message}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        
+        {/* Failed Tools */}
+        {failedTools.map(([toolName, info]: [string, any]) => (
+          <div key={toolName} className="border-b border-white/5 last:border-b-0">
+            <div className="px-5 py-3 flex items-center gap-3">
+              <XCircle className="w-4 h-4 text-red-400" />
+              <span className="px-2 py-1 text-xs font-mono font-semibold rounded-lg bg-violet-500/20 text-violet-400">
+                {toolName}
+              </span>
+              <span className="flex-1 text-sm text-red-400">
+                Failed: {info.error || 'Unknown error'}
+              </span>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

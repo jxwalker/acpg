@@ -39,10 +39,23 @@ class Violation(BaseModel):
     severity: str
 
 
+class ToolExecutionInfo(BaseModel):
+    """Information about tool execution."""
+    tool_name: str
+    success: bool
+    findings_count: int = 0
+    mapped_findings: int = 0
+    unmapped_findings: int = 0
+    execution_time: Optional[float] = None
+    error: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = None  # Raw findings for debugging
+
+
 class AnalysisResult(BaseModel):
     """Result of static/dynamic analysis."""
     artifact_id: str
     violations: List[Violation]
+    tool_execution: Optional[Dict[str, ToolExecutionInfo]] = None  # Tool execution metadata
 
 
 class GeneratorRequest(BaseModel):

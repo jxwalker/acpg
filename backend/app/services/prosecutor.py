@@ -61,10 +61,11 @@ class Prosecutor:
             language = self.language_detector.detect_from_content(code) or "python"
         
         all_violations = []
+        tool_execution_info = {}
         
         # Run static analysis tools if enabled
         if settings.ENABLE_STATIC_ANALYSIS:
-            tool_violations = self.run_static_analysis_tools(code, language)
+            tool_violations, tool_execution_info = self.run_static_analysis_tools(code, language)
             all_violations.extend(tool_violations)
         
         # Run policy regex/AST checks
@@ -82,10 +83,11 @@ class Prosecutor:
         
         return AnalysisResult(
             artifact_id=artifact_id,
-            violations=unique_violations
+            violations=unique_violations,
+            tool_execution=tool_execution_info if tool_execution_info else None
         )
     
-    def run_static_analysis_tools(self, code: str, language: str) -> List[Violation]:
+    def run_static_analysis_tools(self, code: str, language: str) -> tuple[List[Violation], Dict[str, Any]]:
         """
         Run all enabled static analysis tools for the given language.
         
@@ -94,9 +96,12 @@ class Prosecutor:
             language: Programming language
             
         Returns:
-            List of violations from static analysis tools
+            Tuple of (violations, tool_execution_info)
         """
+        from ..models.schemas import ToolExecutionInfo
+        
         violations = []
+        tool_execution_info = {}
         
         # Execute all enabled tools for this language
         execution_results = self.tool_executor.execute_tools_for_language(
@@ -105,34 +110,83 @@ class Prosecutor:
         )
         
         for result in execution_results:
-            if not result.success or not result.output:
-                continue  # Skip failed tools
+            tool_name = result.tool_name
+            findings_count = 0
+            mapped_count = 0
+            unmapped_count = 0
+            raw_findings = []
+            
+            if not result.success:
+                # Tool failed
+                tool_execution_info[tool_name] = ToolExecutionInfo(
+                    tool_name=tool_name,
+                    success=False,
+                    error=result.error or "Tool execution failed",
+                    execution_time=result.execution_time
+                )
+                continue
+            
+            if not result.output:
+                # Tool succeeded but no output
+                tool_execution_info[tool_name] = ToolExecutionInfo(
+                    tool_name=tool_name,
+                    success=True,
+                    findings_count=0,
+                    execution_time=result.execution_time
+                )
+                continue
             
             # Get parser for this tool
-            parser = self.parsers.get(result.tool_name)
+            parser = self.parsers.get(tool_name)
             if not parser:
                 # Try to determine parser from tool name
-                if "bandit" in result.tool_name.lower():
+                if "bandit" in tool_name.lower():
                     parser = self.parsers["bandit"]
-                elif "eslint" in result.tool_name.lower():
+                elif "eslint" in tool_name.lower():
                     parser = self.parsers["eslint"]
                 else:
-                    continue  # No parser available
+                    # No parser available
+                    tool_execution_info[tool_name] = ToolExecutionInfo(
+                        tool_name=tool_name,
+                        success=True,
+                        error=f"No parser available for {tool_name}",
+                        execution_time=result.execution_time
+                    )
+                    continue
             
             # Parse tool output
             try:
                 findings = parser.parse(result.output)
+                findings_count = len(findings)
             except Exception as e:
                 # Log parsing error but continue
                 import logging
-                logging.warning(f"Error parsing {result.tool_name} output: {e}")
+                logging.warning(f"Error parsing {tool_name} output: {e}")
+                tool_execution_info[tool_name] = ToolExecutionInfo(
+                    tool_name=tool_name,
+                    success=True,
+                    error=f"Parsing error: {str(e)}",
+                    execution_time=result.execution_time
+                )
                 continue
             
             # Map findings to violations
             for finding in findings:
-                mapping = self.tool_mapper.map_finding_to_policy(result.tool_name, finding)
+                mapping = self.tool_mapper.map_finding_to_policy(tool_name, finding)
+                
+                is_mapped = mapping is not None
+                
+                raw_findings.append({
+                    "rule_id": finding.tool_rule_id,
+                    "line": finding.line_number,
+                    "message": finding.message,
+                    "severity": finding.severity,
+                    "mapped": is_mapped,
+                    "policy_id": mapping[0] if mapping else None
+                })
                 
                 if mapping:
+                    mapped_count += 1
                     policy_id, metadata = mapping
                     
                     # Create violation
@@ -141,12 +195,25 @@ class Prosecutor:
                         description=metadata.get("description", finding.message),
                         line=finding.line_number,
                         evidence=finding.message,
-                        detector=result.tool_name,
+                        detector=tool_name,
                         severity=metadata.get("severity", finding.severity)
                     )
                     violations.append(violation)
+                else:
+                    unmapped_count += 1
+            
+            # Store execution info for this tool
+            tool_execution_info[tool_name] = ToolExecutionInfo(
+                tool_name=tool_name,
+                success=True,
+                findings_count=findings_count,
+                mapped_findings=mapped_count,
+                unmapped_findings=unmapped_count,
+                execution_time=result.execution_time,
+                findings=raw_findings if findings_count > 0 else None  # Include all findings for visibility
+            )
         
-        return violations
+        return violations, tool_execution_info
     
     def run_policy_checks(self, code: str, language: str = "python",
                           policy_ids: Optional[List[str]] = None) -> List[Violation]:
