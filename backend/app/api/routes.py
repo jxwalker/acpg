@@ -167,6 +167,25 @@ async def get_info():
     }
 
 
+@router.delete("/cache")
+async def clear_cache(tool_name: Optional[str] = None):
+    """
+    Clear tool result cache.
+    
+    Args:
+        tool_name: If provided, clear only this tool's cache. Otherwise clear all.
+    """
+    from ..services.tool_cache import get_tool_cache
+    
+    cache = get_tool_cache()
+    cache.clear(tool_name)
+    
+    return {
+        "message": f"Cache cleared for {tool_name}" if tool_name else "All cache cleared",
+        "tool_name": tool_name
+    }
+
+
 @router.get("/metrics")
 async def get_metrics():
     """
