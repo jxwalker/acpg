@@ -8,7 +8,7 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  List, Plus, Edit2, BookOpen, Settings
+  List, Plus, Edit2, BookOpen, Settings, Link2, Power
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -2459,11 +2459,14 @@ interface PolicyGroup {
 
 // Tools Configuration View
 function ToolsConfigurationView() {
+  const [activeTab, setActiveTab] = useState<'tools' | 'mappings'>('tools');
   const [tools, setTools] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  const loadTools = useCallback(() => {
+    setLoading(true);
     fetch('/api/v1/static-analysis/tools')
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2479,7 +2482,38 @@ function ToolsConfigurationView() {
       });
   }, []);
 
-  if (loading) {
+  useEffect(() => {
+    loadTools();
+  }, [loadTools]);
+
+  const toggleTool = async (language: string, toolName: string, currentEnabled: boolean) => {
+    const key = `${language}:${toolName}`;
+    setToggling(prev => new Set(prev).add(key));
+    
+    try {
+      const response = await fetch(
+        `/api/v1/static-analysis/tools/${language}/${toolName}?enabled=${!currentEnabled}`,
+        { method: 'PATCH' }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`Failed to toggle tool: ${response.statusText}`);
+      }
+      
+      // Reload tools to get updated state
+      await loadTools();
+    } catch (err: any) {
+      setError(err.message || 'Failed to toggle tool');
+    } finally {
+      setToggling(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  if (loading && !tools) {
     return (
       <div className="glass rounded-2xl p-12 border border-white/5 text-center">
         <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
@@ -2488,39 +2522,67 @@ function ToolsConfigurationView() {
     );
   }
 
-  if (error) {
+  if (error && !tools) {
     return (
       <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
         <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
         <p className="text-red-400">Error loading tools: {error}</p>
-      </div>
-    );
-  }
-
-  if (!tools || !tools.tools_by_language) {
-    return (
-      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
-        <p className="text-slate-400">No tools configured</p>
+        <button
+          onClick={() => { setError(null); loadTools(); }}
+          className="mt-4 px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header with Tabs */}
       <div className="glass rounded-2xl p-6 border border-white/5">
         <div className="flex items-center gap-4 mb-4">
           <div className="p-4 rounded-2xl bg-violet-500/20 border border-violet-500/30">
             <Settings className="w-10 h-10 text-violet-400" />
           </div>
-          <div>
-            <h2 className="text-2xl font-display font-bold text-white">Static Analysis Tools</h2>
-            <p className="text-slate-400">Configure and manage static analysis tools</p>
+          <div className="flex-1">
+            <h2 className="text-2xl font-display font-bold text-white">Static Analysis Configuration</h2>
+            <p className="text-slate-400">Configure tools and policy mappings</p>
           </div>
         </div>
 
+        {/* Tabs */}
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={() => setActiveTab('tools')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              activeTab === 'tools'
+                ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Power className="w-4 h-4" />
+              Tools
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('mappings')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              activeTab === 'mappings'
+                ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Link2 className="w-4 h-4" />
+              Mappings
+            </div>
+          </button>
+        </div>
+
         {/* Cache Stats */}
-        {tools.cache_stats && (
+        {tools?.cache_stats && (
           <div className="mt-4 p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
             <div className="flex items-center gap-2 mb-2">
               <Clock className="w-4 h-4 text-cyan-400" />
@@ -2546,59 +2608,215 @@ function ToolsConfigurationView() {
         )}
       </div>
 
-      {/* Tools by Language */}
-      {Object.entries(tools.tools_by_language).map(([language, langTools]: [string, any]) => (
-        <div key={language} className="glass rounded-2xl p-6 border border-white/5">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <FileCode className="w-5 h-5 text-violet-400" />
-            {language.charAt(0).toUpperCase() + language.slice(1)}
-          </h3>
-          
-          <div className="space-y-3">
-            {langTools.map((tool: any) => (
-              <div
-                key={tool.name}
-                className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 flex items-center justify-between"
-              >
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="px-3 py-1 bg-violet-500/20 text-violet-400 text-sm font-mono font-semibold rounded-lg">
-                      {tool.name}
-                    </span>
-                    {tool.enabled ? (
-                      <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded">
-                        Enabled
-                      </span>
-                    ) : (
-                      <span className="px-2 py-1 bg-slate-700 text-slate-500 text-xs rounded">
-                        Disabled
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-3 gap-4 text-xs text-slate-400">
-                    <div>
-                      <span className="text-slate-500">Timeout:</span> {tool.timeout}s
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Format:</span> {tool.output_format}
-                    </div>
-                    {tool.requires_config && (
-                      <div>
-                        <span className="text-slate-500">Config:</span> {tool.requires_config}
+      {/* Content based on active tab */}
+      {activeTab === 'tools' ? (
+        tools?.tools_by_language ? (
+          Object.entries(tools.tools_by_language).map(([language, langTools]: [string, any]) => (
+            <div key={language} className="glass rounded-2xl p-6 border border-white/5">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-violet-400" />
+                {language.charAt(0).toUpperCase() + language.slice(1)}
+              </h3>
+              
+              <div className="space-y-3">
+                {langTools.map((tool: any) => {
+                  const toggleKey = `${language}:${tool.name}`;
+                  const isToggling = toggling.has(toggleKey);
+                  
+                  return (
+                    <div
+                      key={tool.name}
+                      className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 flex items-center justify-between"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <span className="px-3 py-1 bg-violet-500/20 text-violet-400 text-sm font-mono font-semibold rounded-lg">
+                            {tool.name}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-4 text-xs text-slate-400">
+                          <div>
+                            <span className="text-slate-500">Timeout:</span> {tool.timeout}s
+                          </div>
+                          <div>
+                            <span className="text-slate-500">Format:</span> {tool.output_format}
+                          </div>
+                          {tool.requires_config && (
+                            <div>
+                              <span className="text-slate-500">Config:</span> {tool.requires_config}
+                            </div>
+                          )}
+                        </div>
                       </div>
+                      <div className="ml-4 flex items-center gap-3">
+                        <button
+                          onClick={() => toggleTool(language, tool.name, tool.enabled)}
+                          disabled={isToggling}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            tool.enabled
+                              ? 'bg-emerald-500'
+                              : 'bg-slate-600'
+                          } ${isToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              tool.enabled ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                        {isToggling && (
+                          <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+            <p className="text-slate-400">No tools configured</p>
+          </div>
+        )
+      ) : (
+        <ToolMappingsView />
+      )}
+    </div>
+  );
+}
+
+// Tool Mappings View
+function ToolMappingsView() {
+  const [mappings, setMappings] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/v1/static-analysis/mappings')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setMappings(data.mappings || {});
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tool mappings...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading mappings: {error}</p>
+      </div>
+    );
+  }
+
+  if (!mappings || Object.keys(mappings).length === 0) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <p className="text-slate-400">No tool mappings configured</p>
+        <p className="text-slate-500 text-sm mt-2">Mappings are defined in policies/tool_mappings.json</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Tool-to-Policy Mappings</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              Map static analysis tool rules to ACPG policies
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {Object.entries(mappings).map(([toolName, toolMappings]: [string, any]) => (
+        <div key={toolName} className="glass rounded-2xl p-6 border border-white/5">
+          <h4 className="text-md font-semibold text-white mb-4 flex items-center gap-2">
+            <span className="px-3 py-1 bg-violet-500/20 text-violet-400 text-sm font-mono rounded-lg">
+              {toolName}
+            </span>
+            <span className="text-slate-400 text-sm">
+              {Object.keys(toolMappings).length} mapping{Object.keys(toolMappings).length !== 1 ? 's' : ''}
+            </span>
+          </h4>
+          
+          <div className="space-y-2">
+            {Object.entries(toolMappings).map(([ruleId, mapping]: [string, any]) => (
+              <div
+                key={ruleId}
+                className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="px-2 py-1 bg-amber-500/20 text-amber-400 text-xs font-mono rounded">
+                        {ruleId}
+                      </span>
+                      <span className="text-slate-400">→</span>
+                      <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                        {mapping.policy_id}
+                      </span>
+                    </div>
+                    {mapping.description && (
+                      <p className="text-sm text-slate-300 mb-2">{mapping.description}</p>
                     )}
+                    <div className="flex gap-4 text-xs text-slate-400">
+                      <div>
+                        <span className="text-slate-500">Confidence:</span>{' '}
+                        <span className={`font-semibold ${
+                          mapping.confidence === 'high' ? 'text-emerald-400' :
+                          mapping.confidence === 'medium' ? 'text-amber-400' :
+                          'text-slate-400'
+                        }`}>
+                          {mapping.confidence || 'medium'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Severity:</span>{' '}
+                        <span className={`font-semibold ${
+                          mapping.severity === 'critical' ? 'text-red-400' :
+                          mapping.severity === 'high' ? 'text-orange-400' :
+                          mapping.severity === 'medium' ? 'text-amber-400' :
+                          'text-slate-400'
+                        }`}>
+                          {mapping.severity || 'medium'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="ml-4">
-                  <div className={`w-3 h-3 rounded-full ${
-                    tool.enabled ? 'bg-emerald-500' : 'bg-slate-600'
-                  }`} />
                 </div>
               </div>
             ))}
           </div>
         </div>
       ))}
+
+      <div className="glass rounded-2xl p-4 border border-slate-700/50 bg-slate-800/30">
+        <p className="text-xs text-slate-500">
+          <Info className="w-3 h-3 inline mr-1" />
+          Mappings are stored in <code className="text-slate-400">policies/tool_mappings.json</code>.
+          To modify mappings, edit the file directly or use the API.
+        </p>
+      </div>
     </div>
   );
 }

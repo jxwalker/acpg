@@ -1,6 +1,7 @@
 """Static analyzer configuration and management."""
+import json
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 
@@ -27,7 +28,9 @@ class StaticAnalyzerConfig:
     
     def __init__(self):
         self._tools: Dict[str, Dict[str, ToolConfig]] = {}
+        self._config_file = Path(__file__).parent.parent.parent.parent / "policies" / "tool_config.json"
         self._load_default_config()
+        self._load_saved_config()
     
     def _load_default_config(self):
         """Load default tool configurations."""
@@ -108,11 +111,50 @@ class StaticAnalyzerConfig:
         """Enable a tool."""
         if language in self._tools and tool_name in self._tools[language]:
             self._tools[language][tool_name].enabled = True
+            self._save_config()
     
     def disable_tool(self, language: str, tool_name: str):
         """Disable a tool."""
         if language in self._tools and tool_name in self._tools[language]:
             self._tools[language][tool_name].enabled = False
+            self._save_config()
+    
+    def _load_saved_config(self):
+        """Load saved tool enable/disable state from file."""
+        if not self._config_file.exists():
+            return
+        
+        try:
+            with open(self._config_file, 'r') as f:
+                saved_config = json.load(f)
+            
+            # Apply saved enabled/disabled states
+            for language, tools in saved_config.items():
+                if language in self._tools:
+                    for tool_name, tool_state in tools.items():
+                        if tool_name in self._tools[language]:
+                            self._tools[language][tool_name].enabled = tool_state.get("enabled", True)
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to load saved tool config: {e}")
+    
+    def _save_config(self):
+        """Save tool enable/disable state to file."""
+        try:
+            config_data = {}
+            for language, tools in self._tools.items():
+                config_data[language] = {}
+                for tool_name, tool_config in tools.items():
+                    config_data[language][tool_name] = {
+                        "enabled": tool_config.enabled
+                    }
+            
+            self._config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._config_file, 'w') as f:
+                json.dump(config_data, f, indent=2)
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to save tool config: {e}")
     
     def list_all_tools(self) -> Dict[str, Dict[str, ToolConfig]]:
         """List all configured tools."""

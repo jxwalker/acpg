@@ -18,6 +18,7 @@ from ..services import (
 )
 from ..core.static_analyzers import get_analyzer_config
 from ..services.tool_cache import get_tool_cache
+from ..services.tool_mapper import get_tool_mapper
 from ..core.config import settings
 from ..core.database import get_db, AuditLogger, ProofStore
 
@@ -168,6 +169,65 @@ async def list_static_analysis_tools():
         logging.error(f"Error in /static-analysis/tools: {error_msg}", exc_info=True)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error loading tools configuration: {error_msg}")
+
+
+@router.patch("/static-analysis/tools/{language}/{tool_name}")
+async def toggle_tool(language: str, tool_name: str, enabled: bool = Query(...)):
+    """Enable or disable a static analysis tool."""
+    try:
+        config = get_analyzer_config()
+        tool = config.get_tool(language, tool_name)
+        
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found for language '{language}'")
+        
+        if enabled:
+            config.enable_tool(language, tool_name)
+        else:
+            config.disable_tool(language, tool_name)
+        
+        return {
+            "language": language,
+            "tool_name": tool_name,
+            "enabled": enabled,
+            "message": f"Tool '{tool_name}' {'enabled' if enabled else 'disabled'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error toggling tool: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error toggling tool: {e}")
+
+
+@router.get("/static-analysis/mappings")
+async def get_tool_mappings():
+    """Get all tool-to-policy mappings."""
+    try:
+        mapper = get_tool_mapper()
+        mappings = mapper.get_all_mappings()
+        return {"mappings": mappings}
+    except Exception as e:
+        import logging
+        logging.error(f"Error loading tool mappings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error loading tool mappings: {e}")
+
+
+@router.put("/static-analysis/mappings")
+async def update_tool_mappings(request: Dict[str, Any]):
+    """Update tool-to-policy mappings."""
+    try:
+        mapper = get_tool_mapper()
+        mappings = request.get("mappings", {})
+        mapper.update_mappings(mappings)
+        return {
+            "message": "Tool mappings updated successfully",
+            "mappings": mappings
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error updating tool mappings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating tool mappings: {e}")
 
 
 # ============================================================================

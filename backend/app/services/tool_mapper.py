@@ -86,6 +86,26 @@ class ToolMapper:
             "severity": severity,
             "description": description
         }
+    
+    def get_all_mappings(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Get all mappings."""
+        return self._mappings.copy()
+    
+    def update_mappings(self, mappings: Dict[str, Dict[str, Dict[str, Any]]]):
+        """Update all mappings."""
+        self._mappings = mappings
+        self._save_mappings()
+    
+    def _save_mappings(self):
+        """Save mappings to JSON file."""
+        mappings_file = settings.POLICIES_DIR / "tool_mappings.json"
+        try:
+            with open(mappings_file, 'w') as f:
+                json.dump(self._mappings, f, indent=2)
+        except Exception as e:
+            import logging
+            logging.error(f"Failed to save tool mappings: {e}")
+            raise
 
 
 # Global instance
