@@ -186,6 +186,91 @@ async def clear_cache(tool_name: Optional[str] = None):
     }
 
 
+@router.get("/metrics/prometheus")
+async def get_metrics_prometheus():
+    """
+    Get metrics in Prometheus format.
+    
+    Returns metrics in Prometheus exposition format for scraping.
+    """
+    from ..services.tool_cache import get_tool_cache
+    from ..core.static_analyzers import get_analyzer_config
+    from ..services import get_policy_compiler
+    
+    lines = []
+    
+    # Cache metrics
+    try:
+        cache = get_tool_cache()
+        stats = cache.get_stats()
+        lines.append(f"# HELP acpg_cache_entries_total Total number of cache entries")
+        lines.append(f"# TYPE acpg_cache_entries_total gauge")
+        lines.append(f"acpg_cache_entries_total {stats.get('total_entries', 0)}")
+        
+        lines.append(f"# HELP acpg_cache_size_bytes Total cache size in bytes")
+        lines.append(f"# TYPE acpg_cache_size_bytes gauge")
+        lines.append(f"acpg_cache_size_bytes {stats.get('total_size_bytes', 0)}")
+        
+        lines.append(f"# HELP acpg_cache_hits_total Total cache hits")
+        lines.append(f"# TYPE acpg_cache_hits_total counter")
+        lines.append(f"acpg_cache_hits_total {stats.get('hits', 0)}")
+        
+        lines.append(f"# HELP acpg_cache_misses_total Total cache misses")
+        lines.append(f"# TYPE acpg_cache_misses_total counter")
+        lines.append(f"acpg_cache_misses_total {stats.get('misses', 0)}")
+        
+        total_requests = stats.get('hits', 0) + stats.get('misses', 0)
+        hit_rate = (stats.get('hits', 0) / total_requests * 100) if total_requests > 0 else 0.0
+        lines.append(f"# HELP acpg_cache_hit_rate Cache hit rate percentage")
+        lines.append(f"# TYPE acpg_cache_hit_rate gauge")
+        lines.append(f"acpg_cache_hit_rate {hit_rate:.2f}")
+    except Exception:
+        pass
+    
+    # Tool metrics
+    try:
+        config = get_analyzer_config()
+        all_tools = config.list_all_tools()
+        enabled_count = 0
+        for language, tools in all_tools.items():
+            for tool_name, tool_config in tools.items():
+                if tool_config.enabled:
+                    enabled_count += 1
+                    lines.append(f"# HELP acpg_tool_enabled Whether a tool is enabled")
+                    lines.append(f"# TYPE acpg_tool_enabled gauge")
+                    lines.append(f'acpg_tool_enabled{{tool="{tool_name}",language="{language}"}} 1')
+        
+        lines.append(f"# HELP acpg_tools_enabled_total Total number of enabled tools")
+        lines.append(f"# TYPE acpg_tools_enabled_total gauge")
+        lines.append(f"acpg_tools_enabled_total {enabled_count}")
+    except Exception:
+        pass
+    
+    # Policy metrics
+    try:
+        compiler = get_policy_compiler()
+        policies = compiler.get_all_policies()
+        lines.append(f"# HELP acpg_policies_total Total number of policies")
+        lines.append(f"# TYPE acpg_policies_total gauge")
+        lines.append(f"acpg_policies_total {len(policies)}")
+    except Exception:
+        pass
+    
+    # Health status (1 = healthy, 0 = unhealthy)
+    try:
+        from datetime import datetime, timezone
+        lines.append(f"# HELP acpg_health_status System health status (1=healthy, 0=unhealthy)")
+        lines.append(f"# TYPE acpg_health_status gauge")
+        lines.append(f"acpg_health_status 1")  # Could be enhanced to check actual health
+    except Exception:
+        pass
+    
+    return Response(
+        content="\n".join(lines),
+        media_type="text/plain; version=0.0.4"
+    )
+
+
 @router.get("/metrics")
 async def get_metrics():
     """
@@ -482,6 +567,71 @@ async def add_tool_mapping(
         import logging
         logging.error(f"Error adding tool mapping: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error adding tool mapping: {e}")
+
+
+class BulkMappingRequest(BaseModel):
+    """Request for bulk mapping operations."""
+    mappings: List[Dict[str, Any]]  # List of {tool_name, tool_rule_id, policy_id, ...}
+
+
+@router.post("/static-analysis/mappings/bulk")
+async def bulk_add_mappings(request: BulkMappingRequest):
+    """
+    Add or update multiple tool mappings in a single operation.
+    
+    Useful for mapping many rules at once.
+    """
+    try:
+        mapper = get_tool_mapper()
+        results = {
+            "success": [],
+            "failed": []
+        }
+        
+        for mapping in request.mappings:
+            try:
+                tool_name = mapping.get("tool_name")
+                tool_rule_id = mapping.get("tool_rule_id")
+                policy_id = mapping.get("policy_id")
+                
+                if not tool_name or not tool_rule_id or not policy_id:
+                    results["failed"].append({
+                        "mapping": mapping,
+                        "error": "Missing required fields: tool_name, tool_rule_id, policy_id"
+                    })
+                    continue
+                
+                mapper.add_or_update_mapping(
+                    tool_name=tool_name,
+                    tool_rule_id=tool_rule_id,
+                    policy_id=policy_id,
+                    confidence=mapping.get("confidence", "medium"),
+                    severity=mapping.get("severity"),
+                    description=mapping.get("description")
+                )
+                
+                results["success"].append({
+                    "tool_name": tool_name,
+                    "tool_rule_id": tool_rule_id,
+                    "policy_id": policy_id
+                })
+            except Exception as e:
+                results["failed"].append({
+                    "mapping": mapping,
+                    "error": str(e)
+                })
+        
+        return {
+            "message": f"Bulk mapping completed: {len(results['success'])} succeeded, {len(results['failed'])} failed",
+            "total": len(request.mappings),
+            "succeeded": len(results["success"]),
+            "failed": len(results["failed"]),
+            "results": results
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error in bulk mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error in bulk mapping: {e}")
 
 
 @router.delete("/static-analysis/mappings/{tool_name}/{tool_rule_id}")

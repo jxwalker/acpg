@@ -47,6 +47,18 @@
       "confidence": "medium",
       "severity": "medium",
       "description": "Hardcoded bind to all interfaces"
+    },
+    "B102": {
+      "policy_id": "SEC-003",
+      "confidence": "high",
+      "severity": null,
+      "description": "Use of exec"
+    },
+    "B101": {
+      "policy_id": "LOG-001",
+      "confidence": "medium",
+      "severity": null,
+      "description": "Use of assert"
     }
   },
   "eslint": {
@@ -92,4 +104,3 @@
     }
   }
 }
-
