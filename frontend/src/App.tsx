@@ -8,7 +8,7 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  List, Plus, Edit2
+  List, Plus, Edit2, BookOpen
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -61,7 +61,7 @@ def login(username: str, password_input: str) -> Optional[dict]:
 `;
 
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
-type ViewMode = 'editor' | 'diff' | 'proof' | 'policies';
+type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
 
 interface WorkflowState {
@@ -123,7 +123,7 @@ export default function App() {
       .then(data => setPolicies(data.policies))
       .catch(err => console.error('Failed to load policies:', err));
     
-    fetch('http://localhost:8000/api/v1/llm/active')
+    fetch('/api/v1/llm/active')
       .then(res => res.json())
       .then(data => setLlmProvider(data.name || 'Unknown'))
       .catch(() => setLlmProvider('GPT-4'));
@@ -214,7 +214,7 @@ export default function App() {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:8000/api/v1/report', {
+      const response = await fetch('/api/v1/report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -465,6 +465,19 @@ export default function App() {
                     Policies
                   </span>
                 </button>
+                <button
+                  onClick={() => setViewMode('verify')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    viewMode === 'verify' 
+                      ? 'bg-slate-700 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4" />
+                    Verify
+                  </span>
+                </button>
               </div>
               
               <div className="h-6 w-px bg-slate-700" />
@@ -579,7 +592,9 @@ export default function App() {
 
       {/* Main Content */}
       <main className="max-w-[1920px] mx-auto px-8 pb-12">
-        {viewMode === 'policies' ? (
+        {viewMode === 'verify' ? (
+          <ProofVerifier />
+        ) : viewMode === 'policies' ? (
           <PoliciesView policies={policies} />
         ) : viewMode === 'proof' && enforceResult?.proof_bundle ? (
           <ProofBundleView 
@@ -916,7 +931,7 @@ export default function App() {
               {/* Compliance Status */}
               <ComplianceStatus 
                 adjudication={adjudication} 
-                violationCount={analysis?.violations.length ?? 0}
+                violations={analysis?.violations ?? []}
                 enforceResult={enforceResult}
               />
 
@@ -1276,13 +1291,21 @@ function WorkflowPipeline({ workflow }: { workflow: WorkflowState }) {
 // Compliance Status Component
 function ComplianceStatus({ 
   adjudication, 
-  violationCount,
+  violations,
   enforceResult
 }: { 
   adjudication: AdjudicationResult | null;
-  violationCount: number;
+  violations: Violation[];
   enforceResult: EnforceResponse | null;
 }) {
+  // Count violations by severity
+  const severityCounts = violations.reduce((acc, v) => {
+    acc[v.severity] = (acc[v.severity] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  
+  const violationCount = violations.length;
+
   if (!adjudication) {
     return (
       <div className="glass rounded-2xl p-6 border border-white/5 animate-fade-in">
@@ -1336,6 +1359,32 @@ function ComplianceStatus({
               : `${violationCount} violation${violationCount !== 1 ? 's' : ''} require attention`
             }
           </p>
+          
+          {/* Severity breakdown for non-compliant */}
+          {!isCompliant && violationCount > 0 && (
+            <div className="flex items-center gap-2 mt-2">
+              {severityCounts.critical > 0 && (
+                <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded">
+                  {severityCounts.critical} critical
+                </span>
+              )}
+              {severityCounts.high > 0 && (
+                <span className="px-2 py-0.5 text-xs font-semibold bg-orange-500/20 text-orange-400 rounded">
+                  {severityCounts.high} high
+                </span>
+              )}
+              {severityCounts.medium > 0 && (
+                <span className="px-2 py-0.5 text-xs font-semibold bg-amber-500/20 text-amber-400 rounded">
+                  {severityCounts.medium} medium
+                </span>
+              )}
+              {severityCounts.low > 0 && (
+                <span className="px-2 py-0.5 text-xs font-semibold bg-slate-500/20 text-slate-400 rounded">
+                  {severityCounts.low} low
+                </span>
+              )}
+            </div>
+          )}
           
           {enforceResult && (
             <div className="flex items-center gap-4 mt-4 pt-4 border-t border-white/5">
@@ -1758,6 +1807,88 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
         </div>
       </div>
       
+      {/* Plain English Explanation */}
+      {proof.argumentation?.explanation && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-cyan-400" />
+            What This Means
+          </h3>
+          
+          {/* Summary */}
+          <div className={`p-4 rounded-xl border mb-4 ${
+            proof.decision === 'Compliant' 
+              ? 'bg-emerald-500/10 border-emerald-500/30' 
+              : 'bg-red-500/10 border-red-500/30'
+          }`}>
+            <p className="text-slate-200">{proof.argumentation.explanation.summary}</p>
+          </div>
+          
+          {/* What happened for each violation */}
+          {proof.argumentation.explanation.what_happened?.length > 0 && (
+            <div className="space-y-3 mb-4">
+              <h4 className="text-sm font-semibold text-slate-300">Policy Violations Explained:</h4>
+              {proof.argumentation.explanation.what_happened.map((item: any, i: number) => (
+                <div key={i} className="p-4 bg-red-500/5 rounded-xl border border-red-500/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-2 py-1 bg-red-500/20 text-red-400 text-xs font-mono rounded">
+                      {item.policy}
+                    </span>
+                    <span className="text-red-400 font-semibold">{item.result}</span>
+                  </div>
+                  <p className="text-sm text-slate-300 mb-2">{item.explanation}</p>
+                  {item.evidence && (
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900/50 px-3 py-2 rounded">
+                      Evidence: {item.evidence}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {/* Terminology */}
+          <details className="group">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-400 hover:text-slate-300 flex items-center gap-2">
+              <ChevronRight className="w-4 h-4 group-open:rotate-90 transition-transform" />
+              Terminology Reference
+            </summary>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {Object.entries(proof.argumentation.explanation.terminology || {}).map(([term, def]: [string, any]) => (
+                <div key={term} className="p-2 bg-slate-800/50 rounded-lg">
+                  <span className="font-mono text-cyan-400 text-sm">{term}</span>
+                  <p className="text-xs text-slate-400 mt-1">{def}</p>
+                </div>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
+      
+      {/* Visual Argumentation Graph */}
+      {proof.argumentation?.graph_visual && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <GitBranch className="w-5 h-5 text-violet-400" />
+            Argumentation Graph
+          </h3>
+          <pre className="font-mono text-xs text-slate-300 bg-slate-900/70 p-4 rounded-xl overflow-x-auto whitespace-pre">
+            {proof.argumentation.graph_visual}
+          </pre>
+          <div className="mt-3 flex gap-4 text-xs text-slate-400">
+            <span className="flex items-center gap-1">
+              <span className="text-emerald-400">✓ ACCEPTED</span> = Claim holds
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-red-400">✗ REJECTED</span> = Claim defeated
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="text-orange-400">─attacks─▶</span> = Contradicts
+            </span>
+          </div>
+        </div>
+      )}
+      
       {/* Step-by-step Reasoning */}
       {reasoningSteps.length > 0 ? (
         <div className="space-y-4">
@@ -2106,6 +2237,299 @@ interface PolicyGroup {
   policy_count?: number;
 }
 
+// Proof Bundle Verifier - Check for tampering
+function ProofVerifier() {
+  const [proofJson, setProofJson] = useState('');
+  const [verificationResult, setVerificationResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleVerify = async () => {
+    setLoading(true);
+    setError(null);
+    setVerificationResult(null);
+
+    try {
+      const proofBundle = JSON.parse(proofJson);
+      
+      const response = await fetch('/api/v1/proof/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proof_bundle: proofBundle })
+      });
+
+      const result = await response.json();
+      setVerificationResult(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid JSON or verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setProofJson(event.target?.result as string);
+        setVerificationResult(null);
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleTamperDemo = () => {
+    if (!proofJson) return;
+    try {
+      const proof = JSON.parse(proofJson);
+      // Tamper with the decision field
+      if (proof.decision === 'Compliant') {
+        proof.decision = 'Non-compliant';
+      } else {
+        proof.decision = 'Compliant';
+      }
+      setProofJson(JSON.stringify(proof, null, 2));
+      setVerificationResult(null);
+    } catch {
+      setError('Cannot tamper - invalid JSON');
+    }
+  };
+
+  const handleTamperArtifact = () => {
+    if (!proofJson) return;
+    try {
+      const proof = JSON.parse(proofJson);
+      if (proof.artifact?.hash) {
+        proof.artifact.hash = 'TAMPERED_' + proof.artifact.hash.slice(9);
+      }
+      setProofJson(JSON.stringify(proof, null, 2));
+      setVerificationResult(null);
+    } catch {
+      setError('Cannot tamper - invalid JSON');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center gap-4 mb-4">
+          <div className="p-4 rounded-2xl bg-cyan-500/20 border border-cyan-500/30">
+            <ShieldCheck className="w-10 h-10 text-cyan-400" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-display font-bold text-white">Proof Bundle Verifier</h2>
+            <p className="text-slate-400">Verify cryptographic integrity of compliance proof bundles</p>
+          </div>
+        </div>
+        
+        <div className="p-4 bg-slate-800/50 rounded-xl border border-white/5 mt-4">
+          <h3 className="text-sm font-semibold text-slate-300 mb-2">How it works:</h3>
+          <ul className="text-sm text-slate-400 space-y-1">
+            <li>• Proof bundles are signed with <span className="text-cyan-400 font-mono">ECDSA-SHA256</span></li>
+            <li>• Any modification to the bundle will invalidate the signature</li>
+            <li>• The verifier checks the cryptographic signature against the public key</li>
+            <li>• Try the "Tamper" buttons to see what happens when data is modified</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Input Section */}
+      <div className="grid grid-cols-2 gap-6">
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              <FileCode className="w-5 h-5 text-violet-400" />
+              Proof Bundle JSON
+            </h3>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".json"
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg flex items-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Load File
+              </button>
+            </div>
+          </div>
+          
+          <textarea
+            value={proofJson}
+            onChange={(e) => { setProofJson(e.target.value); setVerificationResult(null); }}
+            placeholder="Paste a proof bundle JSON here, or load from file..."
+            className="w-full h-80 bg-slate-900/50 border border-white/10 rounded-xl p-4 text-sm font-mono text-slate-300 placeholder-slate-500 resize-none"
+          />
+          
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={handleVerify}
+              disabled={!proofJson || loading}
+              className="flex-1 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 disabled:from-slate-600 disabled:to-slate-600 text-white font-semibold rounded-xl flex items-center justify-center gap-2 transition-all"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-5 h-5" />
+                  Verify Signature
+                </>
+              )}
+            </button>
+          </div>
+          
+          {/* Tamper Demo Buttons */}
+          <div className="mt-4 p-4 bg-red-500/10 rounded-xl border border-red-500/20">
+            <h4 className="text-sm font-semibold text-red-400 mb-2 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              Tamper Demo (for testing)
+            </h4>
+            <p className="text-xs text-slate-400 mb-3">
+              Click these buttons to modify the proof bundle and see how verification detects tampering:
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleTamperDemo}
+                disabled={!proofJson}
+                className="px-3 py-1.5 text-sm bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg disabled:opacity-50"
+              >
+                Flip Decision
+              </button>
+              <button
+                onClick={handleTamperArtifact}
+                disabled={!proofJson}
+                className="px-3 py-1.5 text-sm bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg disabled:opacity-50"
+              >
+                Tamper Hash
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Verification Result */}
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <Fingerprint className="w-5 h-5 text-amber-400" />
+            Verification Result
+          </h3>
+          
+          {error && (
+            <div className="p-4 bg-red-500/10 rounded-xl border border-red-500/30 mb-4">
+              <p className="text-red-400">{error}</p>
+            </div>
+          )}
+          
+          {!verificationResult && !error && (
+            <div className="flex flex-col items-center justify-center h-80 text-slate-500">
+              <Shield className="w-16 h-16 mb-4 opacity-30" />
+              <p>Load a proof bundle and click "Verify" to check integrity</p>
+            </div>
+          )}
+          
+          {verificationResult && (
+            <div className="space-y-4">
+              {/* Main Result Banner */}
+              <div className={`p-6 rounded-xl border ${
+                verificationResult.valid
+                  ? 'bg-emerald-500/10 border-emerald-500/30'
+                  : 'bg-red-500/10 border-red-500/30'
+              }`}>
+                <div className="flex items-center gap-4">
+                  {verificationResult.valid ? (
+                    <ShieldCheck className="w-12 h-12 text-emerald-400" />
+                  ) : (
+                    <ShieldAlert className="w-12 h-12 text-red-400" />
+                  )}
+                  <div>
+                    <h4 className={`text-2xl font-bold ${
+                      verificationResult.valid ? 'text-emerald-400' : 'text-red-400'
+                    }`}>
+                      {verificationResult.valid ? 'INTEGRITY VERIFIED' : 'TAMPERING DETECTED'}
+                    </h4>
+                    <p className="text-slate-300">
+                      {verificationResult.valid
+                        ? 'This proof bundle has not been modified since signing'
+                        : 'This proof bundle has been modified - signature is invalid'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Checks */}
+              {verificationResult.checks?.length > 0 && (
+                <div className="p-4 bg-slate-800/50 rounded-xl">
+                  <h5 className="text-sm font-semibold text-slate-300 mb-2">Verification Checks:</h5>
+                  <div className="space-y-1 font-mono text-sm">
+                    {verificationResult.checks.map((check: string, i: number) => (
+                      <div key={i} className={
+                        check.startsWith('✓') ? 'text-emerald-400' :
+                        check.startsWith('═') ? 'text-slate-500' :
+                        'text-slate-300'
+                      }>
+                        {check}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Errors */}
+              {verificationResult.errors?.length > 0 && (
+                <div className="p-4 bg-red-500/10 rounded-xl border border-red-500/20">
+                  <h5 className="text-sm font-semibold text-red-400 mb-2">Issues Found:</h5>
+                  <div className="space-y-1 font-mono text-sm">
+                    {verificationResult.errors.map((err: string, i: number) => (
+                      <div key={i} className={
+                        err.startsWith('✗') ? 'text-red-400' :
+                        err.startsWith('═') ? 'text-red-500' :
+                        err.startsWith('  ') ? 'text-red-300' :
+                        'text-slate-400'
+                      }>
+                        {err}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Details */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-slate-800/50 rounded-lg">
+                  <div className="text-xs text-slate-400 uppercase tracking-wider">Signature Valid</div>
+                  <div className={`text-lg font-semibold ${
+                    verificationResult.details?.signature_valid ? 'text-emerald-400' : 'text-red-400'
+                  }`}>
+                    {verificationResult.details?.signature_valid ? 'Yes ✓' : 'No ✗'}
+                  </div>
+                </div>
+                <div className="p-3 bg-slate-800/50 rounded-lg">
+                  <div className="text-xs text-slate-400 uppercase tracking-wider">Signer Match</div>
+                  <div className={`text-lg font-semibold ${
+                    verificationResult.details?.signer_match ? 'text-emerald-400' : 'text-amber-400'
+                  }`}>
+                    {verificationResult.details?.signer_match ? 'Yes ✓' : 'Different Key'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Policies View with Editor and Groups
 function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   const [activeTab, setActiveTab] = useState<'policies' | 'groups'>('policies');
@@ -2144,7 +2568,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   
   // Load custom policies and groups
   useEffect(() => {
-    fetch('http://localhost:8000/api/v1/policies/file/custom_policies.json')
+    fetch('/api/v1/policies/file/custom_policies.json')
       .then(res => res.json())
       .then(data => {
         if (data.policies) {
@@ -2157,7 +2581,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   }, []);
   
   const loadPolicyGroups = () => {
-    fetch('http://localhost:8000/api/v1/policies/groups/')
+    fetch('/api/v1/policies/groups/')
       .then(res => res.json())
       .then(data => {
         if (data.groups) {
@@ -2222,7 +2646,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     if (!testCode || !formData.pattern) return;
     
     try {
-      const response = await fetch('http://localhost:8000/api/v1/policies/test', {
+      const response = await fetch('/api/v1/policies/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2266,8 +2690,8 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     
     try {
       const url = editingPolicy 
-        ? `http://localhost:8000/api/v1/policies/${editingPolicy.id}`
-        : 'http://localhost:8000/api/v1/policies/';
+        ? `/api/v1/policies/${editingPolicy.id}`
+        : '/api/v1/policies/';
       
       const response = await fetch(url, {
         method: editingPolicy ? 'PUT' : 'POST',
@@ -2277,7 +2701,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
       
       if (response.ok) {
         // Reload custom policies
-        const customRes = await fetch('http://localhost:8000/api/v1/policies/file/custom_policies.json');
+        const customRes = await fetch('/api/v1/policies/file/custom_policies.json');
         const customData = await customRes.json();
         setCustomPolicies(customData.policies || []);
         setShowEditor(false);
@@ -2295,7 +2719,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     if (!confirm(`Delete policy "${policyId}"?`)) return;
     
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/policies/${policyId}`, {
+      const response = await fetch(`/api/v1/policies/${policyId}`, {
         method: 'DELETE'
       });
       
@@ -2321,7 +2745,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   
   const handleToggleGroup = async (groupId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/policies/groups/${groupId}/toggle`, {
+      const response = await fetch(`/api/v1/policies/groups/${groupId}/toggle`, {
         method: 'PATCH'
       });
       if (response.ok) {
@@ -2335,8 +2759,8 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
   const handleSaveGroup = async () => {
     try {
       const url = editingGroup 
-        ? `http://localhost:8000/api/v1/policies/groups/${editingGroup.id}`
-        : 'http://localhost:8000/api/v1/policies/groups/';
+        ? `/api/v1/policies/groups/${editingGroup.id}`
+        : '/api/v1/policies/groups/';
       
       const response = await fetch(url, {
         method: editingGroup ? 'PUT' : 'POST',
@@ -2361,7 +2785,7 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     if (!confirm(`Delete group "${groupId}"?`)) return;
     
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/policies/groups/${groupId}`, {
+      const response = await fetch(`/api/v1/policies/groups/${groupId}`, {
         method: 'DELETE'
       });
       if (response.ok) {

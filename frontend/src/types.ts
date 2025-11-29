@@ -90,6 +90,27 @@ export interface ArgumentationSummary {
   unsatisfied_rules: number;
 }
 
+export interface WhatHappened {
+  policy: string;
+  result: string;
+  reason: string;
+  evidence: string;
+  explanation: string;
+}
+
+export interface ProofExplanation {
+  summary: string;
+  terminology: Record<string, string>;
+  what_happened: WhatHappened[];
+  step_by_step: Array<{
+    step: number;
+    title: string;
+    description: string;
+    result?: string;
+  }>;
+  decision_logic: string[];
+}
+
 export interface FormalProof {
   framework: string;
   semantics: string;
@@ -99,6 +120,8 @@ export interface FormalProof {
   grounded_extension: GroundedExtension;
   reasoning_trace: Record<string, unknown>[];
   summary: ArgumentationSummary;
+  graph_visual?: string;
+  explanation?: ProofExplanation;
   conclusion?: {
     decision: string;
     reason: string;
@@ -159,4 +182,19 @@ export interface SampleFile {
   path: string;
   description: string;
   violations: string[];
+}
+
+export interface VerificationResult {
+  valid: boolean;
+  tampered: boolean;
+  details: {
+    signature_valid: boolean;
+    hash_valid: boolean;
+    timestamp_present: boolean;
+    signer_match: boolean;
+  };
+  original_hash: string | null;
+  computed_hash: string | null;
+  checks: string[];
+  errors: string[];
 }

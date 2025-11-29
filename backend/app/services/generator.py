@@ -27,12 +27,13 @@ class Generator:
     def __init__(self):
         self.llm_config = get_llm_config()
         self.client = get_llm_client()
-        self.model = self.llm_config.get_model()
+        self.provider = self.llm_config.get_active_provider()
+        self.model = self.provider.model
+        self.model_name = self.provider.name  # Human-readable name for metadata
         self.policy_compiler = get_policy_compiler()
         
         # Log which LLM we're using
-        provider = self.llm_config.get_active_provider()
-        print(f"🤖 Generator using: {provider.name} ({provider.model})")
+        print(f"🤖 Generator using: {self.provider.name} ({self.provider.model})")
     
     def generate_code(self, request: GeneratorRequest) -> GeneratorResponse:
         """
@@ -200,7 +201,7 @@ Provide a brief, clear explanation of each fix."""
             name=name,
             hash=code_hash,
             language=language,
-            generator=f"ACPG-Generator-{self.model}",
+            generator=f"ACPG-{self.model_name}",
             timestamp=datetime.utcnow()
         )
     

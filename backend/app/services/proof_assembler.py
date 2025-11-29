@@ -8,6 +8,7 @@ from ..models.schemas import (
 )
 from ..core.crypto import get_signer
 from ..core.config import settings
+from ..core.llm_config import get_llm_config
 from .policy_compiler import get_policy_compiler
 
 
@@ -66,13 +67,15 @@ class ProofAssembler:
         if 'timestamp' in artifact_dict and hasattr(artifact_dict['timestamp'], 'isoformat'):
             artifact_dict['timestamp'] = artifact_dict['timestamp'].isoformat()
         
+        signing_timestamp = datetime.utcnow().isoformat()
+        
         bundle_data = {
             "artifact": artifact_dict,
             "policies": [p.model_dump() for p in policies],
             "evidence": [e.model_dump() for e in evidence],
             "argumentation": argumentation,
             "decision": decision,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": signing_timestamp
         }
         
         # Sign the bundle
@@ -82,7 +85,8 @@ class ProofAssembler:
             "signature": signature,
             "signer": settings.SIGNER_NAME,
             "algorithm": settings.SIGNATURE_ALGORITHM,
-            "public_key_fingerprint": self.signer.get_public_key_fingerprint()
+            "public_key_fingerprint": self.signer.get_public_key_fingerprint(),
+            "signed_at": signing_timestamp  # Store the timestamp used in signing
         }
         
         return ProofBundle(
@@ -185,11 +189,17 @@ class ProofAssembler:
         
         code_hash = hashlib.sha256(code.encode()).hexdigest()
         
+        # Get the active LLM provider name for the generator field
+        try:
+            llm_name = get_llm_config().get_active_provider().name
+        except Exception:
+            llm_name = settings.OPENAI_MODEL  # Fallback to settings
+        
         return ArtifactMetadata(
             name=name,
             hash=code_hash,
             language=language,
-            generator=f"ACPG-{settings.OPENAI_MODEL}",
+            generator=f"ACPG-{llm_name}",
             timestamp=datetime.utcnow()
         )
     
@@ -276,10 +286,35 @@ class ProofAssembler:
                 "effective_attacks": 0,
                 "satisfied_rules": len(adjudication.satisfied_rules),
                 "unsatisfied_rules": len(adjudication.unsatisfied_rules)
+            },
+            
+            # Visual graph representation (ASCII art)
+            "graph_visual": "",
+            
+            # Plain English explanation
+            "explanation": {
+                "summary": "",
+                "terminology": {
+                    "argument": "A claim about the code's compliance status",
+                    "C_RULE": "Compliance argument - claims 'code complies with RULE'",
+                    "V_RULE": "Violation argument - claims 'code violates RULE' with evidence",
+                    "E_RULE": "Exception argument - claims 'exception condition applies, defeating violation'",
+                    "attack": "One argument contradicts/defeats another",
+                    "grounded_extension": "The set of arguments that are defensibly accepted after resolving all attacks",
+                    "accepted": "Argument is in the grounded extension - its claim holds",
+                    "rejected": "Argument is defeated by an accepted argument - its claim does not hold"
+                },
+                "decision_logic": [],
+                "step_by_step": []
             }
         }
         
         # Extract arguments and attacks from reasoning trace
+        compliance_args = []
+        violation_args = []
+        exception_args = []
+        attack_list = []
+        
         for item in adjudication.reasoning:
             if "argument" in item:
                 arg_entry = {
@@ -287,10 +322,19 @@ class ProofAssembler:
                     "type": item.get("type", "unknown"),
                     "rule_id": item.get("rule", ""),
                     "status": item.get("status", "unknown"),
-                    "details": item.get("details", "")
+                    "details": item.get("details", ""),
+                    "evidence": item.get("evidence", "")
                 }
                 formal_proof["arguments"].append(arg_entry)
                 formal_proof["summary"]["total_arguments"] += 1
+                
+                # Categorize by type
+                if item.get("type") == "compliance":
+                    compliance_args.append(arg_entry)
+                elif item.get("type") == "violation":
+                    violation_args.append(arg_entry)
+                elif item.get("type") == "exception":
+                    exception_args.append(arg_entry)
                 
                 if item.get("status") == "accepted":
                     formal_proof["grounded_extension"]["accepted"].append(item["argument"])
@@ -302,10 +346,13 @@ class ProofAssembler:
             elif "attack" in item:
                 attack_entry = {
                     "relation": item["attack"],
+                    "attacker": item["attack"].split(" → ")[0] if " → " in item["attack"] else "",
+                    "target": item["attack"].split(" → ")[1] if " → " in item["attack"] else "",
                     "effective": item.get("effective", False),
                     "explanation": item.get("explanation", "")
                 }
                 formal_proof["attacks"].append(attack_entry)
+                attack_list.append(attack_entry)
                 formal_proof["summary"]["total_attacks"] += 1
                 if item.get("effective"):
                     formal_proof["summary"]["effective_attacks"] += 1
@@ -317,7 +364,186 @@ class ProofAssembler:
                     "violated_rules": item.get("violations", [])
                 }
         
+        # Generate visual graph and explanations
+        formal_proof["graph_visual"] = self._generate_graph_visual(
+            compliance_args, violation_args, exception_args, attack_list
+        )
+        formal_proof["explanation"] = self._generate_detailed_explanation(
+            adjudication, compliance_args, violation_args, exception_args, attack_list
+        )
+        
         return formal_proof
+    
+    def _generate_graph_visual(self, compliance_args: List, violation_args: List,
+                                exception_args: List, attacks: List) -> str:
+        """Generate an ASCII art visualization of the argumentation graph."""
+        lines = []
+        lines.append("┌" + "─" * 70 + "┐")
+        lines.append("│" + " " * 20 + "ARGUMENTATION GRAPH" + " " * 31 + "│")
+        lines.append("├" + "─" * 70 + "┤")
+        lines.append("│" + " " * 70 + "│")
+        
+        # Group violations by rule for cleaner display
+        rules_shown = set()
+        
+        for v_arg in violation_args:
+            rule_id = v_arg.get("rule_id", "UNKNOWN")
+            if rule_id in rules_shown:
+                continue
+            rules_shown.add(rule_id)
+            
+            # Find corresponding compliance arg
+            c_arg = next((c for c in compliance_args if c.get("rule_id") == rule_id), None)
+            # Find any exception args
+            e_args = [e for e in exception_args if e.get("rule_id") == rule_id]
+            
+            v_status = "✓ ACCEPTED" if v_arg.get("status") == "accepted" else "✗ REJECTED"
+            c_status = "✓ ACCEPTED" if c_arg and c_arg.get("status") == "accepted" else "✗ REJECTED"
+            
+            if e_args:
+                # Show exception -> violation -> compliance chain
+                e_arg = e_args[0]
+                e_status = "✓ ACCEPTED" if e_arg.get("status") == "accepted" else "✗ REJECTED"
+                lines.append("│  ┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐  │")
+                lines.append(f"│  │ E_{rule_id:<12} │─attacks─▶│ V_{rule_id:<12} │─attacks─▶│ C_{rule_id:<12} │  │")
+                lines.append(f"│  │ ({e_status:<10})   │         │ ({v_status:<10})   │         │ ({c_status:<10})   │  │")
+                lines.append("│  └──────────────────┘         └──────────────────┘         └──────────────────┘  │")
+            else:
+                # Show violation -> compliance
+                lines.append("│  ┌──────────────────┐         ┌──────────────────┐" + " " * 22 + "│")
+                lines.append(f"│  │ V_{rule_id:<12} │─attacks─▶│ C_{rule_id:<12} │" + " " * 22 + "│")
+                lines.append(f"│  │ ({v_status:<10})   │         │ ({c_status:<10})   │" + " " * 22 + "│")
+                
+                # Show evidence if available
+                evidence = v_arg.get("evidence", "")
+                if evidence:
+                    evidence_display = evidence[:25] + "..." if len(evidence) > 25 else evidence
+                    lines.append(f"│  │ Evidence: {evidence_display:<17} │" + " " * 41 + "│")
+                
+                lines.append("│  └──────────────────┘         └──────────────────┘" + " " * 22 + "│")
+            
+            lines.append("│" + " " * 70 + "│")
+        
+        # Show compliant policies (no violations)
+        compliant_only = [c for c in compliance_args 
+                         if c.get("rule_id") not in rules_shown and c.get("status") == "accepted"]
+        if compliant_only:
+            lines.append("│  Policies with no violations (compliance arguments accepted):" + " " * 8 + "│")
+            policy_list = ", ".join([c.get("rule_id", "?") for c in compliant_only[:5]])
+            if len(compliant_only) > 5:
+                policy_list += f" ... (+{len(compliant_only)-5} more)"
+            lines.append(f"│    {policy_list:<66} │")
+            lines.append("│" + " " * 70 + "│")
+        
+        lines.append("└" + "─" * 70 + "┘")
+        
+        return "\n".join(lines)
+    
+    def _generate_detailed_explanation(self, adjudication: AdjudicationResult,
+                                        compliance_args: List, violation_args: List,
+                                        exception_args: List, attacks: List) -> Dict[str, Any]:
+        """Generate a detailed plain-English explanation of the argumentation."""
+        explanation = {
+            "summary": "",
+            "terminology": {
+                "argument": "A claim about the code's compliance status",
+                "C_RULE": "Compliance argument - claims 'this code complies with RULE'",
+                "V_RULE": "Violation argument - claims 'this code violates RULE' (with evidence)",
+                "E_RULE": "Exception argument - claims 'an exception condition applies, defeating the violation'",
+                "attack": "A relationship where one argument contradicts/defeats another",
+                "grounded_extension": "The minimal set of arguments that are defensibly accepted after resolving all attacks",
+                "accepted": "The argument's claim is upheld - it is in the grounded extension",
+                "rejected": "The argument is defeated by an accepted attacker - its claim does not hold"
+            },
+            "what_happened": [],
+            "step_by_step": [],
+            "decision_logic": []
+        }
+        
+        accepted_violations = [v for v in violation_args if v.get("status") == "accepted"]
+        rejected_violations = [v for v in violation_args if v.get("status") != "accepted"]
+        
+        # Generate summary
+        if adjudication.compliant:
+            explanation["summary"] = (
+                f"The code is COMPLIANT. All {len(compliance_args)} compliance arguments were accepted "
+                f"in the grounded extension. No violation arguments remained undefeated."
+            )
+        else:
+            violated_rules = list(set(v.get("rule_id", "?") for v in accepted_violations))
+            explanation["summary"] = (
+                f"The code is NON-COMPLIANT. {len(accepted_violations)} violation argument(s) "
+                f"were accepted in the grounded extension for policies: {violated_rules}. "
+                f"These violations were not defeated by any exception arguments."
+            )
+        
+        # What happened for each violated policy
+        for v in accepted_violations:
+            rule_id = v.get("rule_id", "UNKNOWN")
+            evidence = v.get("evidence") or v.get("details", "").split(": ")[-1] if v.get("details") else "detected pattern"
+            
+            what = {
+                "policy": rule_id,
+                "result": "VIOLATED",
+                "reason": f"Violation argument V_{rule_id} was ACCEPTED in the grounded extension",
+                "evidence": evidence,
+                "explanation": (
+                    f"The system found evidence that the code violates {rule_id}: '{evidence}'. "
+                    f"A violation argument (V_{rule_id}) was created to attack the compliance argument (C_{rule_id}). "
+                    f"Since no exception argument existed to defeat V_{rule_id}, it remained unattacked "
+                    f"and was therefore ACCEPTED. This means the violation claim holds, and C_{rule_id} was REJECTED."
+                )
+            }
+            explanation["what_happened"].append(what)
+        
+        # Step by step for the grounded extension
+        explanation["step_by_step"] = [
+            {
+                "step": 1,
+                "title": "Initialize",
+                "description": "Start with empty sets: accepted = ∅, rejected = ∅"
+            },
+            {
+                "step": 2,
+                "title": "Find Unattacked Arguments",
+                "description": (
+                    f"Identify arguments with no attackers. "
+                    f"Violation arguments V_* that have no exception arguments attacking them are unattacked."
+                ),
+                "result": f"Unattacked: {[v['id'] for v in accepted_violations]}" if accepted_violations else "All violations were defeated"
+            },
+            {
+                "step": 3,
+                "title": "Accept Unattacked Arguments",
+                "description": "Add unattacked arguments to the accepted set.",
+                "result": f"Accepted: {[v['id'] for v in accepted_violations]}" if accepted_violations else "No violations accepted"
+            },
+            {
+                "step": 4,
+                "title": "Reject Attacked Arguments",
+                "description": "Arguments attacked by accepted arguments are rejected.",
+                "result": f"Rejected compliance: {[c['id'] for c in compliance_args if c.get('status') != 'accepted']}"
+            },
+            {
+                "step": 5,
+                "title": "Iterate to Fixpoint",
+                "description": "Repeat until no changes. The final accepted set is the grounded extension."
+            }
+        ]
+        
+        # Decision logic
+        explanation["decision_logic"] = [
+            "IF ∃ violation argument V in accepted set → code VIOLATES that policy",
+            "IF ∀ compliance arguments C in accepted set → code is COMPLIANT",
+            f"Result: {'COMPLIANT' if adjudication.compliant else 'NON-COMPLIANT'}"
+        ]
+        
+        if accepted_violations:
+            explanation["decision_logic"].append(
+                f"Violated policies: {list(set(v.get('rule_id') for v in accepted_violations))}"
+            )
+        
+        return explanation
 
 
 # Global proof assembler instance

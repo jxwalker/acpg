@@ -428,7 +428,8 @@ class Adjudicator:
                 "type": arg.type,
                 "rule": arg.rule_id,
                 "status": status,
-                "details": arg.details
+                "details": arg.details,
+                "evidence": arg.evidence
             })
         
         for attack in graph.attacks:

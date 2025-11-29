@@ -13,6 +13,10 @@ This directory contains sample code files demonstrating various security policy 
 | `05_insecure_http.py` | HTTP instead of HTTPS | SEC-004 |
 | `06_mixed_vulnerabilities.py` | Multiple violation types | Mixed |
 | `07_owasp_top10.py` | OWASP Top 10 vulnerabilities | OWASP-* |
+| `08_strict_policies.py` | **Strict policies** - no exceptions possible | SEC-001, SEC-003, SQL-001, CRYPTO-001 |
+| `09_defeasible_policies.py` | **Defeasible policies** - with valid exceptions | INPUT-001, ERR-001, LOG-001 |
+| `10_argumentation_conflict.py` | **Conflict resolution** - competing arguments | Multiple |
+| `11_severity_priority.py` | **Priority ordering** - severity-based triage | Multiple |
 
 ## Usage
 
@@ -82,6 +86,50 @@ Each sample file should trigger specific violations when analyzed:
 07_owasp_top10.py: 15+ violations (Multiple)
 ```
 
+## Argumentation Framework Samples (08-11)
+
+These samples demonstrate ACPG's formal argumentation logic using **Dung's Abstract Argumentation Framework**:
+
+### Strict vs Defeasible Policies
+
+| Type | Definition | Exception Possible? | Example |
+|------|------------|---------------------|---------|
+| **Strict** | Absolute security requirements | ❌ No | SQL injection, hardcoded secrets |
+| **Defeasible** | Context-dependent requirements | ✅ Yes | Input validation, error handling |
+
+### Argumentation Structure
+
+```
+Arguments:
+  C_RULE: "Artifact complies with RULE"
+  V_RULE: "Artifact violates RULE" → attacks C_RULE
+  E_RULE: "Exception applies" → attacks V_RULE (defeasible only)
+
+Grounded Extension:
+  - Unattacked arguments are ACCEPTED
+  - Arguments attacked by ACCEPTED are REJECTED
+  - Iterate until no changes (fixpoint)
+```
+
+### Key Concepts Demonstrated
+
+1. **08_strict_policies.py**: Violations that cannot be defeated
+   - `V → C` with no counter-attacks
+   - All violations remain in grounded extension
+
+2. **09_defeasible_policies.py**: Violations with valid exceptions
+   - `E → V → C` chains
+   - Exception defeats violation, restoring compliance
+
+3. **10_argumentation_conflict.py**: Complex resolution scenarios
+   - Multiple violations, partial exceptions
+   - Chain of attacks (exceptions to exceptions)
+   - Symmetric attacks (undecidable conflicts)
+
+4. **11_severity_priority.py**: Priority-based ordering
+   - Critical > High > Medium > Low
+   - Affects fix ordering and threshold compliance
+
 ## For Patent Demonstration
 
 These samples demonstrate ACPG's ability to:
@@ -89,4 +137,6 @@ These samples demonstrate ACPG's ability to:
 2. Provide detailed evidence for each violation
 3. Auto-fix code using AI
 4. Generate cryptographically signed compliance proofs
+5. **Use formal argumentation to resolve policy conflicts**
+6. **Support defeasible reasoning with contextual exceptions**
 

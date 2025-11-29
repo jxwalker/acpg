@@ -1,7 +1,7 @@
 """API Routes for ACPG system."""
 import hashlib
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -641,17 +641,46 @@ async def enforce_compliance(
             code = fixed_code
             
         except Exception as e:
-            # Fix failed - return current state
+            # Fix failed - still generate proof bundle for formal logic visibility
+            fail_analysis = prosecutor.analyze(
+                code=code,
+                language=request.language,
+                policy_ids=policy_ids if policy_ids else None
+            )
+            fail_adjudication = adjudicator.adjudicate(fail_analysis, policy_ids)
+            fail_proof = proof_assembler.assemble_proof(
+                code=code,
+                analysis=fail_analysis,
+                adjudication=fail_adjudication,
+                language=request.language
+            )
+            
             return EnforceResponse(
                 original_code=original_code,
                 final_code=code,
                 iterations=iteration + 1,
                 compliant=False,
                 violations_fixed=violations_fixed,
-                proof_bundle=None
+                proof_bundle=fail_proof
             )
     
     # Max iterations reached without compliance
+    # Still generate a proof bundle to show the formal logic of why it failed
+    final_analysis = prosecutor.analyze(
+        code=code,
+        language=request.language,
+        policy_ids=policy_ids if policy_ids else None
+    )
+    final_adjudication = adjudicator.adjudicate(final_analysis, policy_ids)
+    
+    # Generate proof bundle even for non-compliant code (for formal logic visibility)
+    proof = proof_assembler.assemble_proof(
+        code=code,
+        analysis=final_analysis,
+        adjudication=final_adjudication,
+        language=request.language
+    )
+    
     # Log enforcement attempt
     try:
         audit = AuditLogger(db)
@@ -673,7 +702,7 @@ async def enforce_compliance(
         iterations=request.max_iterations,
         compliant=False,
         violations_fixed=violations_fixed,
-        proof_bundle=None
+        proof_bundle=proof
     )
 
 
@@ -764,6 +793,176 @@ async def list_proofs(
     proof_store = ProofStore(db)
     proofs = proof_store.list_proofs(limit=limit, offset=offset)
     return {"proofs": proofs, "count": len(proofs)}
+
+
+# ============================================================================
+# Proof Verification Endpoints
+# ============================================================================
+
+class VerifyProofRequest(BaseModel):
+    """Request to verify a proof bundle."""
+    proof_bundle: Dict[str, Any]
+
+@router.post("/proof/verify")
+async def verify_proof_bundle(request: VerifyProofRequest):
+    """
+    Verify a proof bundle's cryptographic signature.
+    
+    This endpoint checks if a proof bundle has been tampered with by:
+    1. Reconstructing the signed data from the proof bundle
+    2. Verifying the ECDSA signature against the public key
+    3. Comparing hashes to detect any modifications
+    
+    Returns detailed information about the verification result.
+    """
+    from ..core.crypto import get_signer
+    from ..core.key_manager import get_key_manager
+    
+    proof = request.proof_bundle
+    signer = get_signer()
+    
+    result = {
+        "valid": False,
+        "tampered": True,
+        "details": {
+            "signature_valid": False,
+            "hash_valid": False,
+            "timestamp_present": False,
+            "signer_match": False
+        },
+        "original_hash": None,
+        "computed_hash": None,
+        "checks": [],
+        "errors": []
+    }
+    
+    try:
+        # Check required fields
+        if "signed" not in proof:
+            result["errors"].append("Missing 'signed' field - this bundle was not cryptographically signed")
+            return result
+        
+        if "artifact" not in proof:
+            result["errors"].append("Missing 'artifact' field")
+            return result
+        
+        signed_info = proof["signed"]
+        signature = signed_info.get("signature", "")
+        
+        if not signature:
+            result["errors"].append("No signature found in proof bundle")
+            return result
+        
+        result["checks"].append("✓ Proof bundle has required structure")
+        
+        # Check signer fingerprint matches
+        expected_fingerprint = signer.get_public_key_fingerprint()
+        bundle_fingerprint = signed_info.get("public_key_fingerprint", "")
+        
+        if bundle_fingerprint == expected_fingerprint:
+            result["details"]["signer_match"] = True
+            result["checks"].append(f"✓ Signer fingerprint matches: {expected_fingerprint}")
+        else:
+            result["errors"].append(f"✗ Signer mismatch: bundle has '{bundle_fingerprint}', expected '{expected_fingerprint}'")
+            result["errors"].append("  This bundle was signed by a different key")
+        
+        # Reconstruct the data that was signed
+        # The signed data includes: artifact, policies, evidence, argumentation, decision, timestamp
+        artifact_data = proof.get("artifact", {})
+        
+        # Handle timestamp serialization
+        if "timestamp" in artifact_data:
+            ts = artifact_data["timestamp"]
+            if hasattr(ts, 'isoformat'):
+                artifact_data = dict(artifact_data)
+                artifact_data["timestamp"] = ts.isoformat()
+        
+        # This is the data structure that was signed
+        signed_data = {
+            "artifact": artifact_data,
+            "policies": proof.get("policies", []),
+            "evidence": proof.get("evidence", []),
+            "argumentation": proof.get("argumentation", {}),
+            "decision": proof.get("decision", ""),
+            "timestamp": signed_info.get("signed_at", proof.get("timestamp", ""))
+        }
+        
+        # Verify the signature
+        try:
+            import json
+            import base64
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import ec
+            
+            canonical_json = json.dumps(signed_data, sort_keys=True)
+            data_bytes = canonical_json.encode('utf-8')
+            signature_bytes = base64.b64decode(signature)
+            
+            signer.public_key.verify(
+                signature_bytes,
+                data_bytes,
+                ec.ECDSA(hashes.SHA256())
+            )
+            
+            result["details"]["signature_valid"] = True
+            result["checks"].append("✓ ECDSA signature is VALID")
+            
+        except Exception as e:
+            result["details"]["signature_valid"] = False
+            result["errors"].append(f"✗ Signature verification FAILED: {str(e)}")
+            result["errors"].append("  The proof bundle data has been modified since signing")
+        
+        # Verify artifact hash
+        if "artifact" in proof and "hash" in proof["artifact"]:
+            result["original_hash"] = proof["artifact"]["hash"]
+            result["details"]["hash_valid"] = True
+            result["checks"].append(f"✓ Artifact hash present: {proof['artifact']['hash'][:16]}...")
+        
+        # Check timestamp
+        if artifact_data.get("timestamp"):
+            result["details"]["timestamp_present"] = True
+            result["checks"].append(f"✓ Timestamp: {artifact_data['timestamp']}")
+        
+        # Final determination
+        result["valid"] = result["details"]["signature_valid"]
+        result["tampered"] = not result["details"]["signature_valid"]
+        
+        if result["valid"]:
+            result["checks"].append("")
+            result["checks"].append("═══════════════════════════════════════")
+            result["checks"].append("  ✓ PROOF BUNDLE INTEGRITY VERIFIED")
+            result["checks"].append("  This bundle has NOT been tampered with")
+            result["checks"].append("═══════════════════════════════════════")
+        else:
+            result["errors"].append("")
+            result["errors"].append("═══════════════════════════════════════")
+            result["errors"].append("  ✗ PROOF BUNDLE TAMPERING DETECTED")
+            result["errors"].append("  This bundle has been modified!")
+            result["errors"].append("═══════════════════════════════════════")
+        
+    except Exception as e:
+        result["errors"].append(f"Verification error: {str(e)}")
+    
+    return result
+
+
+@router.get("/proof/public-key")
+async def get_public_key():
+    """
+    Get the public key used for signing proof bundles.
+    
+    This can be used to independently verify signatures.
+    """
+    from ..core.crypto import get_signer
+    
+    signer = get_signer()
+    
+    return {
+        "public_key_pem": signer.get_public_key_pem(),
+        "fingerprint": signer.get_public_key_fingerprint(),
+        "algorithm": "ECDSA-SHA256",
+        "curve": "SECP256R1 (P-256)"
+    }
 
 
 # ============================================================================

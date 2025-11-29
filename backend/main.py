@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.config import settings
+from app.core.llm_config import get_llm_config
 from app.services import get_policy_compiler
 
 
@@ -52,7 +53,16 @@ async def lifespan(app: FastAPI):
         print(f"⚠️  Warning: Could not load policies: {e}")
     
     print(f"📋 Max fix iterations: {settings.MAX_FIX_ITERATIONS}")
-    print(f"🤖 AI Model: {settings.OPENAI_MODEL}")
+    
+    # Show active LLM provider
+    try:
+        llm_config = get_llm_config()
+        provider = llm_config.get_active_provider()
+        print(f"🤖 AI Model: {provider.name}")
+        print(f"   Provider: {provider.model}")
+    except Exception as e:
+        print(f"🤖 AI Model: {settings.OPENAI_MODEL} (default)")
+    
     print("=" * 60)
     
     yield
@@ -86,7 +96,12 @@ app = FastAPI(
 # Configure CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://localhost:5173",
+        "http://localhost:6001",
+        "http://localhost:6002"
+    ],  # React dev servers
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

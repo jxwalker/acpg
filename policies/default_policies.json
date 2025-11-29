@@ -36,7 +36,17 @@
         "message": "Check if user input is used in dangerous context without validation",
         "languages": ["python", "javascript"]
       },
-      "fix_suggestion": "Add input validation using type checks, regex, or sanitization functions"
+      "fix_suggestion": "Add input validation using type checks, regex, or sanitization functions",
+      "exceptions": [
+        {
+          "condition": "internal_trusted_source",
+          "description": "Input from authenticated internal services with schema validation"
+        },
+        {
+          "condition": "type_safe_deserialization",
+          "description": "Input deserialized through type-safe framework (e.g., Pydantic, TypeScript)"
+        }
+      ]
     },
     {
       "id": "SEC-003",
@@ -65,14 +75,42 @@
     {
       "id": "ERR-001",
       "description": "Exceptions should be caught and handled; do not expose stack traces",
-      "type": "strict",
+      "type": "defeasible",
       "severity": "medium",
       "check": {
         "type": "manual",
         "message": "Check for proper exception handling without exposing internals",
         "languages": ["python", "javascript"]
       },
-      "fix_suggestion": "Add try/except blocks and return user-friendly error messages"
+      "fix_suggestion": "Add try/except blocks and return user-friendly error messages",
+      "exceptions": [
+        {
+          "condition": "debug_mode",
+          "description": "Stack traces allowed when DEBUG=true for development"
+        }
+      ]
+    },
+    {
+      "id": "LOG-001",
+      "description": "Do not log sensitive user data (PII, credentials, financial info)",
+      "type": "defeasible",
+      "severity": "medium",
+      "check": {
+        "type": "regex",
+        "pattern": "log.*\\b(user_id|email|password|card|ssn|credit)\\b",
+        "languages": ["python", "javascript"]
+      },
+      "fix_suggestion": "Mask or remove sensitive data from log statements",
+      "exceptions": [
+        {
+          "condition": "audit_requirement",
+          "description": "Audit logging for PCI-DSS, SOX, HIPAA compliance"
+        },
+        {
+          "condition": "secure_audit_storage",
+          "description": "Logging to encrypted, access-controlled audit store"
+        }
+      ]
     },
     {
       "id": "SQL-001",
