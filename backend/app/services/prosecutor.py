@@ -171,8 +171,7 @@ class Prosecutor:
                 findings_count = len(findings)
             except Exception as e:
                 # Log parsing error but continue
-                import logging
-                logging.warning(f"Error parsing {tool_name} output: {e}")
+                logger.warning(f"Error parsing {tool_name} output: {e}")
                 tool_execution_info[tool_name] = ToolExecutionInfo(
                     tool_name=tool_name,
                     success=True,
