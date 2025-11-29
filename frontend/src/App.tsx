@@ -8,7 +8,7 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  List, Plus, Edit2, BookOpen
+  List, Plus, Edit2, BookOpen, Settings
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -61,7 +61,7 @@ def login(username: str, password_input: str) -> Optional[dict]:
 `;
 
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
-type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify';
+type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
 
 interface WorkflowState {
@@ -478,6 +478,19 @@ export default function App() {
                   <span className="flex items-center gap-2">
                     <List className="w-4 h-4" />
                     Policies
+                  </span>
+                </button>
+                <button
+                  onClick={() => setViewMode('tools')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    viewMode === 'tools' 
+                      ? 'bg-slate-700 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    Tools
                   </span>
                 </button>
                 <button
