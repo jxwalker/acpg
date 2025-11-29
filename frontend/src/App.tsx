@@ -1577,6 +1577,125 @@ function ComplianceStatus({
   );
 }
 
+// Unmapped Findings Section - Prominent display of all unmapped findings
+function UnmappedFindingsSection({ 
+  unmappedFindings,
+  onCreateMapping
+}: { 
+  unmappedFindings: Array<{tool: string; finding: any}>;
+  onCreateMapping: (toolName: string, ruleId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="glass rounded-2xl overflow-hidden border border-amber-500/20 animate-slide-up">
+      <div className="px-5 py-4 border-b border-amber-500/20 bg-amber-500/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/10">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <span className="font-semibold text-slate-200">Unmapped Findings</span>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {unmappedFindings.length} finding{unmappedFindings.length !== 1 ? 's' : ''} from tools that aren't mapped to policies
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="px-3 py-1.5 text-sm bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg transition-colors flex items-center gap-2"
+          >
+            {expanded ? (
+              <>
+                <ChevronDown className="w-4 h-4" />
+                Hide
+              </>
+            ) : (
+              <>
+                <ChevronRight className="w-4 h-4" />
+                Show All
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="max-h-[400px] overflow-y-auto p-5 space-y-3 animate-fade-in">
+          {unmappedFindings.map((item, i) => (
+            <div 
+              key={i} 
+              className="p-4 bg-amber-500/5 rounded-xl border border-amber-500/20 hover:border-amber-500/40 transition-colors"
+            >
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-1 bg-violet-500/20 text-violet-400 text-xs font-mono rounded">
+                    {item.tool}
+                  </span>
+                  <span className="px-2 py-1 bg-amber-500/20 text-amber-400 text-xs font-mono rounded">
+                    {item.finding.rule_id}
+                  </span>
+                  {item.finding.line && (
+                    <span className="text-xs text-slate-400">Line {item.finding.line}</span>
+                  )}
+                  {item.finding.severity && (
+                    <span className={`px-2 py-1 text-xs rounded ${
+                      item.finding.severity === 'high' || item.finding.severity === 'critical' 
+                        ? 'bg-red-500/20 text-red-400' 
+                        : item.finding.severity === 'medium'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-slate-500/20 text-slate-400'
+                    }`}>
+                      {item.finding.severity}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => onCreateMapping(item.tool, item.finding.rule_id)}
+                  className="px-3 py-1.5 text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Link2 className="w-3 h-3" />
+                  Map Rule
+                </button>
+              </div>
+              <p className="text-sm text-slate-300">{item.finding.message}</p>
+            </div>
+          ))}
+          <div className="mt-4 p-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
+            <p className="text-xs text-slate-400">
+              💡 <strong>Tip:</strong> Click "Map Rule" to create a mapping from this tool rule to an ACPG policy. 
+              This will make future findings from this rule appear as violations.
+            </p>
+          </div>
+        </div>
+      )}
+      {!expanded && unmappedFindings.length > 0 && (
+        <div className="px-5 py-3 border-t border-amber-500/20">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-slate-400">
+              {unmappedFindings.slice(0, 3).map((item, i) => (
+                <span key={i} className="mr-3">
+                  <span className="font-mono text-amber-400">{item.tool}:{item.finding.rule_id}</span>
+                  {item.finding.line && <span className="text-slate-500"> (L{item.finding.line})</span>}
+                </span>
+              ))}
+              {unmappedFindings.length > 3 && (
+                <span className="text-slate-500">+ {unmappedFindings.length - 3} more</span>
+              )}
+            </div>
+            <button
+              onClick={() => setExpanded(true)}
+              className="text-xs text-amber-400 hover:text-amber-300"
+            >
+              View all →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Tool Execution Status Component
 function ToolExecutionStatus({ 
   toolExecution 
