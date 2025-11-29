@@ -123,21 +123,40 @@ class Prosecutor:
                 # Tool failed - provide helpful error message
                 error_msg = result.error or "Tool execution failed"
                 
-                # Enhance error messages for common issues
-                if "No such file or directory" in error_msg or "not found" in error_msg.lower():
-                    error_msg = f"Tool '{tool_name}' is not installed. Install it with: pip install {tool_name}"
-                elif "timeout" in error_msg.lower():
-                    error_msg = f"Tool '{tool_name}' execution timed out. The code may be too large or the tool is slow."
+                # Categorize and enhance error messages for common issues
+                error_category = "unknown"
+                enhanced_msg = error_msg
+                
+                if "No such file or directory" in error_msg or "not found" in error_msg.lower() or "command not found" in error_msg.lower():
+                    error_category = "not_installed"
+                    enhanced_msg = f"Tool '{tool_name}' is not installed. Install it with: pip install {tool_name}"
+                elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    error_category = "timeout"
+                    enhanced_msg = f"Tool '{tool_name}' execution timed out. The code may be too large or the tool is slow. Consider increasing timeout or analyzing smaller code chunks."
                 elif "ModuleNotFoundError" in error_msg or "ImportError" in error_msg:
-                    error_msg = f"Tool '{tool_name}' has missing dependencies. Check tool installation."
+                    error_category = "missing_dependencies"
+                    enhanced_msg = f"Tool '{tool_name}' has missing dependencies. Check tool installation: pip install {tool_name}[all]"
+                elif "permission denied" in error_msg.lower() or "permission" in error_msg.lower():
+                    error_category = "permission"
+                    enhanced_msg = f"Tool '{tool_name}' permission denied. Check file permissions and tool installation."
+                elif "syntax error" in error_msg.lower() or "parse error" in error_msg.lower():
+                    error_category = "syntax_error"
+                    enhanced_msg = f"Tool '{tool_name}' encountered a syntax error in the code. This may indicate invalid code being analyzed."
+                elif "connection" in error_msg.lower() or "network" in error_msg.lower():
+                    error_category = "network"
+                    enhanced_msg = f"Tool '{tool_name}' network error. Check your internet connection and tool configuration."
+                elif "retry" in error_msg.lower() or "transient" in error_msg.lower():
+                    error_category = "transient"
+                    enhanced_msg = f"Tool '{tool_name}' failed with a transient error. The system will retry automatically."
                 
                 tool_execution_info[tool_name] = ToolExecutionInfo(
                     tool_name=tool_name,
                     success=False,
-                    error=error_msg,
-                    execution_time=result.execution_time
+                    error=enhanced_msg,
+                    execution_time=result.execution_time,
+                    tool_version=result.tool_version
                 )
-                logger.warning(f"Tool {tool_name} failed: {error_msg}")
+                logger.warning(f"Tool {tool_name} failed ({error_category}): {enhanced_msg}")
                 continue
             
             if not result.output:

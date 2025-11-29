@@ -3,6 +3,7 @@ import subprocess
 import json
 import tempfile
 import os
+import time
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 from datetime import datetime, timezone
@@ -14,6 +15,20 @@ from ..core.config import settings
 from .tool_cache import get_tool_cache
 
 logger = logging.getLogger(__name__)
+
+# Transient errors that should be retried
+TRANSIENT_ERRORS = [
+    "timeout",
+    "connection",
+    "temporary",
+    "retry",
+    "rate limit",
+    "too many requests",
+    "service unavailable",
+    "503",
+    "502",
+    "504"
+]
 
 
 class ToolExecutionResult:
@@ -57,16 +72,18 @@ class ToolExecutor:
         tool_config: ToolConfig,
         target_path: Optional[str] = None,
         content: Optional[str] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        max_retries: int = 2
     ) -> ToolExecutionResult:
         """
-        Execute a static analysis tool.
+        Execute a static analysis tool with retry logic for transient failures.
         
         Args:
             tool_config: Tool configuration
             target_path: Path to file/directory to analyze
             content: File content (if target_path is None, creates temp file)
             use_cache: Whether to use cached results if available
+            max_retries: Maximum number of retries for transient failures
             
         Returns:
             ToolExecutionResult
@@ -85,59 +102,88 @@ class ToolExecutor:
                 )
         
         start_time = datetime.now(timezone.utc)
+        last_error = None
         
-        try:
-            # Prepare command
-            if tool_config.requires_file:
-                if target_path:
-                    file_path = target_path
-                elif content:
-                    # Create temporary file
-                    with tempfile.NamedTemporaryFile(
-                        mode='w',
-                        suffix=self._get_suffix_for_language(tool_config.languages[0] if tool_config.languages else "python"),
-                        delete=False
-                    ) as tmp_file:
-                        tmp_file.write(content)
-                        file_path = tmp_file.name
-                    # Clean up temp file after execution
-                    try:
-                        result = self._execute_with_file(tool_config, file_path, use_cache=use_cache, content=content, target_path=target_path)
-                    finally:
-                        if not target_path:  # Only delete if we created it
-                            try:
-                                os.unlink(file_path)
-                            except Exception:
-                                pass
-                    return result
+        for attempt in range(max_retries + 1):
+            try:
+                # Prepare command
+                if tool_config.requires_file:
+                    if target_path:
+                        file_path = target_path
+                    elif content:
+                        # Create temporary file
+                        with tempfile.NamedTemporaryFile(
+                            mode='w',
+                            suffix=self._get_suffix_for_language(tool_config.languages[0] if tool_config.languages else "python"),
+                            delete=False
+                        ) as tmp_file:
+                            tmp_file.write(content)
+                            file_path = tmp_file.name
+                        # Clean up temp file after execution
+                        try:
+                            result = self._execute_with_file(tool_config, file_path, use_cache=use_cache, content=content, target_path=target_path)
+                        finally:
+                            if not target_path:  # Only delete if we created it
+                                try:
+                                    os.unlink(file_path)
+                                except Exception:
+                                    pass
+                        return result
+                    else:
+                        return ToolExecutionResult(
+                            tool_config.name,
+                            False,
+                            error="Tool requires file but no path or content provided"
+                        )
                 else:
+                    # Tool can read from stdin
+                    return self._execute_with_stdin(tool_config, content or "")
+                
+            except subprocess.TimeoutExpired:
+                execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+                error_msg = f"Tool execution timed out after {tool_config.timeout} seconds"
+                last_error = error_msg
+                
+                # Timeout is not transient - don't retry
+                logger.warning(f"Tool {tool_config.name} timed out after {execution_time}s")
+                return ToolExecutionResult(
+                    tool_config.name,
+                    False,
+                    error=error_msg,
+                    execution_time=execution_time
+                )
+            except Exception as e:
+                execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+                error_str = str(e).lower()
+                last_error = str(e)
+                
+                # Check if error is transient
+                is_transient = any(transient in error_str for transient in TRANSIENT_ERRORS)
+                
+                if is_transient and attempt < max_retries:
+                    # Retry with exponential backoff
+                    wait_time = (2 ** attempt) * 0.5  # 0.5s, 1s, 2s
+                    logger.warning(f"Tool {tool_config.name} failed with transient error (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # Non-transient error or max retries reached
+                    logger.error(f"Error executing tool {tool_config.name}: {e}", exc_info=True)
                     return ToolExecutionResult(
                         tool_config.name,
                         False,
-                        error="Tool requires file but no path or content provided"
+                        error=str(e),
+                        execution_time=execution_time
                     )
-            else:
-                # Tool can read from stdin
-                return self._execute_with_stdin(tool_config, content or "")
-            
-        except subprocess.TimeoutExpired:
-            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-            logger.warning(f"Tool {tool_config.name} timed out after {execution_time}s")
-            return ToolExecutionResult(
-                tool_config.name,
-                False,
-                error=f"Tool execution timed out after {tool_config.timeout} seconds",
-                execution_time=execution_time
-            )
-        except Exception as e:
-            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-            logger.error(f"Error executing tool {tool_config.name}: {e}", exc_info=True)
-            return ToolExecutionResult(
-                tool_config.name,
-                False,
-                error=str(e),
-                execution_time=execution_time
-            )
+        
+        # If we get here, all retries failed
+        execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        return ToolExecutionResult(
+            tool_config.name,
+            False,
+            error=f"Tool execution failed after {max_retries + 1} attempts: {last_error}",
+            execution_time=execution_time
+        )
     
     def _get_tool_version(self, tool_name: str) -> Optional[str]:
         """Get tool version by running --version or similar."""
