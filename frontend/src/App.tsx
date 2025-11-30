@@ -2387,6 +2387,13 @@ function ViolationsList({
     }
   };
 
+  // Get violations with available fixes
+  const [showQuickFixes, setShowQuickFixes] = useState(true);
+  const fixableViolations = violations.filter(v => {
+    const policy = policies.find(p => p.id === v.rule_id);
+    return policy?.fix_suggestion;
+  });
+
   return (
     <div className="glass rounded-2xl overflow-hidden border border-white/5 animate-slide-up stagger-1">
       <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
@@ -2400,6 +2407,59 @@ function ViolationsList({
           {violations.length} found
         </span>
       </div>
+      
+      {/* Quick Fixes Summary Panel */}
+      {fixableViolations.length > 0 && (
+        <div className="border-b border-white/5">
+          <button
+            onClick={() => setShowQuickFixes(!showQuickFixes)}
+            className="w-full px-5 py-3 flex items-center justify-between hover:bg-cyan-500/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-cyan-400" />
+              <span className="text-sm font-medium text-cyan-400">
+                Quick Fixes Available ({fixableViolations.length})
+              </span>
+            </div>
+            <ChevronDown className={`w-4 h-4 text-cyan-400 transition-transform ${showQuickFixes ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showQuickFixes && (
+            <div className="px-5 pb-4 space-y-2 animate-fade-in">
+              {fixableViolations.slice(0, 5).map((violation, idx) => {
+                const policy = policies.find(p => p.id === violation.rule_id);
+                return (
+                  <div 
+                    key={idx}
+                    className="flex items-start gap-3 p-3 bg-gradient-to-r from-cyan-500/5 to-transparent rounded-lg border border-cyan-500/10"
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <div className="w-6 h-6 rounded-full bg-cyan-500/20 flex items-center justify-center">
+                        <span className="text-xs font-bold text-cyan-400">{idx + 1}</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-mono font-semibold text-violet-400">{violation.rule_id}</span>
+                        {violation.line && (
+                          <span className="text-xs text-slate-500">Line {violation.line}</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-300">{policy?.fix_suggestion}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              {fixableViolations.length > 5 && (
+                <p className="text-xs text-slate-500 text-center pt-2">
+                  +{fixableViolations.length - 5} more fixes available
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      
       <div className="max-h-[280px] overflow-y-auto">
         {violations.map((violation, index) => {
           const severity = getSeverityConfig(violation.severity);
