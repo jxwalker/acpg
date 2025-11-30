@@ -4,12 +4,19 @@ import json
 import tempfile
 import os
 import re
+import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
 from ..models.schemas import Violation, AnalysisResult, PolicyRule
 from ..core.config import settings
 from .policy_compiler import get_policy_compiler
+from .language_detector import get_language_detector
+from .tool_executor import get_tool_executor
+from .tool_mapper import get_tool_mapper
+from .parsers import BanditParser, ESLintParser, SarifParser
+
+logger = logging.getLogger(__name__)
 
 
 class Prosecutor:
@@ -17,51 +24,33 @@ class Prosecutor:
     The Prosecutor agent finds policy violations in code artifacts.
     
     Uses multiple detection strategies:
-    1. Bandit - Python security scanner
+    1. Static analysis tools (Bandit, ESLint, etc.) - Configurable
     2. Regex pattern matching - From policy definitions
     3. AST analysis - For semantic checks
     4. Dynamic testing - Hypothesis fuzzing (optional)
     """
     
-    # Mapping of Bandit test IDs to our policy IDs
-    BANDIT_POLICY_MAP = {
-        'B105': 'SEC-001',  # hardcoded_password_string
-        'B106': 'SEC-001',  # hardcoded_password_funcarg
-        'B107': 'SEC-001',  # hardcoded_password_default
-        'B108': 'SEC-001',  # hardcoded_tmp_directory (related)
-        'B301': 'SEC-003',  # pickle
-        'B302': 'SEC-003',  # marshal
-        'B303': 'CRYPTO-001',  # md5, sha1
-        'B304': 'CRYPTO-001',  # insecure ciphers
-        'B305': 'CRYPTO-001',  # insecure cipher modes
-        'B306': 'SEC-003',  # mktemp
-        'B307': 'SEC-003',  # eval
-        'B308': 'SEC-003',  # mark_safe
-        'B310': 'SEC-004',  # urllib_urlopen (http)
-        'B311': 'CRYPTO-001',  # random
-        'B312': 'SEC-004',  # telnetlib
-        'B501': 'SEC-004',  # request_with_no_cert_validation
-        'B502': 'SEC-004',  # ssl_with_bad_version
-        'B503': 'SEC-004',  # ssl_with_bad_defaults
-        'B504': 'SEC-004',  # ssl_with_no_version
-        'B506': 'SEC-003',  # yaml_load
-        'B608': 'SQL-001',  # sql_injection (hardcoded)
-        'B609': 'SQL-001',  # linux_commands_wildcard_injection
-        'B610': 'SEC-003',  # django_extra_used
-        'B611': 'SEC-003',  # django_rawsql_used
-    }
-    
     def __init__(self):
         self.policy_compiler = get_policy_compiler()
+        self.language_detector = get_language_detector()
+        self.tool_executor = get_tool_executor()
+        self.tool_mapper = get_tool_mapper()
+        
+        # Parser registry
+        self.parsers = {
+            "bandit": BanditParser(),
+            "eslint": ESLintParser(),
+            "sarif": SarifParser()
+        }
     
-    def analyze(self, code: str, language: str = "python", 
+    def analyze(self, code: str, language: Optional[str] = None, 
                 policy_ids: Optional[List[str]] = None) -> AnalysisResult:
         """
         Run full analysis on code artifact.
         
         Args:
             code: Source code to analyze
-            language: Programming language
+            language: Programming language (auto-detected if None)
             policy_ids: Optional list of policies to check (None = all)
             
         Returns:
@@ -70,93 +59,197 @@ class Prosecutor:
         import hashlib
         artifact_id = hashlib.sha256(code.encode()).hexdigest()[:16]
         
-        all_violations = []
+        # Auto-detect language if not provided
+        if language is None:
+            language = self.language_detector.detect_from_content(code) or "python"
         
-        # Run Bandit for Python code
-        if language.lower() == 'python':
-            bandit_violations = self.run_bandit(code)
-            all_violations.extend(bandit_violations)
+        all_violations = []
+        tool_execution_info = {}
+        
+        # Run static analysis tools if enabled
+        if settings.ENABLE_STATIC_ANALYSIS:
+            tool_violations, tool_execution_info = self.run_static_analysis_tools(code, language)
+            all_violations.extend(tool_violations)
         
         # Run policy regex/AST checks
         policy_violations = self.run_policy_checks(code, language, policy_ids)
         all_violations.extend(policy_violations)
         
-        # Deduplicate violations (same rule + same line)
+        # Deduplicate violations (same rule + same line + same detector)
         seen = set()
         unique_violations = []
         for v in all_violations:
-            key = (v.rule_id, v.line)
+            key = (v.rule_id, v.line, v.detector)
             if key not in seen:
                 seen.add(key)
                 unique_violations.append(v)
         
         return AnalysisResult(
             artifact_id=artifact_id,
-            violations=unique_violations
+            violations=unique_violations,
+            tool_execution=tool_execution_info if tool_execution_info else None
         )
     
-    def run_bandit(self, code: str) -> List[Violation]:
+    def run_static_analysis_tools(self, code: str, language: str) -> tuple[List[Violation], Dict[str, Any]]:
         """
-        Run Bandit security scanner on Python code.
+        Run all enabled static analysis tools for the given language.
         
         Args:
-            code: Python source code
+            code: Source code to analyze
+            language: Programming language
             
         Returns:
-            List of violations detected by Bandit
+            Tuple of (violations, tool_execution_info)
         """
+        from ..models.schemas import ToolExecutionInfo
+        
         violations = []
+        tool_execution_info = {}
         
-        # Write code to temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
-            temp_path = f.name
+        # Execute all enabled tools for this language
+        execution_results = self.tool_executor.execute_tools_for_language(
+            language=language,
+            content=code
+        )
         
-        try:
-            # Run Bandit with JSON output
-            result = subprocess.run(
-                ['bandit', '-f', 'json', '-q', temp_path],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+        for result in execution_results:
+            tool_name = result.tool_name
+            findings_count = 0
+            mapped_count = 0
+            unmapped_count = 0
+            raw_findings = []
             
-            # Parse Bandit output
-            if result.stdout:
-                try:
-                    bandit_output = json.loads(result.stdout)
-                    for issue in bandit_output.get('results', []):
-                        # Map Bandit test ID to our policy ID
-                        test_id = issue.get('test_id', '')
-                        policy_id = self.BANDIT_POLICY_MAP.get(test_id, f'BANDIT-{test_id}')
-                        
-                        # Get severity from Bandit or policy
-                        bandit_severity = issue.get('issue_severity', 'MEDIUM').lower()
-                        
-                        violations.append(Violation(
-                            rule_id=policy_id,
-                            description=issue.get('issue_text', 'Security issue detected'),
-                            line=issue.get('line_number'),
-                            evidence=issue.get('code', '').strip(),
-                            detector='bandit',
-                            severity=bandit_severity
-                        ))
-                except json.JSONDecodeError:
-                    pass  # Bandit didn't produce valid JSON
-                    
-        except subprocess.TimeoutExpired:
-            pass  # Bandit timed out
-        except FileNotFoundError:
-            # Bandit not installed - skip
-            pass
-        finally:
-            # Clean up temp file
+            if not result.success:
+                # Tool failed - provide helpful error message
+                error_msg = result.error or "Tool execution failed"
+                
+                # Categorize and enhance error messages for common issues
+                error_category = "unknown"
+                enhanced_msg = error_msg
+                
+                if "No such file or directory" in error_msg or "not found" in error_msg.lower() or "command not found" in error_msg.lower():
+                    error_category = "not_installed"
+                    enhanced_msg = f"Tool '{tool_name}' is not installed. Install it with: pip install {tool_name}"
+                elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    error_category = "timeout"
+                    enhanced_msg = f"Tool '{tool_name}' execution timed out. The code may be too large or the tool is slow. Consider increasing timeout or analyzing smaller code chunks."
+                elif "ModuleNotFoundError" in error_msg or "ImportError" in error_msg:
+                    error_category = "missing_dependencies"
+                    enhanced_msg = f"Tool '{tool_name}' has missing dependencies. Check tool installation: pip install {tool_name}[all]"
+                elif "permission denied" in error_msg.lower() or "permission" in error_msg.lower():
+                    error_category = "permission"
+                    enhanced_msg = f"Tool '{tool_name}' permission denied. Check file permissions and tool installation."
+                elif "syntax error" in error_msg.lower() or "parse error" in error_msg.lower():
+                    error_category = "syntax_error"
+                    enhanced_msg = f"Tool '{tool_name}' encountered a syntax error in the code. This may indicate invalid code being analyzed."
+                elif "connection" in error_msg.lower() or "network" in error_msg.lower():
+                    error_category = "network"
+                    enhanced_msg = f"Tool '{tool_name}' network error. Check your internet connection and tool configuration."
+                elif "retry" in error_msg.lower() or "transient" in error_msg.lower():
+                    error_category = "transient"
+                    enhanced_msg = f"Tool '{tool_name}' failed with a transient error. The system will retry automatically."
+                
+                tool_execution_info[tool_name] = ToolExecutionInfo(
+                    tool_name=tool_name,
+                    success=False,
+                    error=enhanced_msg,
+                    execution_time=result.execution_time,
+                    tool_version=result.tool_version
+                )
+                logger.warning(f"Tool {tool_name} failed ({error_category}): {enhanced_msg}")
+                continue
+            
+            if not result.output:
+                # Tool succeeded but no output
+                tool_execution_info[tool_name] = ToolExecutionInfo(
+                    tool_name=tool_name,
+                    success=True,
+                    findings_count=0,
+                    execution_time=result.execution_time
+                )
+                continue
+            
+            # Get parser for this tool
+            parser = self.parsers.get(tool_name)
+            if not parser:
+                # Try to determine parser from tool name
+                if "bandit" in tool_name.lower():
+                    parser = self.parsers["bandit"]
+                elif "eslint" in tool_name.lower():
+                    parser = self.parsers["eslint"]
+                else:
+                    # No parser available
+                    tool_execution_info[tool_name] = ToolExecutionInfo(
+                        tool_name=tool_name,
+                        success=True,
+                        error=f"No parser available for {tool_name}",
+                        execution_time=result.execution_time
+                    )
+                    continue
+            
+            # Parse tool output
             try:
-                os.unlink(temp_path)
-            except:
-                pass
+                findings = parser.parse(result.output)
+                findings_count = len(findings)
+            except Exception as e:
+                # Log parsing error but continue
+                logger.warning(f"Error parsing {tool_name} output: {e}")
+                tool_execution_info[tool_name] = ToolExecutionInfo(
+                    tool_name=tool_name,
+                    success=True,
+                    error=f"Parsing error: {str(e)}",
+                    execution_time=result.execution_time
+                )
+                continue
+            
+            # Map findings to violations
+            for finding in findings:
+                mapping = self.tool_mapper.map_finding_to_policy(tool_name, finding)
+                
+                is_mapped = mapping is not None
+                
+                raw_findings.append({
+                    "rule_id": finding.tool_rule_id,
+                    "line": finding.line_number,
+                    "message": finding.message,
+                    "severity": finding.severity,
+                    "mapped": is_mapped,
+                    "policy_id": mapping[0] if mapping else None
+                })
+                
+                if mapping:
+                    mapped_count += 1
+                    policy_id, metadata = mapping
+                    
+                    # Create violation
+                    # Ensure severity is never None (default to "medium" if missing)
+                    severity = metadata.get("severity") or finding.severity or "medium"
+                    
+                    violation = Violation(
+                        rule_id=policy_id,
+                        description=metadata.get("description", finding.message),
+                        line=finding.line_number,
+                        evidence=finding.message,
+                        detector=tool_name,
+                        severity=severity
+                    )
+                    violations.append(violation)
+                else:
+                    unmapped_count += 1
+            
+            # Store execution info for this tool
+            tool_execution_info[tool_name] = ToolExecutionInfo(
+                tool_name=tool_name,
+                success=True,
+                findings_count=findings_count,
+                mapped_findings=mapped_count,
+                unmapped_findings=unmapped_count,
+                execution_time=result.execution_time,
+                tool_version=getattr(result, 'tool_version', None),  # Extract tool version
+                findings=raw_findings if findings_count > 0 else None  # Include all findings for visibility
+            )
         
-        return violations
+        return violations, tool_execution_info
     
     def run_policy_checks(self, code: str, language: str = "python",
                           policy_ids: Optional[List[str]] = None) -> List[Violation]:

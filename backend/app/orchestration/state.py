@@ -1,6 +1,6 @@
 """State definitions for ACPG LangGraph orchestration."""
 from typing import TypedDict, List, Optional, Annotated
-from datetime import datetime
+from datetime import datetime, timezone
 import operator
 
 
@@ -84,7 +84,7 @@ def create_initial_state(
         messages=[],
         proof_bundle=None,
         error=None,
-        started_at=datetime.utcnow().isoformat(),
+        started_at=datetime.now(timezone.utc).isoformat(),
         completed_at=None
     )
 

@@ -39,10 +39,24 @@ class Violation(BaseModel):
     severity: str
 
 
+class ToolExecutionInfo(BaseModel):
+    """Information about tool execution."""
+    tool_name: str
+    success: bool
+    findings_count: int = 0
+    mapped_findings: int = 0
+    unmapped_findings: int = 0
+    execution_time: Optional[float] = None
+    tool_version: Optional[str] = None  # Tool version (e.g., "1.7.5")
+    error: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = None  # Raw findings for debugging
+
+
 class AnalysisResult(BaseModel):
     """Result of static/dynamic analysis."""
     artifact_id: str
     violations: List[Violation]
+    tool_execution: Optional[Dict[str, ToolExecutionInfo]] = None  # Tool execution metadata
 
 
 class GeneratorRequest(BaseModel):
@@ -114,14 +128,20 @@ class Evidence(BaseModel):
     """Evidence supporting a compliance decision."""
     rule_id: str
     type: str
-    tool: Optional[str] = None
+    tool: Optional[str] = None  # Tool name (e.g., "bandit", "eslint", "regex", "ast")
+    tool_version: Optional[str] = None  # Tool version
+    tool_rule_id: Optional[str] = None  # Tool-specific rule ID (e.g., "B608")
+    detector: Optional[str] = None  # Keep for backward compatibility (same as tool)
     test: Optional[str] = None
     output: str
+    confidence: Optional[str] = None  # "low", "medium", "high"
+    location: Optional[Dict[str, Any]] = None  # file, line, column
 
 
 class ProofBundle(BaseModel):
     """Complete proof-carrying artifact."""
     artifact: ArtifactMetadata
+    code: str  # The actual code artifact (included for tamper detection)
     policies: List[PolicyOutcome]
     evidence: List[Evidence]
     argumentation: Optional[Dict[str, Any]] = None

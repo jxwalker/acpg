@@ -1,12 +1,16 @@
-version: '3.8'
+# ACPG Production Docker Compose
+# Usage: docker compose up --build
 
 services:
-  acpg:
+  acpg-server:
+    container_name: acpg-server
+    image: acpg:latest
     build: .
     ports:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4}
       - DATABASE_URL=sqlite:///data/acpg.db
       - ACPG_REQUIRE_AUTH=${ACPG_REQUIRE_AUTH:-false}
@@ -21,24 +25,34 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - acpg-network
 
   # Optional: PostgreSQL for production
-  # postgres:
+  # acpg-postgres:
+  #   container_name: acpg-postgres
   #   image: postgres:15-alpine
   #   environment:
   #     - POSTGRES_USER=acpg
   #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
   #     - POSTGRES_DB=acpg
   #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
+  #     - acpg_postgres_data:/var/lib/postgresql/data
   #   healthcheck:
   #     test: ["CMD-SHELL", "pg_isready -U acpg"]
   #     interval: 10s
   #     timeout: 5s
   #     retries: 5
+  #   networks:
+  #     - acpg-network
 
 volumes:
   acpg_data:
   acpg_keys:
-  # postgres_data:
+  # acpg_postgres_data:
+
+networks:
+  acpg-network:
+    name: acpg-network
+    driver: bridge
 

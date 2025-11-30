@@ -6,7 +6,8 @@ import type {
   AdjudicationResult,
   EnforceResponse,
   ViolationSummary,
-  Violation
+  Violation,
+  ProofBundle
 } from './types';
 
 const API_BASE = '/api/v1';
@@ -21,8 +22,20 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    let errorDetail = `HTTP ${response.status}`;
+    try {
+      const error = await response.json();
+      errorDetail = error.detail || error.message || error.error || JSON.stringify(error);
+    } catch (e) {
+      // If JSON parsing fails, try to get text
+      try {
+        const text = await response.text();
+        errorDetail = text || `HTTP ${response.status}: ${response.statusText}`;
+      } catch (textError) {
+        errorDetail = `HTTP ${response.status}: ${response.statusText || 'Unknown error'}`;
+      }
+    }
+    throw new Error(errorDetail);
   }
 
   return response.json();
@@ -85,6 +98,13 @@ export const api = {
     fetchApi<{ code: string; analysis?: string[] }>('/generate', {
       method: 'POST',
       body: JSON.stringify({ spec, language, policies }),
+    }),
+
+  // Proof Export
+  exportProof: (proofBundle: ProofBundle, format: string = 'json') =>
+    fetchApi<{ format: string; content: string }>('/proof/export', {
+      method: 'POST',
+      body: JSON.stringify({ proof_bundle: proofBundle, format }),
     }),
 };
 

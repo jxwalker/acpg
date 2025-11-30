@@ -74,6 +74,26 @@
         "INPUT-002",
         "INPUT-003"
       ]
+    },
+    {
+      "id": "template-minimal",
+      "name": "\u26a1 Minimal Security",
+      "description": "Basic security checks for quick validation",
+      "enabled": true,
+      "policies": [
+        "SEC-001",
+        "SEC-002",
+        "SEC-003"
+      ]
+    },
+    {
+      "id": "test-import-3",
+      "name": "Test Import 3",
+      "description": "Test",
+      "enabled": true,
+      "policies": [
+        "SEC-001"
+      ]
     }
   ],
   "active_profile": "default"

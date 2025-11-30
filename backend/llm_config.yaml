@@ -2,7 +2,7 @@
 # Configure multiple LLM providers and select the active one
 
 # Active provider (change this to switch LLM backends)
-active_provider: local_vllm
+active_provider: kimi
 
 providers:
   # Local vLLM server with Qwen2.5-Coder
@@ -59,6 +59,17 @@ providers:
     max_tokens: 2048
     temperature: 0.3
     context_window: 16384
+
+  # Kimi.com For Coding (Anthropic API format)
+  kimi:
+    type: anthropic
+    name: "Kimi.com For Coding"
+    base_url: "https://api.kimi.com/coding/"
+    api_key: "${KIMI_API_KEY}"  # From environment
+    model: "kimi-for-coding"
+    max_tokens: 32768
+    temperature: 0.3
+    context_window: 262144
 
   # Anthropic Claude (if needed in future)
   # anthropic_claude:

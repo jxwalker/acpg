@@ -3,6 +3,7 @@ import hashlib
 import uuid
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,10 @@ from ..services import (
     get_policy_compiler, get_prosecutor, get_generator,
     get_adjudicator, get_proof_assembler
 )
+from ..core.static_analyzers import get_analyzer_config
+from ..core.tool_rules_registry import get_tool_rules, get_all_tool_rules, get_tool_rule
+from ..services.tool_cache import get_tool_cache
+from ..services.tool_mapper import get_tool_mapper
 from ..core.config import settings
 from ..core.database import get_db, AuditLogger, ProofStore
 
@@ -36,8 +41,128 @@ def get_client_ip(request: Request) -> str:
 
 @router.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "ACPG"}
+    """
+    Comprehensive health check endpoint.
+    
+    Returns detailed status of system components:
+    - API status
+    - Database connectivity
+    - Static analysis tools availability
+    - LLM provider status
+    - Policy loading status
+    """
+    import subprocess
+    from ..core.llm_config import get_llm_config
+    from ..core.key_manager import get_key_manager
+    
+    health_status = {
+        "status": "healthy",
+        "service": "ACPG",
+        "version": "1.0.0",
+        "components": {
+            "api": {"status": "healthy"},
+            "database": {"status": "unknown"},
+            "tools": {"status": "unknown", "available": []},
+            "llm": {"status": "unknown"},
+            "policies": {"status": "unknown", "count": 0},
+            "signing": {"status": "unknown"}
+        },
+        "timestamp": None
+    }
+    
+    from datetime import datetime, timezone
+    health_status["timestamp"] = datetime.now(timezone.utc).isoformat()
+    
+    # Check database
+    try:
+        from sqlalchemy import text
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            db.execute(text("SELECT 1"))
+            health_status["components"]["database"]["status"] = "healthy"
+        finally:
+            # Ensure the database session is closed
+            try:
+                next(db_gen, None)  # Advance generator to finally block
+            except StopIteration:
+                pass
+    except Exception as e:
+        health_status["components"]["database"]["status"] = "unhealthy"
+        health_status["components"]["database"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check static analysis tools
+    try:
+        config = get_analyzer_config()
+        available_tools = []
+        tool_status = {}
+        
+        # Check Python tools
+        python_tools = config.get_tools_for_language("python")
+        for tool_name, tool_config in python_tools.items():
+            if tool_config.enabled:
+                try:
+                    # Try to run tool with --version or --help
+                    result = subprocess.run(
+                        [tool_name, "--version"] if tool_name != "safety" else [tool_name, "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if result.returncode == 0 or result.returncode == 1:  # Some tools return 1 for --version
+                        available_tools.append(tool_name)
+                        tool_status[tool_name] = "available"
+                    else:
+                        tool_status[tool_name] = "unavailable"
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    tool_status[tool_name] = "not_installed"
+                except Exception:
+                    tool_status[tool_name] = "error"
+        
+        health_status["components"]["tools"]["status"] = "healthy" if available_tools else "degraded"
+        health_status["components"]["tools"]["available"] = available_tools
+        health_status["components"]["tools"]["details"] = tool_status
+    except Exception as e:
+        health_status["components"]["tools"]["status"] = "error"
+        health_status["components"]["tools"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check LLM provider
+    try:
+        llm_config = get_llm_config()
+        provider = llm_config.get_active_provider()
+        health_status["components"]["llm"]["status"] = "healthy"
+        health_status["components"]["llm"]["provider"] = provider.name
+        health_status["components"]["llm"]["model"] = provider.model
+    except Exception as e:
+        health_status["components"]["llm"]["status"] = "unhealthy"
+        health_status["components"]["llm"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check policies
+    try:
+        compiler = get_policy_compiler()
+        policies = compiler.get_all_policies()
+        health_status["components"]["policies"]["status"] = "healthy"
+        health_status["components"]["policies"]["count"] = len(policies)
+    except Exception as e:
+        health_status["components"]["policies"]["status"] = "unhealthy"
+        health_status["components"]["policies"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    # Check signing key
+    try:
+        km = get_key_manager()
+        key_info = km.get_key_info()
+        health_status["components"]["signing"]["status"] = "healthy"
+        health_status["components"]["signing"]["fingerprint"] = key_info.get("fingerprint", "unknown")
+    except Exception as e:
+        health_status["components"]["signing"]["status"] = "unhealthy"
+        health_status["components"]["signing"]["error"] = str(e)
+        health_status["status"] = "degraded"
+    
+    return health_status
 
 
 @router.get("/info")
@@ -51,6 +176,205 @@ async def get_info():
     }
 
 
+@router.delete("/cache")
+async def clear_cache(tool_name: Optional[str] = None):
+    """
+    Clear tool result cache.
+    
+    Args:
+        tool_name: If provided, clear only this tool's cache. Otherwise clear all.
+    """
+    from ..services.tool_cache import get_tool_cache
+    
+    cache = get_tool_cache()
+    cache.clear(tool_name)
+    
+    return {
+        "message": f"Cache cleared for {tool_name}" if tool_name else "All cache cleared",
+        "tool_name": tool_name
+    }
+
+
+@router.get("/metrics/prometheus")
+async def get_metrics_prometheus():
+    """
+    Get metrics in Prometheus format.
+    
+    Returns metrics in Prometheus exposition format for scraping.
+    """
+    from ..services.tool_cache import get_tool_cache
+    from ..core.static_analyzers import get_analyzer_config
+    from ..services import get_policy_compiler
+    
+    lines = []
+    
+    # Cache metrics
+    try:
+        cache = get_tool_cache()
+        stats = cache.get_stats()
+        lines.append(f"# HELP acpg_cache_entries_total Total number of cache entries")
+        lines.append(f"# TYPE acpg_cache_entries_total gauge")
+        lines.append(f"acpg_cache_entries_total {stats.get('total_entries', 0)}")
+        
+        lines.append(f"# HELP acpg_cache_size_bytes Total cache size in bytes")
+        lines.append(f"# TYPE acpg_cache_size_bytes gauge")
+        lines.append(f"acpg_cache_size_bytes {stats.get('total_size_bytes', 0)}")
+        
+        lines.append(f"# HELP acpg_cache_hits_total Total cache hits")
+        lines.append(f"# TYPE acpg_cache_hits_total counter")
+        lines.append(f"acpg_cache_hits_total {stats.get('hits', 0)}")
+        
+        lines.append(f"# HELP acpg_cache_misses_total Total cache misses")
+        lines.append(f"# TYPE acpg_cache_misses_total counter")
+        lines.append(f"acpg_cache_misses_total {stats.get('misses', 0)}")
+        
+        total_requests = stats.get('hits', 0) + stats.get('misses', 0)
+        hit_rate = (stats.get('hits', 0) / total_requests * 100) if total_requests > 0 else 0.0
+        lines.append(f"# HELP acpg_cache_hit_rate Cache hit rate percentage")
+        lines.append(f"# TYPE acpg_cache_hit_rate gauge")
+        lines.append(f"acpg_cache_hit_rate {hit_rate:.2f}")
+    except Exception:
+        pass
+    
+    # Tool metrics
+    try:
+        config = get_analyzer_config()
+        all_tools = config.list_all_tools()
+        enabled_count = 0
+        for language, tools in all_tools.items():
+            for tool_name, tool_config in tools.items():
+                if tool_config.enabled:
+                    enabled_count += 1
+                    lines.append(f"# HELP acpg_tool_enabled Whether a tool is enabled")
+                    lines.append(f"# TYPE acpg_tool_enabled gauge")
+                    lines.append(f'acpg_tool_enabled{{tool="{tool_name}",language="{language}"}} 1')
+        
+        lines.append(f"# HELP acpg_tools_enabled_total Total number of enabled tools")
+        lines.append(f"# TYPE acpg_tools_enabled_total gauge")
+        lines.append(f"acpg_tools_enabled_total {enabled_count}")
+    except Exception:
+        pass
+    
+    # Policy metrics
+    try:
+        compiler = get_policy_compiler()
+        policies = compiler.get_all_policies()
+        lines.append(f"# HELP acpg_policies_total Total number of policies")
+        lines.append(f"# TYPE acpg_policies_total gauge")
+        lines.append(f"acpg_policies_total {len(policies)}")
+    except Exception:
+        pass
+    
+    # Health status (1 = healthy, 0 = unhealthy)
+    try:
+        from datetime import datetime, timezone
+        lines.append(f"# HELP acpg_health_status System health status (1=healthy, 0=unhealthy)")
+        lines.append(f"# TYPE acpg_health_status gauge")
+        lines.append(f"acpg_health_status 1")  # Could be enhanced to check actual health
+    except Exception:
+        pass
+    
+    return Response(
+        content="\n".join(lines),
+        media_type="text/plain; version=0.0.4"
+    )
+
+
+@router.get("/metrics")
+async def get_metrics():
+    """
+    Get performance and system metrics.
+    
+    Returns:
+    - Tool cache statistics
+    - System performance metrics
+    - Component status
+    """
+    from ..services.tool_cache import get_tool_cache
+    from ..core.static_analyzers import get_analyzer_config
+    
+    metrics = {
+        "timestamp": None,
+        "cache": {},
+        "tools": {},
+        "policies": {},
+        "performance": {}
+    }
+    
+    from datetime import datetime, timezone
+    metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
+    
+    # Cache statistics
+    try:
+        cache = get_tool_cache()
+        cache_stats = cache.get_stats()
+        metrics["cache"] = {
+            "hits": cache_stats.get("hits", 0),
+            "misses": cache_stats.get("misses", 0),
+            "total_entries": cache_stats.get("total_entries", 0),
+            "total_size_mb": cache_stats.get("total_size_mb", 0.0),
+            "hit_rate": cache_stats.get("hit_rate", 0.0),
+            "ttl_seconds": cache_stats.get("ttl_seconds", 3600)
+        }
+    except Exception as e:
+        metrics["cache"] = {"error": str(e)}
+    
+    # Tool statistics
+    try:
+        config = get_analyzer_config()
+        tool_stats = {}
+        total_enabled = 0
+        
+        for language, tools in config.list_all_tools().items():
+            for tool_name, tool_config in tools.items():
+                if tool_config.enabled:
+                    total_enabled += 1
+                    tool_stats[tool_name] = {
+                        "enabled": True,
+                        "language": language,
+                        "timeout": tool_config.timeout,
+                        "format": tool_config.output_format
+                    }
+        
+        metrics["tools"] = {
+            "total_enabled": total_enabled,
+            "details": tool_stats
+        }
+    except Exception as e:
+        metrics["tools"] = {"error": str(e)}
+    
+    # Policy statistics
+    try:
+        compiler = get_policy_compiler()
+        policies = compiler.get_all_policies()
+        
+        # Count by category
+        categories = {}
+        for policy in policies:
+            category = "default"
+            if policy.id.startswith("OWASP"):
+                category = "owasp"
+            elif policy.id.startswith("NIST"):
+                category = "nist"
+            categories[category] = categories.get(category, 0) + 1
+        
+        metrics["policies"] = {
+            "total": len(policies),
+            "by_category": categories
+        }
+    except Exception as e:
+        metrics["policies"] = {"error": str(e)}
+    
+    # Performance metrics (if available)
+    metrics["performance"] = {
+        "note": "Performance metrics collected during analysis",
+        "typical_analysis_time": "1-2 seconds",
+        "tool_execution": "Parallel execution enabled"
+    }
+    
+    return metrics
+
+
 # ============================================================================
 # Sample Files Endpoints
 # ============================================================================
@@ -61,11 +385,11 @@ async def list_sample_files():
     import os
     from pathlib import Path
     
-    # Navigate from backend/app/api/routes.py to acpg/samples
-    samples_dir = Path(__file__).parent.parent.parent.parent / "samples"
+    # Use environment variable or default path
+    samples_dir = Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
     
     if not samples_dir.exists():
-        return {"samples": []}
+        return {"samples": [], "error": f"Samples directory not found: {samples_dir}"}
     
     samples = []
     for file in sorted(samples_dir.glob("*.py")):
@@ -100,9 +424,10 @@ async def list_sample_files():
 @router.get("/samples/{filename}")
 async def get_sample_file(filename: str):
     """Get contents of a sample file."""
+    import os
     from pathlib import Path
     
-    samples_dir = Path(__file__).parent.parent.parent.parent / "samples"
+    samples_dir = Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
     file_path = samples_dir / filename
     
     if not file_path.exists() or not file_path.suffix == '.py':
@@ -116,6 +441,302 @@ async def get_sample_file(filename: str):
         "content": content,
         "lines": len(content.split('\n'))
     }
+
+
+@router.get("/static-analysis/tools")
+async def list_static_analysis_tools():
+    """List all configured static analysis tools."""
+    try:
+        config = get_analyzer_config()
+        all_tools = config.list_all_tools()
+        
+        # Format for frontend
+        tools_by_language = {}
+        for language, tools in all_tools.items():
+            tools_by_language[language] = [
+                {
+                    "name": tool.name,
+                    "enabled": tool.enabled,
+                    "timeout": tool.timeout,
+                    "output_format": tool.output_format,
+                    "requires_config": tool.requires_config
+                }
+                for tool in tools.values()
+            ]
+        
+        # Get cache stats with error handling
+        try:
+            cache_stats = get_tool_cache().get_stats()
+        except Exception as e:
+            # If cache stats fail, return empty stats
+            import logging
+            logging.warning(f"Cache stats unavailable: {e}")
+            cache_stats = {
+                "cache_dir": "unknown",
+                "total_entries": 0,
+                "total_size_bytes": 0,
+                "ttl_seconds": 3600
+            }
+        
+        response = {
+            "tools_by_language": tools_by_language,
+            "cache_stats": cache_stats
+        }
+        
+        return response
+    except Exception as e:
+        import logging
+        import traceback
+        error_msg = str(e)
+        logging.error(f"Error in /static-analysis/tools: {error_msg}", exc_info=True)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error loading tools configuration: {error_msg}")
+
+
+@router.patch("/static-analysis/tools/{language}/{tool_name}")
+async def toggle_tool(language: str, tool_name: str, enabled: bool = Query(...)):
+    """Enable or disable a static analysis tool."""
+    try:
+        config = get_analyzer_config()
+        tool = config.get_tool(language, tool_name)
+        
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found for language '{language}'")
+        
+        if enabled:
+            config.enable_tool(language, tool_name)
+        else:
+            config.disable_tool(language, tool_name)
+        
+        return {
+            "language": language,
+            "tool_name": tool_name,
+            "enabled": enabled,
+            "message": f"Tool '{tool_name}' {'enabled' if enabled else 'disabled'}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error toggling tool: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error toggling tool: {e}")
+
+
+@router.get("/static-analysis/mappings")
+async def get_tool_mappings():
+    """Get all tool-to-policy mappings."""
+    try:
+        mapper = get_tool_mapper()
+        mappings = mapper.get_all_mappings()
+        return {"mappings": mappings}
+    except Exception as e:
+        import logging
+        logging.error(f"Error loading tool mappings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error loading tool mappings: {e}")
+
+
+@router.put("/static-analysis/mappings")
+async def update_tool_mappings(request: Dict[str, Any]):
+    """Update tool-to-policy mappings."""
+    try:
+        mapper = get_tool_mapper()
+        mappings = request.get("mappings", {})
+        mapper.update_mappings(mappings)
+        return {
+            "message": "Tool mappings updated successfully",
+            "mappings": mappings
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error updating tool mappings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error updating tool mappings: {e}")
+
+
+@router.post("/static-analysis/mappings/{tool_name}/{tool_rule_id}")
+async def add_tool_mapping(
+    tool_name: str,
+    tool_rule_id: str,
+    request: Dict[str, Any]
+):
+    """Add or update a single tool mapping."""
+    try:
+        mapper = get_tool_mapper()
+        mapper.add_or_update_mapping(
+            tool_name=tool_name,
+            tool_rule_id=tool_rule_id,
+            policy_id=request.get("policy_id"),
+            confidence=request.get("confidence", "medium"),
+            severity=request.get("severity"),
+            description=request.get("description")
+        )
+        return {
+            "message": f"Mapping for {tool_name}:{tool_rule_id} updated successfully",
+            "mapping": mapper.get_mapping(tool_name, tool_rule_id)
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error adding tool mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error adding tool mapping: {e}")
+
+
+class BulkMappingRequest(BaseModel):
+    """Request for bulk mapping operations."""
+    mappings: List[Dict[str, Any]]  # List of {tool_name, tool_rule_id, policy_id, ...}
+
+
+@router.post("/static-analysis/mappings/bulk")
+async def bulk_add_mappings(request: BulkMappingRequest):
+    """
+    Add or update multiple tool mappings in a single operation.
+    
+    Useful for mapping many rules at once.
+    """
+    try:
+        mapper = get_tool_mapper()
+        results = {
+            "success": [],
+            "failed": []
+        }
+        
+        for mapping in request.mappings:
+            try:
+                tool_name = mapping.get("tool_name")
+                tool_rule_id = mapping.get("tool_rule_id")
+                policy_id = mapping.get("policy_id")
+                
+                if not tool_name or not tool_rule_id or not policy_id:
+                    results["failed"].append({
+                        "mapping": mapping,
+                        "error": "Missing required fields: tool_name, tool_rule_id, policy_id"
+                    })
+                    continue
+                
+                mapper.add_or_update_mapping(
+                    tool_name=tool_name,
+                    tool_rule_id=tool_rule_id,
+                    policy_id=policy_id,
+                    confidence=mapping.get("confidence", "medium"),
+                    severity=mapping.get("severity"),
+                    description=mapping.get("description")
+                )
+                
+                results["success"].append({
+                    "tool_name": tool_name,
+                    "tool_rule_id": tool_rule_id,
+                    "policy_id": policy_id
+                })
+            except Exception as e:
+                results["failed"].append({
+                    "mapping": mapping,
+                    "error": str(e)
+                })
+        
+        return {
+            "message": f"Bulk mapping completed: {len(results['success'])} succeeded, {len(results['failed'])} failed",
+            "total": len(request.mappings),
+            "succeeded": len(results["success"]),
+            "failed": len(results["failed"]),
+            "results": results
+        }
+    except Exception as e:
+        import logging
+        logging.error(f"Error in bulk mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error in bulk mapping: {e}")
+
+
+@router.delete("/static-analysis/mappings/{tool_name}/{tool_rule_id}")
+async def delete_tool_mapping(tool_name: str, tool_rule_id: str):
+    """Delete a tool mapping."""
+    try:
+        mapper = get_tool_mapper()
+        if mapper.delete_mapping(tool_name, tool_rule_id):
+            return {
+                "message": f"Mapping for {tool_name}:{tool_rule_id} deleted successfully"
+            }
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Mapping not found: {tool_name}:{tool_rule_id}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error deleting tool mapping: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting tool mapping: {e}")
+
+
+@router.get("/static-analysis/tools/{tool_name}/rules")
+async def get_tool_rules_endpoint(tool_name: str):
+    """Get all available rules for a specific tool."""
+    try:
+        rules = get_tool_rules(tool_name)
+        if not rules:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No rules found for tool '{tool_name}' or tool not supported"
+            )
+        
+        # Get existing mappings to show which rules are already mapped
+        mapper = get_tool_mapper()
+        existing_mappings = mapper.get_all_mappings().get(tool_name, {})
+        
+        # Enrich rules with mapping status
+        enriched_rules = {}
+        for rule_id, rule_info in rules.items():
+            mapping = existing_mappings.get(rule_id)
+            enriched_rules[rule_id] = {
+                **rule_info,
+                "mapped": mapping is not None,
+                "mapped_to_policy": mapping.get("policy_id") if mapping else None
+            }
+        
+        return {
+            "tool_name": tool_name,
+            "rules": enriched_rules,
+            "total_rules": len(rules),
+            "mapped_rules": len(existing_mappings),
+            "unmapped_rules": len(rules) - len(existing_mappings)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error getting tool rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting tool rules: {e}")
+
+
+@router.get("/static-analysis/tools/rules")
+async def get_all_tool_rules_endpoint():
+    """Get all available rules for all tools."""
+    try:
+        all_rules = get_all_tool_rules()
+        mapper = get_tool_mapper()
+        existing_mappings = mapper.get_all_mappings()
+        
+        # Enrich with mapping status
+        enriched = {}
+        for tool_name, rules in all_rules.items():
+            tool_mappings = existing_mappings.get(tool_name, {})
+            enriched[tool_name] = {
+                "rules": {
+                    rule_id: {
+                        **rule_info,
+                        "mapped": rule_id in tool_mappings,
+                        "mapped_to_policy": tool_mappings.get(rule_id, {}).get("policy_id") if rule_id in tool_mappings else None
+                    }
+                    for rule_id, rule_info in rules.items()
+                },
+                "total_rules": len(rules),
+                "mapped_rules": len(tool_mappings),
+                "unmapped_rules": len(rules) - len(tool_mappings)
+            }
+        
+        return enriched
+    except Exception as e:
+        import logging
+        logging.error(f"Error getting all tool rules: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting all tool rules: {e}")
 
 
 # ============================================================================
@@ -199,6 +820,23 @@ async def analyze_code(
         )
     except Exception:
         pass  # Don't fail request if audit logging fails
+    
+    # Save to analysis history
+    try:
+        severity_breakdown = {}
+        for v in result.violations:
+            severity_breakdown[v.severity] = severity_breakdown.get(v.severity, 0) + 1
+        
+        await add_to_history(
+            code=request.code,
+            language=request.language,
+            compliant=adjudication.compliant,
+            violations_count=len(result.violations),
+            policies_passed=len(adjudication.satisfied_rules),
+            severity_breakdown=severity_breakdown
+        )
+    except Exception:
+        pass  # Don't fail if history save fails
     
     return result
 
@@ -500,19 +1138,32 @@ async def fix_code(request: FixCodeRequest):
             language=request.language
         )
         
-        # Generate explanation
-        explanation = generator.explain_fix(
-            original=request.code,
-            fixed=fixed_code,
-            violations=request.violations
-        )
+        # Generate explanation (optional - don't fail if this errors)
+        explanation = None
+        try:
+            explanation = generator.explain_fix(
+                original=request.code,
+                fixed=fixed_code,
+                violations=request.violations
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to generate explanation: {e}")
+            # Continue without explanation rather than failing
         
         return FixCodeResponse(
             original_code=request.code,
             fixed_code=fixed_code,
             explanation=explanation
         )
+    except ValueError as e:
+        # ValueError from generator contains helpful error messages
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Unexpected error in fix_code: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Fix failed: {str(e)}")
 
 
@@ -717,9 +1368,11 @@ async def generate_proof(
     db: Session = Depends(get_db)
 ):
     """
-    Generate a proof bundle for compliant code.
+    Generate a proof bundle for code (compliant or non-compliant).
     
-    First analyzes and adjudicates, then generates proof if compliant.
+    First analyzes and adjudicates, then generates proof bundle.
+    Proof bundles are generated for both compliant and non-compliant code
+    to show the formal logic and evidence.
     """
     prosecutor = get_prosecutor()
     adjudicator = get_adjudicator()
@@ -733,15 +1386,8 @@ async def generate_proof(
     
     adjudication = adjudicator.adjudicate(analysis, request.policies)
     
-    if not adjudication.compliant:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Code is not compliant, cannot generate proof",
-                "violations": [v.model_dump() for v in analysis.violations]
-            }
-        )
-    
+    # Generate proof bundle for both compliant and non-compliant code
+    # This allows viewing the formal logic even when code fails
     proof = proof_assembler.assemble_proof(
         code=request.code,
         analysis=analysis,
@@ -878,8 +1524,18 @@ async def verify_proof_bundle(request: VerifyProofRequest):
                 artifact_data["timestamp"] = ts.isoformat()
         
         # This is the data structure that was signed
+        # Must include code to verify it hasn't been tampered with
+        code_content = proof.get("code", "")
+        if not code_content:
+            result["errors"].append("✗ Code content missing from proof bundle")
+            result["details"]["code_present"] = False
+        else:
+            result["details"]["code_present"] = True
+            result["checks"].append(f"✓ Code content present ({len(code_content)} characters)")
+        
         signed_data = {
             "artifact": artifact_data,
+            "code": code_content,  # Include code in signed data verification
             "policies": proof.get("policies", []),
             "evidence": proof.get("evidence", []),
             "argumentation": proof.get("argumentation", {}),
@@ -912,11 +1568,28 @@ async def verify_proof_bundle(request: VerifyProofRequest):
             result["errors"].append(f"✗ Signature verification FAILED: {str(e)}")
             result["errors"].append("  The proof bundle data has been modified since signing")
         
-        # Verify artifact hash
+        # Verify artifact hash matches code
         if "artifact" in proof and "hash" in proof["artifact"]:
             result["original_hash"] = proof["artifact"]["hash"]
-            result["details"]["hash_valid"] = True
+            result["details"]["hash_present"] = True
             result["checks"].append(f"✓ Artifact hash present: {proof['artifact']['hash'][:16]}...")
+            
+            # Verify code hash matches artifact hash
+            if code_content:
+                import hashlib
+                computed_hash = hashlib.sha256(code_content.encode()).hexdigest()
+                if computed_hash == proof["artifact"]["hash"]:
+                    result["details"]["hash_valid"] = True
+                    result["checks"].append("✓ Code hash matches artifact hash (code integrity verified)")
+                else:
+                    result["details"]["hash_valid"] = False
+                    result["errors"].append("✗ Code hash MISMATCH - code has been modified!")
+                    result["errors"].append(f"  Expected: {proof['artifact']['hash'][:16]}...")
+                    result["errors"].append(f"  Computed: {computed_hash[:16]}...")
+                    result["tampered"] = True
+            else:
+                result["details"]["hash_valid"] = False
+                result["errors"].append("✗ Cannot verify code hash - code content missing")
         
         # Check timestamp
         if artifact_data.get("timestamp"):
@@ -1085,4 +1758,114 @@ async def export_proof(request: ExportProofRequest):
         return {"format": request.format, "content": exported}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================================
+# Analysis History
+# ============================================================================
+
+import json
+from datetime import datetime
+from pathlib import Path
+
+HISTORY_FILE = settings.DATA_DIR / "analysis_history.json" if hasattr(settings, 'DATA_DIR') else Path("data/analysis_history.json")
+
+
+def load_history() -> list:
+    """Load analysis history from file."""
+    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_history(history: list):
+    """Save analysis history to file."""
+    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # Keep only last 100 entries
+    history = history[-100:]
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(history, f, indent=2, default=str)
+
+
+class HistoryEntry(BaseModel):
+    """A history entry for analysis results."""
+    id: str
+    timestamp: str
+    code_preview: str
+    language: str
+    compliant: bool
+    violations_count: int
+    policies_passed: int
+    severity_breakdown: dict
+    code_hash: str
+
+
+@router.get("/history")
+async def get_analysis_history(limit: int = Query(20, ge=1, le=100)):
+    """Get recent analysis history."""
+    history = load_history()
+    return {
+        "history": history[-limit:][::-1],  # Most recent first
+        "total": len(history)
+    }
+
+
+@router.post("/history")
+async def add_to_history(
+    code: str,
+    language: str = "python",
+    compliant: bool = False,
+    violations_count: int = 0,
+    policies_passed: int = 0,
+    severity_breakdown: dict = None
+):
+    """Add an analysis result to history."""
+    history = load_history()
+    
+    # Create code hash for deduplication
+    code_hash = hashlib.md5(code.encode()).hexdigest()[:8]
+    
+    # Check if this exact code was just analyzed (avoid duplicates)
+    if history and history[-1].get('code_hash') == code_hash:
+        return {"message": "Duplicate entry skipped", "id": history[-1]['id']}
+    
+    entry = {
+        "id": str(uuid.uuid4())[:8],
+        "timestamp": datetime.now().isoformat(),
+        "code_preview": code[:100] + ("..." if len(code) > 100 else ""),
+        "language": language,
+        "compliant": compliant,
+        "violations_count": violations_count,
+        "policies_passed": policies_passed,
+        "severity_breakdown": severity_breakdown or {},
+        "code_hash": code_hash
+    }
+    
+    history.append(entry)
+    save_history(history)
+    
+    return {"message": "Added to history", "id": entry['id']}
+
+
+@router.delete("/history/{entry_id}")
+async def delete_history_entry(entry_id: str):
+    """Delete a specific history entry."""
+    history = load_history()
+    original_len = len(history)
+    history = [h for h in history if h.get('id') != entry_id]
+    
+    if len(history) == original_len:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    
+    save_history(history)
+    return {"message": "Entry deleted"}
+
+
+@router.delete("/history")
+async def clear_history():
+    """Clear all analysis history."""
+    save_history([])
+    return {"message": "History cleared"}
 

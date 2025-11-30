@@ -11,6 +11,7 @@ from ..models.schemas import (
     Violation, PolicyRule, AnalysisResult
 )
 from .policy_compiler import get_policy_compiler
+from .tool_reliability import get_reliability_checker
 
 
 @dataclass
@@ -43,6 +44,7 @@ class Adjudicator:
     
     def __init__(self):
         self.policy_compiler = get_policy_compiler()
+        self.reliability_checker = get_reliability_checker()
     
     def adjudicate(self, analysis: AnalysisResult, 
                    policy_ids: Optional[List[str]] = None) -> AdjudicationResult:
@@ -141,16 +143,24 @@ class Adjudicator:
                         target=compliance_arg.id
                     ))
                     
-                    # For defeasible rules, check for exception conditions
+                    # Check for exception conditions (defeasible rules or tool reliability)
+                    exception_arg = None
                     if policy.type == 'defeasible':
                         exception_arg = self._check_exceptions(rule_id, v, len(arguments))
-                        if exception_arg:
-                            arguments.append(exception_arg)
-                            # Exception attacks the violation
-                            attacks.append(Attack(
-                                attacker=exception_arg.id,
-                                target=violation_arg.id
-                            ))
+                    
+                    # Check for tool reliability exceptions (applies to all violations from tools)
+                    tool_exception = self._check_tool_reliability(v, len(arguments))
+                    if tool_exception:
+                        # Tool reliability exception takes precedence
+                        exception_arg = tool_exception
+                    
+                    if exception_arg:
+                        arguments.append(exception_arg)
+                        # Exception attacks the violation
+                        attacks.append(Attack(
+                            attacker=exception_arg.id,
+                            target=violation_arg.id
+                        ))
         
         # Add priority-based attacks between violations of different rules
         priority_attacks = self._compute_priority_attacks(arguments, kb)
@@ -275,6 +285,45 @@ class Adjudicator:
         # For now, we don't have automatic exception detection
         # This would be extended based on policy definitions
         # Example: INPUT-001 might have exceptions for internal APIs
+        
+        return None
+    
+    def _check_tool_reliability(self, violation: Violation, 
+                                arg_count: int) -> Optional[Argument]:
+        """
+        Check if a tool finding is unreliable and should be defeated by exception.
+        
+        Args:
+            violation: Violation to check
+            arg_count: Current argument count (for ID generation)
+            
+        Returns:
+            Exception argument if finding is unreliable, None otherwise
+        """
+        # Extract tool information from violation
+        tool_name = violation.detector if violation.detector not in ("regex", "ast") else None
+        if not tool_name:
+            return None
+        
+        # Check reliability (we don't have tool_version/confidence in Violation model yet,
+        # but we can check patterns)
+        reliability_exception = self.reliability_checker.check_reliability(
+            violation=violation,
+            tool_name=tool_name,
+            tool_version=None,  # TODO: Add to Violation model
+            confidence=None     # TODO: Add to Violation model
+        )
+        
+        if reliability_exception:
+            exception_id = f"E_TOOL_{violation.rule_id}_{arg_count}"
+            return Argument(
+                id=exception_id,
+                rule_id=violation.rule_id,
+                type="exception",
+                evidence=reliability_exception.details,
+                details=f"Tool reliability exception: {reliability_exception.reason}. "
+                       f"{reliability_exception.details}"
+            )
         
         return None
     
