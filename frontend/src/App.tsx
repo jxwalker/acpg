@@ -2414,6 +2414,7 @@ function ViolationsList({
   onLineClick?: (line: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [severityFilter, setSeverityFilter] = useState<string | null>(null);
 
   const toggleExpand = (index: number) => {
     setExpanded(prev => ({ ...prev, [index]: !prev[index] }));
@@ -2425,6 +2426,19 @@ function ViolationsList({
       onLineClick(line);
     }
   };
+  
+  // Count violations by severity
+  const severityCounts = {
+    critical: violations.filter(v => v.severity === 'critical').length,
+    high: violations.filter(v => v.severity === 'high').length,
+    medium: violations.filter(v => v.severity === 'medium').length,
+    low: violations.filter(v => v.severity === 'low').length,
+  };
+  
+  // Filter violations
+  const filteredViolations = severityFilter 
+    ? violations.filter(v => v.severity === severityFilter)
+    : violations;
 
   const getSeverityConfig = (severity: string) => {
     switch (severity) {
