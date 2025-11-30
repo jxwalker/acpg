@@ -17,10 +17,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - KIMI_API_KEY=${KIMI_API_KEY:-}
       - DATABASE_URL=sqlite:///data/acpg.db
+      - POLICIES_DIR=/policies
       - LOG_LEVEL=INFO
     volumes:
       - ./backend:/app
-      - ./policies:/app/policies
+      - ./policies:/policies
       - ./backend/data:/app/data
       - ./backend/keys:/app/keys
     restart: unless-stopped

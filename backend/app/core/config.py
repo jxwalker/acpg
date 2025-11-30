@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 2000
     
     # Policy Configuration
-    POLICIES_DIR: Path = Path(__file__).parent.parent.parent.parent / "policies"
+    POLICIES_DIR: Path = Path(os.environ.get("POLICIES_DIR", Path(__file__).parent.parent.parent.parent / "policies"))
     DEFAULT_POLICIES_FILE: str = "default_policies.json"
     
     # Compliance Configuration
