@@ -1,10 +1,10 @@
-version: '3.8'
-
 # ACPG Development Docker Compose
-# Usage: docker-compose -f docker-compose.dev.yml up
+# Usage: docker compose -f docker-compose.dev.yml up
 
 services:
-  backend:
+  acpg-backend:
+    container_name: acpg-backend
+    image: acpg-backend:dev
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
@@ -29,9 +29,13 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
+    networks:
+      - acpg-network
 
-  frontend:
+  acpg-frontend:
+    container_name: acpg-frontend
+    image: acpg-frontend:dev
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
@@ -43,11 +47,14 @@ services:
       - ./frontend:/app
       - /app/node_modules  # Preserve node_modules from container
     depends_on:
-      backend:
+      acpg-backend:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - acpg-network
 
 networks:
-  default:
-    name: acpg-dev
+  acpg-network:
+    name: acpg-network
+    driver: bridge
 
