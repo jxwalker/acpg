@@ -77,6 +77,12 @@ interface SavedCode {
   code: string;
   language: string;
   savedAt: string;
+  tags?: string[];
+  favorite?: boolean;
+  lastAnalysis?: {
+    compliant: boolean;
+    violations: number;
+  };
 }
 
 export default function App() {
@@ -101,6 +107,8 @@ export default function App() {
   const [savedCodes, setSavedCodes] = useState<SavedCode[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const [saveTags, setSaveTags] = useState('');
+  const [bookmarkFilter, setBookmarkFilter] = useState<string | null>(null);
   const [complianceReport, setComplianceReport] = useState<any>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
@@ -110,6 +118,20 @@ export default function App() {
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
   const [policyCreationData, setPolicyCreationData] = useState<{toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Analysis history
+  interface HistoryEntry {
+    id: string;
+    timestamp: string;
+    code_preview: string;
+    language: string;
+    compliant: boolean;
+    violations_count: number;
+    policies_passed: number;
+    severity_breakdown: Record<string, number>;
+  }
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Load saved codes from localStorage
   useEffect(() => {
@@ -150,6 +172,12 @@ export default function App() {
         setSampleFilesLoading(false);
       });
     
+    // Load analysis history
+    fetch('/api/v1/history?limit=20')
+      .then(res => res.json())
+      .then(data => setHistory(data.history || []))
+      .catch(() => {});
+    
     // Load enabled policy groups count
     fetch('/api/v1/policies/groups/')
       .then(res => res.json())
@@ -165,6 +193,14 @@ export default function App() {
     tool?: string;
     message?: string;
   } | null>(null);
+
+  // Refresh history after analysis
+  const refreshHistory = useCallback(() => {
+    fetch('/api/v1/history?limit=20')
+      .then(res => res.json())
+      .then(data => setHistory(data.history || []))
+      .catch(() => {});
+  }, []);
 
   const handleAnalyze = useCallback(async () => {
     setError(null);
@@ -207,6 +243,9 @@ export default function App() {
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
       const adjResult = await api.adjudicate(analysisResult);
       setAdjudication(adjResult);
+      
+      // Refresh history sidebar
+      refreshHistory();
       
       await new Promise(r => setTimeout(r, 200));
       setAnalysisProgress({ phase: 'complete', message: 'Analysis complete' });
@@ -387,12 +426,24 @@ export default function App() {
   const handleSaveCode = () => {
     if (!saveName.trim()) return;
     
+    // Parse tags from comma-separated string
+    const tags = saveTags
+      .split(',')
+      .map(t => t.trim().toLowerCase())
+      .filter(t => t.length > 0);
+    
     const newSave: SavedCode = {
       id: Date.now().toString(),
       name: saveName.trim(),
       code,
       language,
-      savedAt: new Date().toISOString()
+      savedAt: new Date().toISOString(),
+      tags: tags.length > 0 ? tags : undefined,
+      favorite: false,
+      lastAnalysis: adjudication ? {
+        compliant: adjudication.compliant,
+        violations: analysis?.violations.length || 0
+      } : undefined
     };
     
     const updated = [...savedCodes, newSave];
@@ -400,7 +451,28 @@ export default function App() {
     localStorage.setItem('acpg_saved_codes', JSON.stringify(updated));
     setShowSaveDialog(false);
     setSaveName('');
+    setSaveTags('');
   };
+  
+  const toggleFavorite = (id: string) => {
+    const updated = savedCodes.map(s => 
+      s.id === id ? { ...s, favorite: !s.favorite } : s
+    );
+    setSavedCodes(updated);
+    localStorage.setItem('acpg_saved_codes', JSON.stringify(updated));
+  };
+  
+  // Get all unique tags from saved codes
+  const allTags = Array.from(new Set(
+    savedCodes.flatMap(s => s.tags || [])
+  )).sort();
+  
+  // Filter saved codes
+  const filteredSavedCodes = savedCodes.filter(s => {
+    if (!bookmarkFilter) return true;
+    if (bookmarkFilter === 'favorites') return s.favorite;
+    return s.tags?.includes(bookmarkFilter);
+  });
 
   const handleLoadCode = (saved: SavedCode) => {
     setCode(saved.code);
@@ -624,6 +696,24 @@ export default function App() {
               
               <div className="h-6 w-px bg-slate-700" />
               
+              {/* History Button */}
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`px-4 py-2 text-sm font-medium rounded-xl transition-all flex items-center gap-2 ${
+                  showHistory 
+                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30' 
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Clock className="w-4 h-4" />
+                History
+                {history.length > 0 && (
+                  <span className="text-xs bg-violet-500/30 text-violet-300 px-1.5 py-0.5 rounded-full">
+                    {history.length}
+                  </span>
+                )}
+              </button>
+              
               {/* Sample Files Dropdown */}
               <div className="relative">
                 <button
@@ -711,6 +801,112 @@ export default function App() {
           </div>
         </div>
       </header>
+      
+      {/* History Sidebar */}
+      {showHistory && (
+        <div className="fixed right-0 top-0 bottom-0 w-96 glass border-l border-white/10 z-40 flex flex-col animate-slide-in-right">
+          <div className="p-4 border-b border-white/10 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="w-5 h-5 text-violet-400" />
+              <h3 className="font-semibold text-white">Analysis History</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {history.length > 0 && (
+                <button
+                  onClick={() => {
+                    fetch('/api/v1/history', { method: 'DELETE' })
+                      .then(() => setHistory([]))
+                      .catch(() => {});
+                  }}
+                  className="text-xs text-slate-400 hover:text-red-400 px-2 py-1"
+                >
+                  Clear All
+                </button>
+              )}
+              <button
+                onClick={() => setShowHistory(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {history.length === 0 ? (
+              <div className="text-center py-12 text-slate-500">
+                <Clock className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p>No analysis history yet</p>
+                <p className="text-xs mt-1">Run an analysis to see it here</p>
+              </div>
+            ) : (
+              history.map(entry => (
+                <div
+                  key={entry.id}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer hover:bg-slate-800/50 ${
+                    entry.compliant 
+                      ? 'bg-emerald-500/5 border-emerald-500/20' 
+                      : 'bg-red-500/5 border-red-500/20'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {entry.compliant ? (
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <ShieldAlert className="w-4 h-4 text-red-400" />
+                      )}
+                      <span className={`text-xs font-semibold ${
+                        entry.compliant ? 'text-emerald-400' : 'text-red-400'
+                      }`}>
+                        {entry.compliant ? 'PASS' : 'FAIL'}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      {new Date(entry.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  
+                  <p className="text-xs text-slate-400 font-mono line-clamp-2 mb-2">
+                    {entry.code_preview}
+                  </p>
+                  
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-emerald-400">{entry.policies_passed} passed</span>
+                    {entry.violations_count > 0 && (
+                      <>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-red-400">{entry.violations_count} failed</span>
+                      </>
+                    )}
+                  </div>
+                  
+                  {Object.keys(entry.severity_breakdown || {}).length > 0 && (
+                    <div className="flex gap-1 mt-2">
+                      {entry.severity_breakdown.critical > 0 && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded">
+                          {entry.severity_breakdown.critical} critical
+                        </span>
+                      )}
+                      {entry.severity_breakdown.high > 0 && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-orange-500/20 text-orange-400 rounded">
+                          {entry.severity_breakdown.high} high
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+          
+          <div className="p-4 border-t border-white/10 text-center">
+            <p className="text-xs text-slate-500">
+              Showing last {history.length} analyses
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Workflow Pipeline */}
       <div className="max-w-[1920px] mx-auto px-8 py-6">
@@ -936,22 +1132,90 @@ export default function App() {
               {/* Saved Codes Library */}
               {savedCodes.length > 0 && (
                 <div className="glass rounded-xl p-4 border border-white/5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <FolderOpen className="w-4 h-4 text-amber-400" />
-                    <span className="text-sm font-medium text-slate-300">Saved Code Library</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-amber-400" />
+                      <span className="text-sm font-medium text-slate-300">
+                        Bookmarks ({filteredSavedCodes.length})
+                      </span>
+                    </div>
+                    
+                    {/* Filter buttons */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setBookmarkFilter(null)}
+                        className={`px-2 py-1 text-xs rounded-lg transition-all ${
+                          !bookmarkFilter ? 'bg-violet-500/20 text-violet-300' : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        All
+                      </button>
+                      <button
+                        onClick={() => setBookmarkFilter('favorites')}
+                        className={`px-2 py-1 text-xs rounded-lg transition-all ${
+                          bookmarkFilter === 'favorites' ? 'bg-amber-500/20 text-amber-300' : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        ★
+                      </button>
+                      {allTags.slice(0, 3).map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => setBookmarkFilter(tag === bookmarkFilter ? null : tag)}
+                          className={`px-2 py-1 text-xs rounded-lg transition-all ${
+                            bookmarkFilter === tag ? 'bg-violet-500/20 text-violet-300' : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          #{tag}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                  
                   <div className="flex flex-wrap gap-2">
-                    {savedCodes.map(saved => (
-                      <div key={saved.id} className="flex items-center gap-1 bg-slate-800/50 rounded-lg pl-3 pr-1 py-1">
+                    {filteredSavedCodes.map(saved => (
+                      <div 
+                        key={saved.id} 
+                        className={`group flex items-center gap-1 rounded-lg pl-2 pr-1 py-1 transition-all ${
+                          saved.favorite 
+                            ? 'bg-amber-500/10 border border-amber-500/20' 
+                            : 'bg-slate-800/50 hover:bg-slate-800/80'
+                        }`}
+                      >
+                        {/* Favorite star */}
+                        <button
+                          onClick={() => toggleFavorite(saved.id)}
+                          className={`p-0.5 transition-all ${
+                            saved.favorite ? 'text-amber-400' : 'text-slate-600 hover:text-amber-400 opacity-0 group-hover:opacity-100'
+                          }`}
+                        >
+                          <span className="text-xs">{saved.favorite ? '★' : '☆'}</span>
+                        </button>
+                        
+                        {/* Name + compliance indicator */}
                         <button
                           onClick={() => handleLoadCode(saved)}
-                          className="text-sm text-slate-300 hover:text-white"
+                          className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white"
                         >
+                          {saved.lastAnalysis && (
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              saved.lastAnalysis.compliant ? 'bg-emerald-400' : 'bg-red-400'
+                            }`} />
+                          )}
                           {saved.name}
                         </button>
+                        
+                        {/* Tags */}
+                        {saved.tags && saved.tags.length > 0 && (
+                          <span className="text-[10px] text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-full">
+                            {saved.tags[0]}
+                          </span>
+                        )}
+                        
+                        {/* Delete */}
                         <button
                           onClick={() => handleDeleteSaved(saved.id)}
-                          className="p-1 text-slate-500 hover:text-red-400"
+                          className="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -1115,12 +1379,17 @@ export default function App() {
                     onCreateMapping={(toolName: string, ruleId: string) => {
                       setViewMode('tools');
                       // Navigate to mappings tab and pre-fill form
+                      // Use a longer timeout to ensure ToolsConfigurationView is mounted
                       setTimeout(() => {
                         const event = new CustomEvent('createMapping', { 
                           detail: { toolName, toolRuleId: ruleId } 
                         });
                         window.dispatchEvent(event);
-                      }, 100);
+                        // Re-dispatch after a short delay to ensure ToolMappingsView receives it
+                        setTimeout(() => {
+                          window.dispatchEvent(event);
+                        }, 200);
+                      }, 300);
                     }}
                   />
                 ) : null;
@@ -1151,28 +1420,74 @@ export default function App() {
       {/* Save Dialog */}
       {showSaveDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass rounded-2xl p-6 w-96 border border-white/10">
-            <h3 className="text-lg font-semibold text-white mb-4">Save Code</h3>
-            <input
-              type="text"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              placeholder="Enter a name..."
-              className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
-              autoFocus
-            />
-            <div className="flex gap-3 mt-4">
+          <div className="glass rounded-2xl p-6 w-[420px] border border-white/10">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-amber-400" />
+              Save Code Bookmark
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">Name</label>
+                <input
+                  type="text"
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="Enter a name..."
+                  className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">Tags (comma-separated)</label>
+                <input
+                  type="text"
+                  value={saveTags}
+                  onChange={(e) => setSaveTags(e.target.value)}
+                  placeholder="e.g., auth, api, security"
+                  className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50"
+                />
+                {allTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    <span className="text-xs text-slate-500 mr-1">Existing:</span>
+                    {allTags.slice(0, 5).map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => setSaveTags(prev => prev ? `${prev}, ${tag}` : tag)}
+                        className="px-2 py-0.5 text-xs bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 rounded-full"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {adjudication && (
+                <div className={`p-3 rounded-xl border text-sm ${
+                  adjudication.compliant 
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                    : 'bg-red-500/10 border-red-500/20 text-red-400'
+                }`}>
+                  {adjudication.compliant ? '✓ Will save as compliant' : `⚠ Will save with ${analysis?.violations.length || 0} violations`}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowSaveDialog(false)}
+                onClick={() => { setShowSaveDialog(false); setSaveName(''); setSaveTags(''); }}
                 className="flex-1 px-4 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveCode}
-                className="flex-1 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-400"
+                disabled={!saveName.trim()}
+                className="flex-1 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500"
               >
-                Save
+                Save Bookmark
               </button>
             </div>
           </div>
@@ -1479,7 +1794,7 @@ function WorkflowPipeline({ workflow }: { workflow: WorkflowState }) {
   );
 }
 
-// Compliance Status Component
+// Compliance Status Component with enhanced animations
 function ComplianceStatus({ 
   adjudication, 
   violations,
@@ -1501,7 +1816,7 @@ function ComplianceStatus({
     return (
       <div className="glass rounded-2xl p-6 border border-white/5 animate-fade-in">
         <div className="flex items-center gap-4">
-          <div className="p-4 rounded-2xl bg-slate-800/50">
+          <div className="p-4 rounded-2xl bg-slate-800/50 animate-float">
             <Shield className="w-10 h-10 text-slate-500" />
           </div>
           <div>
@@ -1514,23 +1829,56 @@ function ComplianceStatus({
   }
 
   const isCompliant = adjudication.compliant;
+  const totalPolicies = adjudication.satisfied_rules.length + violationCount;
+  const passRate = totalPolicies > 0 ? (adjudication.satisfied_rules.length / totalPolicies) * 100 : 0;
 
   return (
-    <div className={`glass rounded-2xl p-6 border animate-scale-in ${
+    <div className={`relative glass rounded-2xl p-6 border overflow-hidden ${
       isCompliant 
-        ? 'border-emerald-500/30 glow-emerald' 
-        : 'border-red-500/30 glow-red'
+        ? 'border-emerald-500/30 animate-success-celebration animate-success-glow' 
+        : 'border-red-500/30 animate-warning-shake animate-warning-glow'
     }`}>
-      <div className="flex items-start gap-4">
-        <div className={`p-4 rounded-2xl ${
-          isCompliant ? 'bg-emerald-500/10' : 'bg-red-500/10'
-        }`}>
-          {isCompliant ? (
-            <ShieldCheck className="w-10 h-10 text-emerald-400" />
-          ) : (
-            <ShieldAlert className="w-10 h-10 text-red-400" />
-          )}
+      {/* Background gradient effect */}
+      <div className={`absolute inset-0 opacity-10 ${
+        isCompliant 
+          ? 'bg-gradient-to-br from-emerald-500 via-transparent to-cyan-500' 
+          : 'bg-gradient-to-br from-red-500 via-transparent to-orange-500'
+      }`} />
+      
+      {/* Animated particles for compliant state */}
+      {isCompliant && (
+        <div className="particles">
+          {[...Array(6)].map((_, i) => (
+            <div 
+              key={i}
+              className="particle bg-emerald-400"
+              style={{
+                left: `${20 + i * 12}%`,
+                bottom: '20%',
+                animationDelay: `${i * 0.15}s`
+              }}
+            />
+          ))}
         </div>
+      )}
+      
+      <div className="relative flex items-start gap-4">
+        {/* Animated icon with ring */}
+        <div className="relative">
+          <div className={`absolute inset-0 rounded-2xl animate-pulse-ring ${
+            isCompliant ? 'bg-emerald-500/20' : 'bg-red-500/20'
+          }`} />
+          <div className={`relative p-4 rounded-2xl ${
+            isCompliant ? 'bg-emerald-500/10' : 'bg-red-500/10'
+          }`}>
+            {isCompliant ? (
+              <ShieldCheck className="w-10 h-10 text-emerald-400 animate-bounce-in" />
+            ) : (
+              <ShieldAlert className="w-10 h-10 text-red-400 animate-bounce-in" />
+            )}
+          </div>
+        </div>
+        
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h3 className={`text-xl font-display font-bold ${
@@ -1539,8 +1887,13 @@ function ComplianceStatus({
               {isCompliant ? 'COMPLIANT' : 'NON-COMPLIANT'}
             </h3>
             {isCompliant && (
-              <span className="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-400 rounded-full animate-pulse">
-                CERTIFIED
+              <span className="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-400 rounded-full animate-badge-pulse border border-emerald-500/30">
+                ✓ CERTIFIED
+              </span>
+            )}
+            {!isCompliant && (
+              <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded-full animate-badge-pulse border border-red-500/30">
+                ⚠ ACTION REQUIRED
               </span>
             )}
           </div>
@@ -1551,26 +1904,46 @@ function ComplianceStatus({
             }
           </p>
           
+          {/* Progress bar */}
+          <div className="mt-3 mb-2">
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-slate-500">Compliance Progress</span>
+              <span className={isCompliant ? 'text-emerald-400' : 'text-slate-400'}>
+                {passRate.toFixed(0)}%
+              </span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                  isCompliant 
+                    ? 'bg-gradient-to-r from-emerald-500 to-cyan-500' 
+                    : 'bg-gradient-to-r from-red-500 to-orange-500'
+                }`}
+                style={{ width: `${passRate}%` }}
+              />
+            </div>
+          </div>
+          
           {/* Severity breakdown for non-compliant */}
           {!isCompliant && violationCount > 0 && (
-            <div className="flex items-center gap-2 mt-2">
+            <div className="flex items-center gap-2 mt-3 flex-wrap">
               {severityCounts.critical > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded border border-red-500/30 animate-pulse">
                   {severityCounts.critical} critical
                 </span>
               )}
               {severityCounts.high > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-orange-500/20 text-orange-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-orange-500/20 text-orange-400 rounded border border-orange-500/30">
                   {severityCounts.high} high
                 </span>
               )}
               {severityCounts.medium > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-amber-500/20 text-amber-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
                   {severityCounts.medium} medium
                 </span>
               )}
               {severityCounts.low > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-slate-500/20 text-slate-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-slate-500/20 text-slate-400 rounded border border-slate-500/30">
                   {severityCounts.low} low
                 </span>
               )}
@@ -1585,20 +1958,27 @@ function ComplianceStatus({
               </div>
               <div className="h-8 w-px bg-slate-700" />
               <div className="text-center">
-                <div className="text-2xl font-bold text-emerald-400">
+                <div className="text-2xl font-bold text-emerald-400 animate-bounce-in" style={{ animationDelay: '0.2s' }}>
                   {adjudication.satisfied_rules.length}
                 </div>
-                <div className="text-xs text-slate-500">Policies Passed</div>
+                <div className="text-xs text-slate-500">Passed</div>
               </div>
               {!isCompliant && (
                 <>
                   <div className="h-8 w-px bg-slate-700" />
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-red-400">{violationCount}</div>
-                    <div className="text-xs text-slate-500">Remaining</div>
+                    <div className="text-2xl font-bold text-red-400 animate-bounce-in" style={{ animationDelay: '0.3s' }}>
+                      {violationCount}
+                    </div>
+                    <div className="text-xs text-slate-500">Failed</div>
                   </div>
                 </>
               )}
+              <div className="h-8 w-px bg-slate-700" />
+              <div className="text-center">
+                <div className="text-2xl font-bold text-slate-300">{totalPolicies}</div>
+                <div className="text-xs text-slate-500">Total</div>
+              </div>
             </div>
           )}
         </div>
@@ -2943,6 +3323,12 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
 }
 
 // Policy Group interface
+interface PolicyGroupPolicyDetail {
+  id: string;
+  description: string;
+  severity: string;
+}
+
 interface PolicyGroup {
   id: string;
   name: string;
@@ -2950,6 +3336,7 @@ interface PolicyGroup {
   enabled: boolean;
   policies: string[];
   policy_count?: number;
+  policy_details?: PolicyGroupPolicyDetail[];
 }
 
 // Tools Configuration View
@@ -2959,6 +3346,22 @@ function ToolsConfigurationView({
   onCreatePolicy?: (data: {toolName: string; toolRuleId: string; description?: string; severity?: string}) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'tools' | 'mappings' | 'rules'>('tools');
+  
+  // Listen for createMapping events to switch to mappings tab
+  useEffect(() => {
+    const handleCreateMapping = (event: CustomEvent) => {
+      setActiveTab('mappings');
+      // Re-dispatch the event after tab switch so ToolMappingsView can handle it
+      setTimeout(() => {
+        window.dispatchEvent(event);
+      }, 100);
+    };
+    
+    window.addEventListener('createMapping', handleCreateMapping as EventListener);
+    return () => {
+      window.removeEventListener('createMapping', handleCreateMapping as EventListener);
+    };
+  }, []);
   const [tools, setTools] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -4799,6 +5202,20 @@ function PoliciesView({
     policies: [] as string[]
   });
   
+  // Policy templates
+  interface PolicyTemplate {
+    id: string;
+    name: string;
+    description: string;
+    icon: string;
+    category: string;
+    policy_count: number;
+    policies: string[];
+  }
+  const [templates, setTemplates] = useState<PolicyTemplate[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [loadingTemplate, setLoadingTemplate] = useState<string | null>(null);
+  
   // Form state for policy editor
   const [formData, setFormData] = useState({
     id: '',
@@ -4861,6 +5278,40 @@ function PoliciesView({
       })
       .catch(() => {});
   };
+  
+  const loadTemplates = () => {
+    fetch('/api/v1/policies/groups/templates/')
+      .then(res => res.json())
+      .then(data => {
+        if (data.templates) {
+          setTemplates(data.templates);
+        }
+      })
+      .catch(() => {});
+  };
+  
+  const applyTemplate = async (templateId: string) => {
+    setLoadingTemplate(templateId);
+    try {
+      const res = await fetch(`/api/v1/policies/groups/templates/${templateId}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        loadPolicyGroups();
+        setShowTemplates(false);
+      }
+    } catch (e) {
+      console.error('Failed to apply template:', e);
+    } finally {
+      setLoadingTemplate(null);
+    }
+  };
+  
+  // Load templates on mount
+  useEffect(() => {
+    loadTemplates();
+  }, []);
   
   const allPolicies = [...policies, ...customPolicies.filter(cp => 
     !policies.some(p => p.id === cp.id)
@@ -5122,13 +5573,22 @@ function PoliciesView({
                 New Policy
               </button>
             ) : (
-              <button
-                onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
-              >
-                <Plus className="w-5 h-5" />
-                New Group
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowTemplates(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  Templates
+                </button>
+                <button
+                  onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
+                >
+                  <Plus className="w-5 h-5" />
+                  New Group
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -5302,6 +5762,78 @@ function PoliciesView({
               >
                 {editingGroup ? 'Update Group' : 'Create Group'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Policy Templates Modal */}
+      {showTemplates && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                  <Sparkles className="w-6 h-6 text-violet-400" />
+                  Policy Templates
+                </h3>
+                <p className="text-sm text-slate-400 mt-1">Quick-start with pre-built policy groups</p>
+              </div>
+              <button onClick={() => setShowTemplates(false)} className="text-slate-400 hover:text-white">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6">
+              <div className="grid grid-cols-2 gap-4">
+                {templates.map(template => (
+                  <div 
+                    key={template.id}
+                    className="group p-4 bg-slate-800/30 hover:bg-slate-800/50 border border-white/5 hover:border-violet-500/30 rounded-xl transition-all cursor-pointer"
+                    onClick={() => applyTemplate(template.id)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{template.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-white group-hover:text-violet-300 transition-colors">
+                            {template.name}
+                          </h4>
+                          <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded">
+                            {template.policy_count} policies
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-400 mt-1">{template.description}</p>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {template.policies.slice(0, 4).map(policyId => (
+                            <span key={policyId} className="text-[10px] font-mono px-1.5 py-0.5 bg-violet-500/10 text-violet-400 rounded">
+                              {policyId}
+                            </span>
+                          ))}
+                          {template.policies.length > 4 && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">
+                              +{template.policies.length - 4}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {loadingTemplate === template.id && (
+                      <div className="mt-3 flex items-center gap-2 text-sm text-violet-400">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Creating group...
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              {templates.length === 0 && (
+                <div className="text-center py-12 text-slate-400">
+                  <Sparkles className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No templates available</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -5642,16 +6174,40 @@ function PoliciesView({
                   </div>
                 </div>
                 
-                {/* Policy list */}
+                {/* Policy list with descriptions */}
                 <div className="flex flex-wrap gap-2">
-                  {group.policies.slice(0, 10).map(policyId => (
-                    <span 
-                      key={policyId} 
-                      className="px-2 py-1 bg-slate-800/50 text-slate-300 text-xs font-mono rounded-lg"
-                    >
-                      {policyId}
-                    </span>
-                  ))}
+                  {group.policies.slice(0, 10).map((policyId, idx) => {
+                    // Use policy_details from API response, or fallback to allPolicies lookup
+                    const policyDetail = group.policy_details?.[idx];
+                    const policy = policyDetail || allPolicies.find(p => p.id === policyId);
+                    const description = policyDetail?.description || (policy as any)?.description || policyId;
+                    const severity = policyDetail?.severity || (policy as any)?.severity;
+                    
+                    return (
+                      <span 
+                        key={policyId} 
+                        className="group/policy relative px-2 py-1 bg-slate-800/50 text-slate-300 text-xs font-mono rounded-lg cursor-help"
+                        title={description}
+                      >
+                        {policyId}
+                        {/* Tooltip with description */}
+                        <div className="absolute bottom-full left-0 mb-2 hidden group-hover/policy:block z-50 w-72 p-3 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-left">
+                          <div className="font-semibold text-violet-400 mb-1">{policyId}</div>
+                          <div className="text-slate-300 text-xs font-sans leading-relaxed">{description}</div>
+                          {severity && (
+                            <div className="flex gap-2 mt-2">
+                              <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold rounded ${
+                                severity === 'critical' ? 'bg-red-500/20 text-red-400' :
+                                severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
+                                severity === 'medium' ? 'bg-amber-500/20 text-amber-400' :
+                                'bg-slate-700 text-slate-400'
+                              }`}>{severity}</span>
+                            </div>
+                          )}
+                        </div>
+                      </span>
+                    );
+                  })}
                   {group.policies.length > 10 && (
                     <span className="px-2 py-1 bg-slate-800/50 text-slate-500 text-xs rounded-lg">
                       +{group.policies.length - 10} more

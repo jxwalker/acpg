@@ -820,6 +820,23 @@ async def analyze_code(
     except Exception:
         pass  # Don't fail request if audit logging fails
     
+    # Save to analysis history
+    try:
+        severity_breakdown = {}
+        for v in result.violations:
+            severity_breakdown[v.severity] = severity_breakdown.get(v.severity, 0) + 1
+        
+        await add_to_history(
+            code=request.code,
+            language=request.language,
+            compliant=adjudication.compliant,
+            violations_count=len(result.violations),
+            policies_passed=len(adjudication.satisfied_rules),
+            severity_breakdown=severity_breakdown
+        )
+    except Exception:
+        pass  # Don't fail if history save fails
+    
     return result
 
 
@@ -1740,4 +1757,114 @@ async def export_proof(request: ExportProofRequest):
         return {"format": request.format, "content": exported}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================================
+# Analysis History
+# ============================================================================
+
+import json
+from datetime import datetime
+from pathlib import Path
+
+HISTORY_FILE = settings.DATA_DIR / "analysis_history.json" if hasattr(settings, 'DATA_DIR') else Path("data/analysis_history.json")
+
+
+def load_history() -> list:
+    """Load analysis history from file."""
+    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    return []
+
+
+def save_history(history: list):
+    """Save analysis history to file."""
+    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # Keep only last 100 entries
+    history = history[-100:]
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(history, f, indent=2, default=str)
+
+
+class HistoryEntry(BaseModel):
+    """A history entry for analysis results."""
+    id: str
+    timestamp: str
+    code_preview: str
+    language: str
+    compliant: bool
+    violations_count: int
+    policies_passed: int
+    severity_breakdown: dict
+    code_hash: str
+
+
+@router.get("/history")
+async def get_analysis_history(limit: int = Query(20, ge=1, le=100)):
+    """Get recent analysis history."""
+    history = load_history()
+    return {
+        "history": history[-limit:][::-1],  # Most recent first
+        "total": len(history)
+    }
+
+
+@router.post("/history")
+async def add_to_history(
+    code: str,
+    language: str = "python",
+    compliant: bool = False,
+    violations_count: int = 0,
+    policies_passed: int = 0,
+    severity_breakdown: dict = None
+):
+    """Add an analysis result to history."""
+    history = load_history()
+    
+    # Create code hash for deduplication
+    code_hash = hashlib.md5(code.encode()).hexdigest()[:8]
+    
+    # Check if this exact code was just analyzed (avoid duplicates)
+    if history and history[-1].get('code_hash') == code_hash:
+        return {"message": "Duplicate entry skipped", "id": history[-1]['id']}
+    
+    entry = {
+        "id": str(uuid.uuid4())[:8],
+        "timestamp": datetime.now().isoformat(),
+        "code_preview": code[:100] + ("..." if len(code) > 100 else ""),
+        "language": language,
+        "compliant": compliant,
+        "violations_count": violations_count,
+        "policies_passed": policies_passed,
+        "severity_breakdown": severity_breakdown or {},
+        "code_hash": code_hash
+    }
+    
+    history.append(entry)
+    save_history(history)
+    
+    return {"message": "Added to history", "id": entry['id']}
+
+
+@router.delete("/history/{entry_id}")
+async def delete_history_entry(entry_id: str):
+    """Delete a specific history entry."""
+    history = load_history()
+    original_len = len(history)
+    history = [h for h in history if h.get('id') != entry_id]
+    
+    if len(history) == original_len:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    
+    save_history(history)
+    return {"message": "Entry deleted"}
+
+
+@router.delete("/history")
+async def clear_history():
+    """Clear all analysis history."""
+    save_history([])
+    return {"message": "History cleared"}
 

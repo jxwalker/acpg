@@ -3,14 +3,25 @@
 Supports multiple LLM providers:
 - OpenAI API
 - OpenAI-compatible APIs (vLLM, Ollama, etc.)
+- Anthropic API (Claude, Kimi, etc.)
 - Local models
 """
 import os
 import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from dataclasses import dataclass
 from openai import OpenAI
+try:
+    from anthropic import Anthropic
+except ImportError:
+    Anthropic = None
+from dotenv import load_dotenv
+
+# Load .env file if it exists
+_env_path = Path(__file__).parent.parent.parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
 
 
 @dataclass
@@ -56,7 +67,7 @@ class LLMConfigManager:
         self.config_path = config_path or self.DEFAULT_CONFIG_PATH
         self._config: Optional[Dict[str, Any]] = None
         self._active_provider: Optional[LLMProviderConfig] = None
-        self._client: Optional[OpenAI] = None
+        self._client: Optional[Union[OpenAI, Any]] = None
     
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file."""
@@ -106,17 +117,26 @@ class LLMConfigManager:
         self._active_provider = LLMProviderConfig.from_dict(providers[active_name])
         return self._active_provider
     
-    def get_client(self) -> OpenAI:
-        """Get an OpenAI client configured for the active provider."""
+    def get_client(self) -> Union[OpenAI, Any]:
+        """Get a client configured for the active provider (OpenAI or Anthropic)."""
         if self._client is not None:
             return self._client
         
         provider = self.get_active_provider()
         
-        self._client = OpenAI(
-            api_key=provider.api_key or "not-needed",
-            base_url=provider.base_url
-        )
+        if provider.type == 'anthropic':
+            if Anthropic is None:
+                raise ImportError("anthropic package is required for Anthropic API. Install with: pip install anthropic")
+            self._client = Anthropic(
+                api_key=provider.api_key or "",
+                base_url=provider.base_url
+            )
+        else:
+            # OpenAI or OpenAI-compatible
+            self._client = OpenAI(
+                api_key=provider.api_key or "not-needed",
+                base_url=provider.base_url
+            )
         
         return self._client
     
