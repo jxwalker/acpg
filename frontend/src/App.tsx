@@ -97,6 +97,11 @@ export default function App() {
   });
   const [policies, setPolicies] = useState<PolicyRule[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  
+  // Real-time analysis
+  const [realTimeEnabled, setRealTimeEnabled] = useState(false);
+  const [realTimeLoading, setRealTimeLoading] = useState(false);
+  const realTimeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [adjudication, setAdjudication] = useState<AdjudicationResult | null>(null);
   const [enforceResult, setEnforceResult] = useState<EnforceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,6 +145,46 @@ export default function App() {
       setSavedCodes(JSON.parse(saved));
     }
   }, []);
+
+  // Real-time analysis with debouncing (500ms delay)
+  useEffect(() => {
+    if (!realTimeEnabled || workflow.step !== 'idle') return;
+    
+    // Clear any existing timeout
+    if (realTimeTimeoutRef.current) {
+      clearTimeout(realTimeTimeoutRef.current);
+    }
+    
+    // Skip if code is too short
+    if (code.trim().length < 10) {
+      setAnalysis(null);
+      setAdjudication(null);
+      return;
+    }
+    
+    // Set a new timeout for analysis
+    realTimeTimeoutRef.current = setTimeout(async () => {
+      setRealTimeLoading(true);
+      try {
+        const analysisResult = await api.analyze(code, language);
+        setAnalysis(analysisResult);
+        
+        // Quick adjudication
+        const adjResult = await api.adjudicate(analysisResult);
+        setAdjudication(adjResult);
+      } catch (e) {
+        // Silently fail for real-time analysis
+      } finally {
+        setRealTimeLoading(false);
+      }
+    }, 500);
+    
+    return () => {
+      if (realTimeTimeoutRef.current) {
+        clearTimeout(realTimeTimeoutRef.current);
+      }
+    };
+  }, [code, realTimeEnabled, workflow.step, language]);
 
   // Load policies, LLM info, and sample files on mount
   useEffect(() => {
@@ -1225,6 +1270,28 @@ export default function App() {
                 </div>
               )}
 
+              {/* Real-time Analysis Toggle */}
+              <div className="flex items-center justify-between glass rounded-xl px-4 py-3 border border-white/5 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${
+                    realTimeEnabled ? 'bg-cyan-500' : 'bg-slate-700'
+                  }`} onClick={() => setRealTimeEnabled(!realTimeEnabled)}>
+                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow ${
+                      realTimeEnabled ? 'left-5' : 'left-1'
+                    }`} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium text-white">Real-time Analysis</span>
+                    <span className="text-xs text-slate-500 ml-2">
+                      {realTimeEnabled ? 'Analyzing as you type' : 'Disabled'}
+                    </span>
+                  </div>
+                </div>
+                {realTimeLoading && (
+                  <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
+                )}
+              </div>
+              
               {/* Action Buttons */}
               <div className="flex gap-4">
                 <button
@@ -5215,6 +5282,54 @@ function PoliciesView({
   const [templates, setTemplates] = useState<PolicyTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState<string | null>(null);
+  const groupFileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Export/Import policy groups
+  const handleExportGroups = async () => {
+    try {
+      const res = await fetch('/api/v1/policies/groups/export');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `acpg-policy-groups-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export failed:', e);
+    }
+  };
+  
+  const handleImportGroups = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const groups = data.groups || [];
+      
+      const res = await fetch('/api/v1/policies/groups/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groups, overwrite: false })
+      });
+      
+      if (res.ok) {
+        const result = await res.json();
+        alert(`Imported ${result.total_imported} groups${result.total_skipped > 0 ? ` (${result.total_skipped} skipped)` : ''}`);
+        loadPolicyGroups();
+      }
+    } catch (e) {
+      alert('Invalid JSON file');
+    }
+    
+    // Reset file input
+    if (groupFileInputRef.current) {
+      groupFileInputRef.current.value = '';
+    }
+  };
   
   // Form state for policy editor
   const [formData, setFormData] = useState({
@@ -5581,6 +5696,27 @@ function PoliciesView({
                   <Sparkles className="w-5 h-5" />
                   Templates
                 </button>
+                <button
+                  onClick={handleExportGroups}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
+                  title="Export policy groups"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => groupFileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
+                  title="Import policy groups"
+                >
+                  <Upload className="w-4 h-4" />
+                </button>
+                <input
+                  type="file"
+                  ref={groupFileInputRef}
+                  accept=".json"
+                  onChange={handleImportGroups}
+                  className="hidden"
+                />
                 <button
                   onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"

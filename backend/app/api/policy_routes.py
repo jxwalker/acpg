@@ -551,6 +551,57 @@ async def list_policy_groups():
     }
 
 
+@groups_router.get("/export", response_model=dict)
+async def export_policy_groups():
+    """Export all policy groups as JSON for sharing."""
+    data = load_policy_groups()
+    return {
+        "version": "1.0",
+        "exported_at": datetime.now().isoformat(),
+        "groups": data.get('groups', []),
+        "active_profile": data.get('active_profile', 'default')
+    }
+
+
+@groups_router.post("/import", response_model=dict)
+async def import_policy_groups(
+    groups: List[dict] = Body(..., embed=True),
+    overwrite: bool = Body(False, embed=True)
+):
+    """Import policy groups from JSON."""
+    data = load_policy_groups()
+    existing_ids = {g['id'] for g in data.get('groups', [])}
+    
+    imported = []
+    skipped = []
+    
+    for group in groups:
+        group_id = group.get('id')
+        if not group_id:
+            continue
+        
+        if group_id in existing_ids:
+            if overwrite:
+                data['groups'] = [g for g in data['groups'] if g['id'] != group_id]
+                data['groups'].append(group)
+                imported.append(group_id)
+            else:
+                skipped.append(group_id)
+        else:
+            data['groups'].append(group)
+            imported.append(group_id)
+            existing_ids.add(group_id)
+    
+    save_policy_groups(data)
+    
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "total_imported": len(imported),
+        "total_skipped": len(skipped)
+    }
+
+
 @groups_router.get("/{group_id}")
 async def get_policy_group(group_id: str):
     """Get a specific policy group."""
