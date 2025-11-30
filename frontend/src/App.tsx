@@ -123,6 +123,39 @@ export default function App() {
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
   const [policyCreationData, setPolicyCreationData] = useState<{toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<any>(null);
+  
+  // Handle editor mount to get reference
+  const handleEditorMount = (editor: any) => {
+    editorRef.current = editor;
+  };
+  
+  // Highlight a specific line in the editor
+  const highlightLine = (lineNumber: number) => {
+    if (editorRef.current) {
+      // Scroll to and highlight the line
+      editorRef.current.revealLineInCenter(lineNumber);
+      editorRef.current.setPosition({ lineNumber, column: 1 });
+      editorRef.current.focus();
+      
+      // Add a temporary decoration for visibility
+      const decorations = editorRef.current.deltaDecorations([], [
+        {
+          range: { startLineNumber: lineNumber, startColumn: 1, endLineNumber: lineNumber, endColumn: 1 },
+          options: {
+            isWholeLine: true,
+            className: 'highlighted-line',
+            glyphMarginClassName: 'highlighted-glyph'
+          }
+        }
+      ]);
+      
+      // Remove decoration after 2 seconds
+      setTimeout(() => {
+        editorRef.current?.deltaDecorations(decorations, []);
+      }, 2000);
+    }
+  };
   
   // Analysis history
   interface HistoryEntry {
@@ -1155,6 +1188,7 @@ export default function App() {
                       language={language}
                       value={code}
                       onChange={(value) => setCode(value || '')}
+                      onMount={handleEditorMount}
                       theme="vs-dark"
                       options={{
                         minimap: { enabled: false },
@@ -1168,6 +1202,7 @@ export default function App() {
                         cursorBlinking: 'smooth',
                         smoothScrolling: true,
                         bracketPairColorization: { enabled: true },
+                        glyphMargin: true,
                       }}
                     />
                   )}
@@ -1464,7 +1499,11 @@ export default function App() {
 
               {/* Violations List */}
               {analysis && analysis.violations.length > 0 && (
-                <ViolationsList violations={analysis.violations} policies={policies} />
+                <ViolationsList 
+                  violations={analysis.violations} 
+                  policies={policies} 
+                  onLineClick={highlightLine}
+                />
               )}
 
               {/* Proof Bundle Quick View */}
@@ -2367,15 +2406,24 @@ function ToolExecutionStatus({
 // Violations List Component
 function ViolationsList({ 
   violations, 
-  policies 
+  policies,
+  onLineClick
 }: { 
   violations: Violation[];
   policies: PolicyRule[];
+  onLineClick?: (line: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const toggleExpand = (index: number) => {
     setExpanded(prev => ({ ...prev, [index]: !prev[index] }));
+  };
+  
+  const handleLineClick = (line: number | undefined, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (line && onLineClick) {
+      onLineClick(line);
+    }
   };
 
   const getSeverityConfig = (severity: string) => {
@@ -2490,9 +2538,13 @@ function ViolationsList({
                   {violation.description}
                 </span>
                 {violation.line && (
-                  <span className="text-xs text-slate-500 font-mono bg-slate-800/50 px-2 py-1 rounded">
-                    L{violation.line}
-                  </span>
+                  <button
+                    onClick={(e) => handleLineClick(violation.line, e)}
+                    className="text-xs text-cyan-400 font-mono bg-cyan-500/10 hover:bg-cyan-500/20 px-2 py-1 rounded border border-cyan-500/20 transition-all"
+                    title="Click to jump to line"
+                  >
+                    ↗ L{violation.line}
+                  </button>
                 )}
               </button>
               {isExpanded && (

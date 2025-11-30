@@ -259,6 +259,18 @@ body {
   background: transparent !important;
 }
 
+/* Highlighted line decoration */
+.monaco-editor .highlighted-line {
+  background: rgba(6, 182, 212, 0.15) !important;
+  border-left: 3px solid #06b6d4 !important;
+}
+
+.monaco-editor .highlighted-glyph {
+  background: #06b6d4;
+  border-radius: 50%;
+  margin-left: 5px;
+}
+
 /* Button hover effects */
 .btn-glow {
   position: relative;
