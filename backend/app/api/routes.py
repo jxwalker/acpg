@@ -385,11 +385,11 @@ async def list_sample_files():
     import os
     from pathlib import Path
     
-    # Navigate from backend/app/api/routes.py to acpg/samples
-    samples_dir = Path(__file__).parent.parent.parent.parent / "samples"
+    # Use environment variable or default path
+    samples_dir = Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
     
     if not samples_dir.exists():
-        return {"samples": []}
+        return {"samples": [], "error": f"Samples directory not found: {samples_dir}"}
     
     samples = []
     for file in sorted(samples_dir.glob("*.py")):
@@ -424,9 +424,10 @@ async def list_sample_files():
 @router.get("/samples/{filename}")
 async def get_sample_file(filename: str):
     """Get contents of a sample file."""
+    import os
     from pathlib import Path
     
-    samples_dir = Path(__file__).parent.parent.parent.parent / "samples"
+    samples_dir = Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
     file_path = samples_dir / filename
     
     if not file_path.exists() or not file_path.suffix == '.py':

@@ -18,10 +18,12 @@ services:
       - KIMI_API_KEY=${KIMI_API_KEY:-}
       - DATABASE_URL=sqlite:///data/acpg.db
       - POLICIES_DIR=/policies
+      - SAMPLES_DIR=/samples
       - LOG_LEVEL=INFO
     volumes:
       - ./backend:/app
       - ./policies:/policies
+      - ./samples:/samples
       - ./backend/data:/app/data
       - ./backend/keys:/app/keys
     restart: unless-stopped
