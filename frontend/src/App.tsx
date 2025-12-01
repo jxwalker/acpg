@@ -4250,19 +4250,52 @@ function ToolMappingsView({
     severity: 'medium',
     description: ''
   });
+  const [ruleDetails, setRuleDetails] = useState<any>(null);
   
   // Listen for createMapping events from unmapped findings
   useEffect(() => {
-    const handleCreateMapping = (event: CustomEvent) => {
+    const handleCreateMapping = async (event: CustomEvent) => {
       const { toolName, toolRuleId } = event.detail;
-      setNewMapping({
-        toolName,
-        toolRuleId,
-        policyId: '',
-        confidence: 'medium',
-        severity: 'medium',
-        description: ''
-      });
+      
+      // Fetch rule details from the API to auto-populate the form
+      try {
+        const response = await fetch(`/api/v1/static-analysis/tools/${toolName}/rules/${toolRuleId}`);
+        if (response.ok) {
+          const ruleDetails = await response.json();
+          setNewMapping({
+            toolName,
+            toolRuleId,
+            policyId: '',
+            confidence: ruleDetails.severity === 'critical' || ruleDetails.severity === 'high' ? 'high' : 'medium',
+            severity: ruleDetails.severity || 'medium',
+            description: ruleDetails.description || ''
+          });
+          // Store rule details for display
+          setRuleDetails(ruleDetails);
+        } else {
+          // Fallback if rule not found
+          setNewMapping({
+            toolName,
+            toolRuleId,
+            policyId: '',
+            confidence: 'medium',
+            severity: 'medium',
+            description: ''
+          });
+          setRuleDetails(null);
+        }
+      } catch (err) {
+        // Fallback on error
+        setNewMapping({
+          toolName,
+          toolRuleId,
+          policyId: '',
+          confidence: 'medium',
+          severity: 'medium',
+          description: ''
+        });
+        setRuleDetails(null);
+      }
       setShowAddForm(true);
     };
     
@@ -4813,6 +4846,47 @@ function ToolMappingsView({
           <h4 className="text-md font-semibold text-white mb-4">
             {editingMapping ? 'Edit Mapping' : 'Add New Mapping'}
           </h4>
+          
+          {/* Rule Details Panel - shown when mapping an unmapped rule */}
+          {ruleDetails && !editingMapping && (
+            <div className="mb-6 p-4 bg-violet-500/10 rounded-xl border border-violet-500/20">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-lg bg-violet-500/20">
+                  <Info className="w-5 h-5 text-violet-400" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-2 py-0.5 bg-slate-700 text-slate-300 text-xs font-mono rounded">
+                      {ruleDetails.tool_name}:{ruleDetails.rule_id}
+                    </span>
+                    {ruleDetails.severity && (
+                      <span className={`px-2 py-0.5 text-xs rounded ${
+                        ruleDetails.severity === 'high' || ruleDetails.severity === 'critical'
+                          ? 'bg-red-500/20 text-red-400'
+                          : ruleDetails.severity === 'medium'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'bg-slate-500/20 text-slate-400'
+                      }`}>
+                        {ruleDetails.severity}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-300 mb-2">{ruleDetails.description}</p>
+                  {ruleDetails.cwe && (
+                    <div className="text-xs text-slate-400">
+                      <span className="font-medium">CWE:</span> {Array.isArray(ruleDetails.cwe) ? ruleDetails.cwe.join(', ') : ruleDetails.cwe}
+                    </div>
+                  )}
+                  {ruleDetails.category && (
+                    <div className="text-xs text-slate-400 mt-1">
+                      <span className="font-medium">Category:</span> {ruleDetails.category}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          
           <div className="space-y-4">
             <div>
               <label className="block text-sm text-slate-400 mb-1">Tool Name</label>
@@ -4822,7 +4896,7 @@ function ToolMappingsView({
                 onChange={(e) => setNewMapping({...newMapping, toolName: e.target.value})}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
                 placeholder="e.g., bandit"
-                disabled={!!editingMapping}
+                disabled={!!editingMapping || !!ruleDetails}
               />
             </div>
             <div>
@@ -4833,7 +4907,7 @@ function ToolMappingsView({
                 onChange={(e) => setNewMapping({...newMapping, toolRuleId: e.target.value})}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
                 placeholder="e.g., B608"
-                disabled={!!editingMapping}
+                disabled={!!editingMapping || !!ruleDetails}
               />
             </div>
             <div>
@@ -4894,6 +4968,7 @@ function ToolMappingsView({
                 onClick={() => {
                   setShowAddForm(false);
                   setEditingMapping(null);
+                  setRuleDetails(null);
                   setNewMapping({
                     toolName: '',
                     toolRuleId: '',

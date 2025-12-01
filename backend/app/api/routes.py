@@ -706,6 +706,37 @@ async def get_tool_rules_endpoint(tool_name: str):
         raise HTTPException(status_code=500, detail=f"Error getting tool rules: {e}")
 
 
+@router.get("/static-analysis/tools/{tool_name}/rules/{rule_id}")
+async def get_single_tool_rule(tool_name: str, rule_id: str):
+    """Get a specific rule for a tool with its details."""
+    try:
+        rule = get_tool_rule(tool_name, rule_id)
+        if not rule:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Rule '{rule_id}' not found for tool '{tool_name}'"
+            )
+        
+        # Get mapping status
+        mapper = get_tool_mapper()
+        existing_mappings = mapper.get_all_mappings().get(tool_name, {})
+        mapping = existing_mappings.get(rule_id)
+        
+        return {
+            "tool_name": tool_name,
+            "rule_id": rule_id,
+            **rule,
+            "mapped": mapping is not None,
+            "mapped_to_policy": mapping.get("policy_id") if mapping else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Error getting tool rule: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting tool rule: {e}")
+
+
 @router.get("/static-analysis/tools/rules")
 async def get_all_tool_rules_endpoint():
     """Get all available rules for all tools."""

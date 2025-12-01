@@ -12,5 +12,134 @@
       "critical": 1
     },
     "code_hash": "fdac0c09"
+  },
+  {
+    "id": "96bf2ebf",
+    "timestamp": "2025-12-01T10:53:56.418332",
+    "code_preview": "def login(username, password_input):\n    \"\"\"Login function with security vulnerabilities.\"\"\"\n    \n  ...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 9,
+    "policies_passed": 34,
+    "severity_breakdown": {
+      "critical": 5,
+      "high": 4
+    },
+    "code_hash": "6fe09b17"
+  },
+  {
+    "id": "73ab2d0f",
+    "timestamp": "2025-12-01T10:55:55.422143",
+    "code_preview": "def login(username, password_input):\n    \"\"\"Login function with security vulnerabilities.\"\"\"\n    \n  ...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 9,
+    "policies_passed": 34,
+    "severity_breakdown": {
+      "critical": 5,
+      "high": 4
+    },
+    "code_hash": "7d21c571"
+  },
+  {
+    "id": "0bb4f4ea",
+    "timestamp": "2025-12-01T11:01:55.428674",
+    "code_preview": "def login(username, password_input):\n    \"\"\"Login function with security vulnerabilities.\"\"\"\n    \n  ...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 9,
+    "policies_passed": 34,
+    "severity_breakdown": {
+      "critical": 5,
+      "high": 4
+    },
+    "code_hash": "6fe09b17"
+  },
+  {
+    "id": "c81dc487",
+    "timestamp": "2025-12-01T11:02:14.136243",
+    "code_preview": "import os\nimport json\nimport hashlib\nfrom sqlalchemy import create_engine, text\n\ndef login(username,...",
+    "language": "python",
+    "compliant": true,
+    "violations_count": 0,
+    "policies_passed": 39,
+    "severity_breakdown": {},
+    "code_hash": "8125f97e"
+  },
+  {
+    "id": "cf2d0865",
+    "timestamp": "2025-12-01T11:03:05.912270",
+    "code_preview": "\"\"\"\nSample 5: Insecure HTTP Connections\nViolations: SEC-004 (HTTP instead of HTTPS)\n\nThis code demon...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 24,
+    "policies_passed": 37,
+    "severity_breakdown": {
+      "high": 24
+    },
+    "code_hash": "8ed64483"
+  },
+  {
+    "id": "6c343d06",
+    "timestamp": "2025-12-01T11:03:54.106349",
+    "code_preview": "\"\"\"\nSample 5: Secure HTTP Connections\nViolations: SEC-004 (HTTP instead of HTTPS)\n\nThis code demonst...",
+    "language": "python",
+    "compliant": true,
+    "violations_count": 0,
+    "policies_passed": 39,
+    "severity_breakdown": {},
+    "code_hash": "42b4e6a2"
+  },
+  {
+    "id": "9a44a5f3",
+    "timestamp": "2025-12-01T11:04:57.556987",
+    "code_preview": "\"\"\"\nSample 10: Argumentation Conflict Resolution\nDemonstrating how competing arguments are resolved ...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 5,
+    "policies_passed": 37,
+    "severity_breakdown": {
+      "medium": 1,
+      "high": 4
+    },
+    "code_hash": "ab985a63"
+  },
+  {
+    "id": "7cd619aa",
+    "timestamp": "2025-12-01T11:11:33.632702",
+    "code_preview": "import os\nimport hashlib\nimport logging\nfrom dataclasses import dataclass\nfrom typing import Optiona...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 1,
+    "policies_passed": 38,
+    "severity_breakdown": {
+      "high": 1
+    },
+    "code_hash": "20fefaa4"
+  },
+  {
+    "id": "fab9d2c7",
+    "timestamp": "2025-12-01T11:13:50.120357",
+    "code_preview": "\"\"\"\nSample 6: Mixed Vulnerabilities\nMultiple violation types in a realistic application.\n\nViolations...",
+    "language": "python",
+    "compliant": false,
+    "violations_count": 21,
+    "policies_passed": 32,
+    "severity_breakdown": {
+      "critical": 10,
+      "high": 11
+    },
+    "code_hash": "5385d001"
+  },
+  {
+    "id": "33e9c833",
+    "timestamp": "2025-12-01T11:14:59.609678",
+    "code_preview": "\"\"\"\nSample 6: Mixed Vulnerabilities\nMultiple violation types in a realistic application.\n\nViolations...",
+    "language": "python",
+    "compliant": true,
+    "violations_count": 0,
+    "policies_passed": 39,
+    "severity_breakdown": {},
+    "code_hash": "81be927e"
   }
 ]
