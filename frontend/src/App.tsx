@@ -128,6 +128,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [llmProvider, setLlmProvider] = useState<string>('Loading...');
+  const [llmProviders, setLlmProviders] = useState<Array<{id: string; name: string; model: string; is_active: boolean}>>([]);
+  const [showLlmSelector, setShowLlmSelector] = useState(false);
+  const [llmSwitching, setLlmSwitching] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('editor');
   const [codeViewMode, setCodeViewMode] = useState<CodeViewMode>('current');
   const [savedCodes, setSavedCodes] = useState<SavedCode[]>([]);
@@ -257,10 +260,16 @@ export default function App() {
       .then(data => setPolicies(data.policies))
       .catch(err => console.error('Failed to load policies:', err));
     
+    // Load active LLM and available providers
     fetch('/api/v1/llm/active')
       .then(res => res.json())
       .then(data => setLlmProvider(data.name || 'Unknown'))
       .catch(() => setLlmProvider('GPT-4'));
+    
+    fetch('/api/v1/llm/providers')
+      .then(res => res.json())
+      .then(data => setLlmProviders(data || []))
+      .catch(() => setLlmProviders([]));
     
     // Load sample files
     setSampleFilesLoading(true);
@@ -783,10 +792,106 @@ export default function App() {
               
               <div className="h-6 w-px bg-slate-700" />
               
-              {/* LLM Badge */}
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700/50">
-                <Bot className="w-4 h-4 text-cyan-400" />
-                <span className="text-sm text-slate-300">{llmProvider}</span>
+              {/* LLM Selector */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowLlmSelector(!showLlmSelector)}
+                  disabled={llmSwitching}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700/50 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all ${
+                    llmSwitching ? 'opacity-50 cursor-wait' : 'cursor-pointer'
+                  }`}
+                >
+                  <Bot className={`w-4 h-4 text-cyan-400 ${llmSwitching ? 'animate-spin' : ''}`} />
+                  <span className="text-sm text-slate-300">{llmProvider}</span>
+                  <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showLlmSelector ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {/* Backdrop */}
+                {showLlmSelector && (
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={() => setShowLlmSelector(false)}
+                  />
+                )}
+                
+                {/* Dropdown */}
+                {showLlmSelector && (
+                  <div className="absolute top-full right-0 mt-2 w-72 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+                    <div className="p-3 border-b border-white/10">
+                      <span className="text-xs text-slate-500 uppercase tracking-wider">Select AI Model</span>
+                    </div>
+                    <div className="p-2 max-h-80 overflow-y-auto">
+                      {llmProviders.length === 0 ? (
+                        <div className="p-4 text-center text-slate-500 text-sm">
+                          No providers configured
+                        </div>
+                      ) : (
+                        llmProviders.map(provider => (
+                          <button
+                            key={provider.id}
+                            onClick={async () => {
+                              if (provider.is_active) {
+                                setShowLlmSelector(false);
+                                return;
+                              }
+                              setLlmSwitching(true);
+                              try {
+                                const res = await fetch('/api/v1/llm/switch', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ provider_id: provider.id })
+                                });
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  setLlmProvider(data.provider?.name || provider.name);
+                                  setLlmProviders(prev => prev.map(p => ({
+                                    ...p,
+                                    is_active: p.id === provider.id
+                                  })));
+                                } else {
+                                  const err = await res.json();
+                                  setError(err.detail || 'Failed to switch model');
+                                }
+                              } catch (err) {
+                                setError('Failed to switch model');
+                              } finally {
+                                setLlmSwitching(false);
+                                setShowLlmSelector(false);
+                              }
+                            }}
+                            className={`w-full text-left p-3 rounded-lg transition-all ${
+                              provider.is_active
+                                ? 'bg-cyan-500/10 border border-cyan-500/30'
+                                : 'hover:bg-white/5'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Bot className={`w-4 h-4 ${provider.is_active ? 'text-cyan-400' : 'text-slate-500'}`} />
+                                <span className={`text-sm font-medium ${provider.is_active ? 'text-cyan-300' : 'text-slate-300'}`}>
+                                  {provider.name}
+                                </span>
+                              </div>
+                              {provider.is_active && (
+                                <span className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded-full">
+                                  Active
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500 font-mono truncate pl-6">
+                              {provider.model}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="p-2 border-t border-white/10 bg-slate-900/50">
+                      <p className="text-xs text-slate-500 text-center">
+                        Configure models in <code className="text-cyan-400">llm_config.yaml</code>
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               
               {/* Active Policies Badge */}

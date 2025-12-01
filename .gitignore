@@ -65,3 +65,12 @@ audit_logs/
 *.db
 backend/acpg.db
 backend/keys/*.pem
+
+# Additional security exclusions
+*.pem
+*.key
+**/secrets/
+**/.secrets/
+.env*
+!.env.example
+**/credentials*
