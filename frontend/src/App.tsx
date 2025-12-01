@@ -131,6 +131,8 @@ export default function App() {
   const [llmProviders, setLlmProviders] = useState<Array<{id: string; name: string; model: string; is_active: boolean}>>([]);
   const [showLlmSelector, setShowLlmSelector] = useState(false);
   const [llmSwitching, setLlmSwitching] = useState(false);
+  const [llmProviderStatus, setLlmProviderStatus] = useState<Record<string, 'unknown' | 'testing' | 'success' | 'error'>>({});
+  const [testingAllLlm, setTestingAllLlm] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('editor');
   const [codeViewMode, setCodeViewMode] = useState<CodeViewMode>('current');
   const [savedCodes, setSavedCodes] = useState<SavedCode[]>([]);
@@ -270,6 +272,51 @@ export default function App() {
       .then(res => res.json())
       .then(data => setLlmProviders(data || []))
       .catch(() => setLlmProviders([]));
+  }, []);
+
+  // Test a single LLM provider
+  const testLlmProvider = async (id: string): Promise<boolean> => {
+    setLlmProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
+    try {
+      // Switch to provider
+      await fetch('/api/v1/llm/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: id })
+      });
+      // Test it
+      const res = await fetch('/api/v1/llm/test', { method: 'POST' });
+      const result = await res.json();
+      setLlmProviderStatus(prev => ({ ...prev, [id]: result.success ? 'success' : 'error' }));
+      return result.success;
+    } catch {
+      setLlmProviderStatus(prev => ({ ...prev, [id]: 'error' }));
+      return false;
+    }
+  };
+
+  // Test all LLM providers
+  const testAllLlmProviders = async () => {
+    if (llmProviders.length === 0) return;
+    setTestingAllLlm(true);
+    const originalActive = llmProviders.find(p => p.is_active)?.id;
+    
+    for (const provider of llmProviders) {
+      await testLlmProvider(provider.id);
+    }
+    
+    // Switch back to original
+    if (originalActive) {
+      await fetch('/api/v1/llm/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: originalActive })
+      });
+    }
+    setTestingAllLlm(false);
+  };
+
+  useEffect(() => {
     
     // Load sample files
     setSampleFilesLoading(true);
@@ -829,9 +876,20 @@ export default function App() {
                 
                 {/* Dropdown */}
                 {showLlmSelector && (
-                  <div className="absolute top-full right-0 mt-2 w-72 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
-                    <div className="p-3 border-b border-white/10">
+                  <div className="absolute top-full right-0 mt-2 w-80 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+                    <div className="p-3 border-b border-white/10 flex items-center justify-between">
                       <span className="text-xs text-slate-500 uppercase tracking-wider">Select AI Model</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); testAllLlmProviders(); }}
+                        disabled={testingAllLlm}
+                        className="text-xs px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded hover:bg-emerald-500/20 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {testingAllLlm ? (
+                          <><RefreshCw className="w-3 h-3 animate-spin" /> Testing...</>
+                        ) : (
+                          <><CheckCircle2 className="w-3 h-3" /> Test All</>
+                        )}
+                      </button>
                     </div>
                     <div className="p-2 max-h-80 overflow-y-auto">
                       {llmProviders.length === 0 ? (
@@ -880,16 +938,39 @@ export default function App() {
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <Bot className={`w-4 h-4 ${provider.is_active ? 'text-cyan-400' : 'text-slate-500'}`} />
+                                {/* Status indicator */}
+                                <div className="relative">
+                                  <Bot className={`w-4 h-4 ${provider.is_active ? 'text-cyan-400' : 'text-slate-500'}`} />
+                                  {llmProviderStatus[provider.id] && (
+                                    <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border border-slate-800 ${
+                                      llmProviderStatus[provider.id] === 'testing' ? 'bg-amber-500 animate-pulse' :
+                                      llmProviderStatus[provider.id] === 'success' ? 'bg-emerald-500' :
+                                      llmProviderStatus[provider.id] === 'error' ? 'bg-red-500' :
+                                      'bg-slate-500'
+                                    }`} />
+                                  )}
+                                </div>
                                 <span className={`text-sm font-medium ${provider.is_active ? 'text-cyan-300' : 'text-slate-300'}`}>
                                   {provider.name}
                                 </span>
                               </div>
-                              {provider.is_active && (
-                                <span className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded-full">
-                                  Active
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1.5">
+                                {llmProviderStatus[provider.id] === 'success' && (
+                                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">
+                                    Online
+                                  </span>
+                                )}
+                                {llmProviderStatus[provider.id] === 'error' && (
+                                  <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">
+                                    Offline
+                                  </span>
+                                )}
+                                {provider.is_active && (
+                                  <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div className="mt-1 text-xs text-slate-500 font-mono truncate pl-6">
                               {provider.model}
@@ -899,9 +980,13 @@ export default function App() {
                       )}
                     </div>
                     <div className="p-2 border-t border-white/10 bg-slate-900/50">
-                      <p className="text-xs text-slate-500 text-center">
-                        Configure models in <code className="text-cyan-400">llm_config.yaml</code>
-                      </p>
+                      <button
+                        onClick={() => { setShowLlmSelector(false); setViewMode('models'); }}
+                        className="w-full text-xs text-cyan-400 hover:text-cyan-300 py-1 flex items-center justify-center gap-1"
+                      >
+                        <Settings className="w-3 h-3" />
+                        Configure Models
+                      </button>
                     </div>
                   </div>
                 )}
