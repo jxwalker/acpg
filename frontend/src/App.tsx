@@ -6912,6 +6912,12 @@ function ModelsConfigurationView() {
       const providerData = editingProvider || newProvider;
       const isNew = !editingProvider;
       
+      // Build payload - exclude api_key if editing and it's hidden/empty (keep existing)
+      const payload: Record<string, any> = { ...providerData };
+      if (!isNew && (payload.api_key === '***HIDDEN***' || payload.api_key === '')) {
+        delete payload.api_key;  // Don't send api_key to keep the existing one
+      }
+      
       const url = isNew 
         ? '/api/v1/llm/providers/'
         : `/api/v1/llm/providers/${providerData.id}`;
@@ -6919,7 +6925,7 @@ function ModelsConfigurationView() {
       const res = await fetch(url, {
         method: isNew ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(providerData)
+        body: JSON.stringify(payload)
       });
       
       if (!res.ok) {
@@ -7190,16 +7196,33 @@ function ModelsConfigurationView() {
                   (use {"${ENV_VAR}"} to reference environment variables)
                 </span>
               </label>
-              <input
-                type="text"
-                value={(editingProvider || newProvider).api_key}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, api_key: e.target.value})
-                  : setNewProvider({...newProvider, api_key: e.target.value})
-                }
-                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white font-mono text-sm"
-                placeholder="${OPENAI_API_KEY}"
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  value={(editingProvider || newProvider).api_key === '***HIDDEN***' 
+                    ? '' 
+                    : (editingProvider || newProvider).api_key}
+                  onChange={(e) => editingProvider 
+                    ? setEditingProvider({...editingProvider, api_key: e.target.value})
+                    : setNewProvider({...newProvider, api_key: e.target.value})
+                  }
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white font-mono text-sm"
+                  placeholder={editingProvider?.api_key === '***HIDDEN***' 
+                    ? "Enter new API key to change (current key is hidden)" 
+                    : "${OPENAI_API_KEY}"}
+                />
+                {editingProvider?.api_key_set && editingProvider?.api_key === '***HIDDEN***' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+                    <span className="text-xs text-emerald-400">Key set</span>
+                  </div>
+                )}
+              </div>
+              {editingProvider && editingProvider.api_key === '***HIDDEN***' && (
+                <p className="text-xs text-amber-400 mt-1">
+                  Leave blank to keep existing key, or enter a new value to change it
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-slate-400 mb-1">Max Tokens</label>
