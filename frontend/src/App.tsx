@@ -6783,6 +6783,8 @@ function ModelsConfigurationView() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<any>(null);
+  const [providerStatus, setProviderStatus] = useState<Record<string, 'unknown' | 'testing' | 'success' | 'error'>>({});
+  const [testingAll, setTestingAll] = useState(false);
   
   const [newProvider, setNewProvider] = useState({
     id: '',
@@ -6883,9 +6885,11 @@ function ModelsConfigurationView() {
     }
   };
 
-  const handleTestProvider = async (id: string) => {
+  const handleTestProvider = async (id: string, showResult = true) => {
     setTesting(id);
-    setTestResult(null);
+    setProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
+    if (showResult) setTestResult(null);
+    
     try {
       // First switch to this provider temporarily
       await fetch('/api/v1/llm/switch', {
@@ -6897,7 +6901,9 @@ function ModelsConfigurationView() {
       // Run the test
       const res = await fetch('/api/v1/llm/test', { method: 'POST' });
       const result = await res.json();
-      setTestResult({ id, ...result });
+      
+      setProviderStatus(prev => ({ ...prev, [id]: result.success ? 'success' : 'error' }));
+      if (showResult) setTestResult({ id, ...result });
       
       // Switch back to original active
       if (activeProvider && activeProvider !== id) {
@@ -6907,11 +6913,41 @@ function ModelsConfigurationView() {
           body: JSON.stringify({ provider_id: activeProvider })
         });
       }
+      
+      return result.success;
     } catch (err: any) {
-      setTestResult({ id, success: false, error: err.message });
+      setProviderStatus(prev => ({ ...prev, [id]: 'error' }));
+      if (showResult) setTestResult({ id, success: false, error: err.message });
+      return false;
     } finally {
       setTesting(null);
     }
+  };
+
+  const handleTestAllProviders = async () => {
+    setTestingAll(true);
+    setTestResult(null);
+    
+    // Reset all statuses to testing
+    const initialStatus: Record<string, 'testing'> = {};
+    providers.forEach(p => { initialStatus[p.id] = 'testing'; });
+    setProviderStatus(initialStatus);
+    
+    // Test each provider sequentially
+    for (const provider of providers) {
+      await handleTestProvider(provider.id, false);
+    }
+    
+    // Switch back to original active provider
+    if (activeProvider) {
+      await fetch('/api/v1/llm/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: activeProvider })
+      });
+    }
+    
+    setTestingAll(false);
   };
 
   const providerTypes = [
@@ -6943,13 +6979,32 @@ function ModelsConfigurationView() {
               <p className="text-slate-400">Configure and manage LLM providers for code generation</p>
             </div>
           </div>
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-xl hover:bg-cyan-500/30 transition-colors flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Add Provider
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleTestAllProviders}
+              disabled={testingAll}
+              className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-xl hover:bg-emerald-500/30 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              {testingAll ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  Test All
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-xl hover:bg-cyan-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Provider
+            </button>
+          </div>
         </div>
       </div>
 
@@ -7162,7 +7217,7 @@ function ModelsConfigurationView() {
           >
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-xl ${
+                <div className={`relative p-3 rounded-xl ${
                   provider.id === activeProvider 
                     ? 'bg-cyan-500/20' 
                     : 'bg-slate-800/50'
@@ -7170,6 +7225,25 @@ function ModelsConfigurationView() {
                   <Bot className={`w-6 h-6 ${
                     provider.id === activeProvider ? 'text-cyan-400' : 'text-slate-400'
                   }`} />
+                  {/* Status indicator */}
+                  {providerStatus[provider.id] && (
+                    <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 flex items-center justify-center ${
+                      providerStatus[provider.id] === 'testing' ? 'bg-amber-500' :
+                      providerStatus[provider.id] === 'success' ? 'bg-emerald-500' :
+                      providerStatus[provider.id] === 'error' ? 'bg-red-500' :
+                      'bg-slate-500'
+                    }`}>
+                      {providerStatus[provider.id] === 'testing' && (
+                        <RefreshCw className="w-2.5 h-2.5 text-white animate-spin" />
+                      )}
+                      {providerStatus[provider.id] === 'success' && (
+                        <Check className="w-2.5 h-2.5 text-white" />
+                      )}
+                      {providerStatus[provider.id] === 'error' && (
+                        <XCircle className="w-2.5 h-2.5 text-white" />
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
@@ -7177,6 +7251,16 @@ function ModelsConfigurationView() {
                     {provider.id === activeProvider && (
                       <span className="px-2 py-0.5 text-xs bg-cyan-500/20 text-cyan-400 rounded-full">
                         Active
+                      </span>
+                    )}
+                    {providerStatus[provider.id] === 'success' && (
+                      <span className="px-2 py-0.5 text-xs bg-emerald-500/20 text-emerald-400 rounded-full">
+                        Online
+                      </span>
+                    )}
+                    {providerStatus[provider.id] === 'error' && (
+                      <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-400 rounded-full">
+                        Offline
                       </span>
                     )}
                   </div>
