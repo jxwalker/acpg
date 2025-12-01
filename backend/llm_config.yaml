@@ -2,7 +2,7 @@
 # Configure multiple LLM providers and select the active one
 
 # Active provider (change this to switch LLM backends)
-active_provider: kimi
+active_provider: local_vllm
 
 providers:
   # Local vLLM server with Qwen2.5-Coder
