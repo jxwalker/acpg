@@ -803,6 +803,14 @@ export default function App() {
                   <ChevronDown className={`w-4 h-4 transition-transform ${showSampleMenu ? 'rotate-180' : ''}`} />
                 </button>
                 
+                {/* Backdrop to close menu when clicking outside */}
+                {showSampleMenu && (
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={() => setShowSampleMenu(false)}
+                  />
+                )}
+                
                 {showSampleMenu && (
                   <div className="absolute top-full right-0 mt-2 w-80 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
                     <div className="p-2 border-b border-white/10">
