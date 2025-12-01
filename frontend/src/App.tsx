@@ -9,7 +9,8 @@ import {
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
   List, Plus, Edit2, BookOpen, Settings, Link2, Power,
-  Keyboard, HelpCircle, Sun, Moon, Monitor
+  Keyboard, HelpCircle, Sun, Moon, Monitor,
+  HardDrive, FileJson, FileText
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -107,9 +108,13 @@ export default function App() {
     localStorage.setItem('acpg-theme', theme);
   }, [theme]);
 
-  const [code, setCode] = useState(SAMPLE_CODE);
+  const [code, setCode] = useState(() => {
+    const saved = localStorage.getItem('acpg-autosave-code');
+    return saved || SAMPLE_CODE;
+  });
   const [originalCode, setOriginalCode] = useState(SAMPLE_CODE);
   const [language] = useState('python');
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [workflow, setWorkflow] = useState<WorkflowState>({ 
     step: 'idle', 
     iteration: 0, 
@@ -158,6 +163,30 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('acpg-minimap', String(showMinimap));
   }, [showMinimap]);
+
+  // Auto-save code to localStorage
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastAutoSave, setLastAutoSave] = useState<Date | null>(null);
+  
+  useEffect(() => {
+    if (!autoSaveEnabled) return;
+    
+    // Debounce auto-save by 1 second
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+    
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      localStorage.setItem('acpg-autosave-code', code);
+      setLastAutoSave(new Date());
+    }, 1000);
+    
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [code, autoSaveEnabled]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<any>(null);
@@ -1416,6 +1445,22 @@ export default function App() {
                         <rect x="14" y="3" width="7" height="18" rx="1" />
                         <rect x="3" y="3" width="8" height="18" rx="1" />
                       </svg>
+                    </button>
+                    <button
+                      onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                      className={`p-2 rounded-lg transition-all flex items-center gap-1.5 ${
+                        autoSaveEnabled 
+                          ? 'text-emerald-400 bg-emerald-500/10' 
+                          : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                      }`}
+                      title={autoSaveEnabled ? "Auto-save enabled" : "Auto-save disabled"}
+                    >
+                      <HardDrive className="w-4 h-4" />
+                      {autoSaveEnabled && lastAutoSave && (
+                        <span className="text-[10px] text-emerald-400/70">
+                          saved
+                        </span>
+                      )}
                     </button>
                     <div className="h-4 w-px bg-slate-700" />
                     <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -2753,6 +2798,43 @@ function ViolationsList({
     return policy?.fix_suggestion;
   });
 
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const exportViolations = (format: 'json' | 'csv') => {
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    if (format === 'json') {
+      content = JSON.stringify(violations, null, 2);
+      filename = `violations-${new Date().toISOString().split('T')[0]}.json`;
+      mimeType = 'application/json';
+    } else {
+      // CSV format
+      const headers = ['Rule ID', 'Severity', 'Message', 'Line', 'Category', 'Source'];
+      const rows = violations.map(v => [
+        v.rule_id,
+        v.severity,
+        `"${(v.message || '').replace(/"/g, '""')}"`,
+        v.line || '',
+        v.category || '',
+        v.source || ''
+      ]);
+      content = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      filename = `violations-${new Date().toISOString().split('T')[0]}.csv`;
+      mimeType = 'text/csv';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowExportMenu(false);
+  };
+
   return (
     <div className="glass rounded-2xl overflow-hidden border border-white/5 animate-slide-up stagger-1">
       <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
@@ -2762,9 +2844,40 @@ function ViolationsList({
           </div>
           <span className="font-semibold text-slate-200">Policy Violations</span>
         </div>
-        <span className="px-3 py-1 text-sm font-semibold bg-red-500/10 text-red-400 rounded-full">
-          {violations.length} found
-        </span>
+        <div className="flex items-center gap-2">
+          {/* Export Button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all"
+              title="Export violations"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            {showExportMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 w-32 glass rounded-lg border border-white/10 shadow-xl z-50 overflow-hidden">
+                  <button
+                    onClick={() => exportViolations('json')}
+                    className="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/5 flex items-center gap-2"
+                  >
+                    <FileJson className="w-4 h-4" /> JSON
+                  </button>
+                  <button
+                    onClick={() => exportViolations('csv')}
+                    className="w-full px-3 py-2 text-left text-sm text-slate-300 hover:bg-white/5 flex items-center gap-2"
+                  >
+                    <FileText className="w-4 h-4" /> CSV
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <span className="px-3 py-1 text-sm font-semibold bg-red-500/10 text-red-400 rounded-full">
+            {violations.length} found
+          </span>
+        </div>
       </div>
       
       {/* Quick Fixes Summary Panel */}
