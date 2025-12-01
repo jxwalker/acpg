@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, createContext, useContext } from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import { 
   Shield, ShieldCheck, ShieldAlert,
@@ -12,6 +12,58 @@ import {
   Keyboard, HelpCircle, Sun, Moon, Monitor,
   HardDrive, FileJson, FileText
 } from 'lucide-react';
+
+// Toast notification types
+type ToastType = 'success' | 'error' | 'info' | 'warning';
+interface Toast {
+  id: string;
+  message: string;
+  type: ToastType;
+  duration?: number;
+}
+
+// Toast Context
+const ToastContext = createContext<{
+  addToast: (message: string, type?: ToastType, duration?: number) => void;
+  removeToast: (id: string) => void;
+} | null>(null);
+
+const useToast = () => {
+  const context = useContext(ToastContext);
+  if (!context) throw new Error('useToast must be used within ToastProvider');
+  return context;
+};
+
+// Toast Container Component
+const ToastContainer = ({ toasts, removeToast }: { toasts: Toast[]; removeToast: (id: string) => void }) => {
+  return (
+    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+      {toasts.map(toast => (
+        <div
+          key={toast.id}
+          className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg animate-slide-up backdrop-blur-xl border ${
+            toast.type === 'success' ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300' :
+            toast.type === 'error' ? 'bg-red-500/20 border-red-500/30 text-red-300' :
+            toast.type === 'warning' ? 'bg-amber-500/20 border-amber-500/30 text-amber-300' :
+            'bg-cyan-500/20 border-cyan-500/30 text-cyan-300'
+          }`}
+        >
+          {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
+          {toast.type === 'error' && <XCircle className="w-5 h-5 text-red-400" />}
+          {toast.type === 'warning' && <AlertTriangle className="w-5 h-5 text-amber-400" />}
+          {toast.type === 'info' && <Info className="w-5 h-5 text-cyan-400" />}
+          <span className="text-sm font-medium">{toast.message}</span>
+          <button 
+            onClick={() => removeToast(toast.id)}
+            className="ml-2 opacity-60 hover:opacity-100 transition-opacity"
+          >
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
 import { api } from './api';
 import type { 
   PolicyRule, Violation, AnalysisResult, 
@@ -90,6 +142,21 @@ interface SavedCode {
 type Theme = 'dark' | 'light' | 'system';
 
 export default function App() {
+  // Toast notifications
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  
+  const addToast = useCallback((message: string, type: ToastType = 'info', duration = 4000) => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, message, type, duration }]);
+    if (duration > 0) {
+      setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), duration);
+    }
+  }, []);
+  
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
   // Theme state - persist to localStorage
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('acpg-theme');
@@ -190,6 +257,7 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<any>(null);
+  const [isDragging, setIsDragging] = useState(false);
   
   // Handle editor mount to get reference
   const handleEditorMount = (editor: any) => {
@@ -285,6 +353,41 @@ export default function App() {
     };
   }, [code, realTimeEnabled, workflow.step, language]);
 
+  // Test a single LLM provider
+  const testLlmProvider = async (id: string, showToast = false): Promise<boolean> => {
+    setLlmProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
+    try {
+      // Switch to provider
+      await fetch('/api/v1/llm/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: id })
+      });
+      // Test it
+      const res = await fetch('/api/v1/llm/test', { method: 'POST' });
+      const result = await res.json();
+      const success = result.success;
+      setLlmProviderStatus(prev => ({ ...prev, [id]: success ? 'success' : 'error' }));
+      if (showToast) {
+        const provider = llmProviders.find(p => p.id === id);
+        const name = provider?.name || id;
+        addToast(
+          success ? `${name} is online and working` : `${name} connection failed`,
+          success ? 'success' : 'error'
+        );
+      }
+      return success;
+    } catch {
+      setLlmProviderStatus(prev => ({ ...prev, [id]: 'error' }));
+      if (showToast) {
+        const provider = llmProviders.find(p => p.id === id);
+        const name = provider?.name || id;
+        addToast(`${name} connection failed`, 'error');
+      }
+      return false;
+    }
+  };
+
   // Load policies, LLM info, and sample files on mount
   useEffect(() => {
     api.listPolicies()
@@ -299,30 +402,17 @@ export default function App() {
     
     fetch('/api/v1/llm/providers')
       .then(res => res.json())
-      .then(data => setLlmProviders(data || []))
+      .then(async (data) => {
+        const providers = data || [];
+        setLlmProviders(providers);
+        // Auto-test the active provider
+        const activeProvider = providers.find((p: any) => p.is_active);
+        if (activeProvider) {
+          await testLlmProvider(activeProvider.id);
+        }
+      })
       .catch(() => setLlmProviders([]));
   }, []);
-
-  // Test a single LLM provider
-  const testLlmProvider = async (id: string): Promise<boolean> => {
-    setLlmProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
-    try {
-      // Switch to provider
-      await fetch('/api/v1/llm/switch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: id })
-      });
-      // Test it
-      const res = await fetch('/api/v1/llm/test', { method: 'POST' });
-      const result = await res.json();
-      setLlmProviderStatus(prev => ({ ...prev, [id]: result.success ? 'success' : 'error' }));
-      return result.success;
-    } catch {
-      setLlmProviderStatus(prev => ({ ...prev, [id]: 'error' }));
-      return false;
-    }
-  };
 
   // Test all LLM providers
   const testAllLlmProviders = async () => {
@@ -330,8 +420,10 @@ export default function App() {
     setTestingAllLlm(true);
     const originalActive = llmProviders.find(p => p.is_active)?.id;
     
+    let successCount = 0;
     for (const provider of llmProviders) {
-      await testLlmProvider(provider.id);
+      const success = await testLlmProvider(provider.id);
+      if (success) successCount++;
     }
     
     // Switch back to original
@@ -343,6 +435,10 @@ export default function App() {
       });
     }
     setTestingAllLlm(false);
+    addToast(
+      `Tested ${llmProviders.length} providers: ${successCount} online, ${llmProviders.length - successCount} offline`,
+      successCount === llmProviders.length ? 'success' : 'warning'
+    );
   };
 
   useEffect(() => {
@@ -401,6 +497,7 @@ export default function App() {
     setError(null);
     setEnforceResult(null);
     setAnalysisProgress({ phase: 'starting', message: 'Initializing analysis...' });
+    addToast('Starting analysis...', 'info', 2000);
     setWorkflow({ step: 'prosecutor', iteration: 0, maxIterations: 3, violations: 0 });
     
     try {
@@ -450,17 +547,21 @@ export default function App() {
       
       // Clear progress after a moment
       setTimeout(() => setAnalysisProgress(null), 2000);
+      addToast('Analysis completed successfully', 'success');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed');
+      const errorMsg = err instanceof Error ? err.message : 'Analysis failed';
+      setError(errorMsg);
+      addToast(errorMsg, 'error');
       setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
-  }, [code, language]);
+  }, [code, language, addToast]);
 
   const handleEnforce = useCallback(async () => {
     setError(null);
     setOriginalCode(code); // Save original for diff
     setAnalysisProgress({ phase: 'starting', message: 'Starting enforcement...' });
+    addToast('Starting auto-fix...', 'info', 2000);
     setWorkflow({ step: 'prosecutor', iteration: 1, maxIterations: 3, violations: 0 });
     
     try {
@@ -512,12 +613,15 @@ export default function App() {
       setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
       setWorkflow(w => ({ ...w, step: 'complete', violations: finalAnalysis.violations.length }));
       setTimeout(() => setAnalysisProgress(null), 2000);
+      addToast('Auto-fix completed successfully', 'success');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Enforcement failed');
+      const errorMsg = err instanceof Error ? err.message : 'Enforcement failed';
+      setError(errorMsg);
+      addToast(errorMsg, 'error');
       setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
-  }, [code, language]);
+  }, [code, language, addToast]);
 
   const handleGenerateReport = useCallback(async (format: 'json' | 'markdown' | 'html' = 'json') => {
     setReportLoading(true);
@@ -613,8 +717,11 @@ export default function App() {
       setViewMode('editor');
       setCodeViewMode('current');
       setShowSampleMenu(false);
+      addToast(`Loaded sample: ${filename}`, 'success');
     } catch (err) {
-      setError('Failed to load sample file');
+      const errorMsg = 'Failed to load sample file';
+      setError(errorMsg);
+      addToast(errorMsg, 'error');
     }
   };
 
@@ -647,6 +754,7 @@ export default function App() {
     setShowSaveDialog(false);
     setSaveName('');
     setSaveTags('');
+    addToast(`Code bookmark "${saveName.trim()}" saved`, 'success');
   };
   
   const toggleFavorite = (id: string) => {
@@ -2116,6 +2224,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }
