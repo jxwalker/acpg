@@ -1,6 +1,6 @@
 """Proof Assembler Service - Compile and sign proof-carrying artifacts."""
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..models.schemas import (
     ProofBundle, ArtifactMetadata, PolicyOutcome, Evidence,
@@ -56,8 +56,8 @@ class ProofAssembler:
         # Gather evidence
         evidence = self._gather_evidence(analysis, adjudication)
         
-        # Extract argumentation trace
-        argumentation = self._extract_argumentation(adjudication)
+        # Extract argumentation trace (with tool metadata)
+        argumentation = self._extract_argumentation(adjudication, analysis)
         
         # Determine decision
         decision = "Compliant" if adjudication.compliant else "Non-compliant"
@@ -67,10 +67,13 @@ class ProofAssembler:
         if 'timestamp' in artifact_dict and hasattr(artifact_dict['timestamp'], 'isoformat'):
             artifact_dict['timestamp'] = artifact_dict['timestamp'].isoformat()
         
-        signing_timestamp = datetime.utcnow().isoformat()
+        signing_timestamp = datetime.now(timezone.utc).isoformat()
         
+        # Include code in bundle data for tamper detection
+        # The signature will cover the code, so any modification will invalidate it
         bundle_data = {
             "artifact": artifact_dict,
+            "code": code,  # Include actual code in signed data
             "policies": [p.model_dump() for p in policies],
             "evidence": [e.model_dump() for e in evidence],
             "argumentation": argumentation,
@@ -78,7 +81,7 @@ class ProofAssembler:
             "timestamp": signing_timestamp
         }
         
-        # Sign the bundle
+        # Sign the bundle (includes code, so tampering with code invalidates signature)
         signature = self.signer.sign_proof(bundle_data)
         
         signed_info = {
@@ -91,6 +94,7 @@ class ProofAssembler:
         
         return ProofBundle(
             artifact=artifact,
+            code=code,  # Include code in bundle
             policies=policies,
             evidence=evidence,
             argumentation=argumentation,
@@ -109,17 +113,33 @@ class ProofAssembler:
             True if signature is valid
         """
         # Reconstruct the data that was signed
+        # Must include code to verify it hasn't been tampered with
+        artifact_dict = bundle.artifact.model_dump()
+        if 'timestamp' in artifact_dict and hasattr(artifact_dict['timestamp'], 'isoformat'):
+            artifact_dict['timestamp'] = artifact_dict['timestamp'].isoformat()
+        
         bundle_data = {
-            "artifact": bundle.artifact.model_dump(),
+            "artifact": artifact_dict,
+            "code": bundle.code,  # Include code in verification
             "policies": [p.model_dump() for p in bundle.policies],
             "evidence": [e.model_dump() for e in bundle.evidence],
             "argumentation": bundle.argumentation,
             "decision": bundle.decision,
-            # Note: timestamp would need to be stored/recovered for verification
+            "timestamp": bundle.signed.get("signed_at", "")  # Use stored timestamp
         }
         
+        # Verify signature covers code
         signature = bundle.signed.get("signature", "")
-        return self.signer.verify_signature(bundle_data, signature)
+        if not self.signer.verify_signature(bundle_data, signature):
+            return False
+        
+        # Verify code hash matches artifact hash
+        import hashlib
+        code_hash = hashlib.sha256(bundle.code.encode()).hexdigest()
+        if code_hash != bundle.artifact.hash:
+            return False  # Code has been modified
+        
+        return True
     
     def export_proof(self, bundle: ProofBundle, format: str = "json") -> str:
         """
@@ -127,12 +147,13 @@ class ProofAssembler:
         
         Args:
             bundle: ProofBundle to export
-            format: Export format ('json', 'summary')
+            format: Export format ('json', 'summary', 'markdown', 'html')
             
         Returns:
             Serialized proof bundle
         """
         import json
+        from datetime import datetime
         
         if format == "json":
             # Convert to JSON with custom serialization for datetime
@@ -179,8 +200,202 @@ class ProofAssembler:
             
             return "\n".join(lines)
         
+        elif format == "markdown":
+            return self._export_markdown(bundle)
+        
+        elif format == "html":
+            return self._export_html(bundle)
+        
         else:
-            raise ValueError(f"Unknown format: {format}")
+            raise ValueError(f"Unknown format: {format}. Supported: json, summary, markdown, html")
+    
+    def _export_markdown(self, bundle: ProofBundle) -> str:
+        """Export proof bundle as Markdown."""
+        lines = [
+            "# ACPG Proof Bundle",
+            "",
+            "## Artifact Information",
+            "",
+            f"- **Name**: {bundle.artifact.name or 'unnamed'}",
+            f"- **Hash**: `{bundle.artifact.hash}`",
+            f"- **Language**: {bundle.artifact.language}",
+            f"- **Generator**: {bundle.artifact.generator}",
+            f"- **Timestamp**: {bundle.artifact.timestamp}",
+            "",
+            f"## Decision: {bundle.decision.upper()}",
+            "",
+            "## Policies",
+            "",
+        ]
+        
+        satisfied = [p for p in bundle.policies if p.result == "satisfied"]
+        violated = [p for p in bundle.policies if p.result == "violated"]
+        
+        if satisfied:
+            lines.append("### Satisfied Policies")
+            lines.append("")
+            for p in satisfied:
+                lines.append(f"- ✅ **{p.id}**: {p.description}")
+            lines.append("")
+        
+        if violated:
+            lines.append("### Violated Policies")
+            lines.append("")
+            for p in violated:
+                lines.append(f"- ❌ **{p.id}**: {p.description}")
+            lines.append("")
+        
+        if bundle.evidence:
+            lines.extend([
+                "## Evidence",
+                "",
+            ])
+            for i, ev in enumerate(bundle.evidence, 1):
+                lines.append(f"### Evidence {i}")
+                lines.append(f"- **Type**: {ev.type}")
+                lines.append(f"- **Description**: {ev.description}")
+                if ev.location:
+                    loc = ev.location
+                    if 'file' in loc:
+                        lines.append(f"- **File**: {loc['file']}")
+                    if 'line' in loc:
+                        lines.append(f"- **Line**: {loc['line']}")
+                lines.append("")
+        
+        if bundle.argumentation:
+            lines.extend([
+                "## Argumentation",
+                "",
+                f"**Summary**: {bundle.argumentation.summary.explanation}",
+                "",
+            ])
+            
+            if bundle.argumentation.arguments:
+                lines.append("### Arguments")
+                lines.append("")
+                for arg in bundle.argumentation.arguments:
+                    status = "✅ ACCEPTED" if arg.get('accepted', False) else "❌ REJECTED"
+                    lines.append(f"- **{arg.get('id', 'unknown')}** ({status}): {arg.get('claim', 'N/A')}")
+                lines.append("")
+        
+        lines.extend([
+            "## Cryptographic Signature",
+            "",
+            f"- **Algorithm**: {bundle.signed.get('algorithm', 'unknown')}",
+            f"- **Signer**: {bundle.signed.get('signer', 'unknown')}",
+            f"- **Fingerprint**: `{bundle.signed.get('public_key_fingerprint', 'unknown')}`",
+            f"- **Signature**: `{bundle.signed.get('signature', 'unknown')[:64]}...`",
+            "",
+            "---",
+            f"*Generated by {bundle.artifact.generator} on {bundle.artifact.timestamp}*",
+        ])
+        
+        return "\n".join(lines)
+    
+    def _export_html(self, bundle: ProofBundle) -> str:
+        """Export proof bundle as HTML."""
+        html = [
+            "<!DOCTYPE html>",
+            "<html>",
+            "<head>",
+            "<meta charset='utf-8'>",
+            "<title>ACPG Proof Bundle</title>",
+            "<style>",
+            "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #0f172a; color: #e2e8f0; }",
+            "h1 { color: #10b981; border-bottom: 2px solid #10b981; padding-bottom: 10px; }",
+            "h2 { color: #34d399; margin-top: 30px; }",
+            "h3 { color: #6ee7b7; }",
+            ".decision { font-size: 1.5em; font-weight: bold; padding: 15px; border-radius: 8px; margin: 20px 0; }",
+            ".compliant { background: #065f46; color: #6ee7b7; }",
+            ".non-compliant { background: #7f1d1d; color: #fca5a5; }",
+            ".policy { padding: 10px; margin: 5px 0; border-radius: 5px; border-left: 4px solid; }",
+            ".satisfied { background: #064e3b; border-color: #10b981; }",
+            ".violated { background: #7f1d1d; border-color: #ef4444; }",
+            ".evidence { background: #1e293b; padding: 15px; margin: 10px 0; border-radius: 5px; }",
+            ".signature { background: #1e293b; padding: 15px; border-radius: 5px; font-family: monospace; }",
+            "code { background: #1e293b; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }",
+            ".meta { color: #94a3b8; font-size: 0.9em; }",
+            "</style>",
+            "</head>",
+            "<body>",
+            f"<h1>ACPG Proof Bundle</h1>",
+            "",
+            "<div class='meta'>",
+            f"<p><strong>Artifact:</strong> {bundle.artifact.name or 'unnamed'}</p>",
+            f"<p><strong>Hash:</strong> <code>{bundle.artifact.hash}</code></p>",
+            f"<p><strong>Language:</strong> {bundle.artifact.language}</p>",
+            f"<p><strong>Generator:</strong> {bundle.artifact.generator}</p>",
+            f"<p><strong>Timestamp:</strong> {bundle.artifact.timestamp}</p>",
+            "</div>",
+            "",
+            f"<div class='decision {'compliant' if bundle.decision == 'compliant' else 'non-compliant'}'>",
+            f"Decision: {bundle.decision.upper()}",
+            "</div>",
+            "",
+            "<h2>Policies</h2>",
+        ]
+        
+        satisfied = [p for p in bundle.policies if p.result == "satisfied"]
+        violated = [p for p in bundle.policies if p.result == "violated"]
+        
+        if satisfied:
+            html.append("<h3>Satisfied Policies</h3>")
+            for p in satisfied:
+                html.append(f"<div class='policy satisfied'>✅ <strong>{p.id}</strong>: {p.description}</div>")
+        
+        if violated:
+            html.append("<h3>Violated Policies</h3>")
+            for p in violated:
+                html.append(f"<div class='policy violated'>❌ <strong>{p.id}</strong>: {p.description}</div>")
+        
+        if bundle.evidence:
+            html.extend([
+                "",
+                "<h2>Evidence</h2>",
+            ])
+            for i, ev in enumerate(bundle.evidence, 1):
+                html.append(f"<div class='evidence'>")
+                html.append(f"<h3>Evidence {i}</h3>")
+                html.append(f"<p><strong>Type:</strong> {ev.type}</p>")
+                html.append(f"<p><strong>Description:</strong> {ev.description}</p>")
+                if ev.location:
+                    loc = ev.location
+                    if 'file' in loc:
+                        html.append(f"<p><strong>File:</strong> {loc['file']}</p>")
+                    if 'line' in loc:
+                        html.append(f"<p><strong>Line:</strong> {loc['line']}</p>")
+                html.append("</div>")
+        
+        if bundle.argumentation:
+            html.extend([
+                "",
+                "<h2>Argumentation</h2>",
+                f"<p>{bundle.argumentation.summary.explanation}</p>",
+            ])
+            
+            if bundle.argumentation.arguments:
+                html.append("<h3>Arguments</h3>")
+                for arg in bundle.argumentation.arguments:
+                    status = "✅ ACCEPTED" if arg.get('accepted', False) else "❌ REJECTED"
+                    html.append(f"<p><strong>{arg.get('id', 'unknown')}</strong> ({status}): {arg.get('claim', 'N/A')}</p>")
+        
+        html.extend([
+            "",
+            "<h2>Cryptographic Signature</h2>",
+            "<div class='signature'>",
+            f"<p><strong>Algorithm:</strong> {bundle.signed.get('algorithm', 'unknown')}</p>",
+            f"<p><strong>Signer:</strong> {bundle.signed.get('signer', 'unknown')}</p>",
+            f"<p><strong>Fingerprint:</strong> <code>{bundle.signed.get('public_key_fingerprint', 'unknown')}</code></p>",
+            f"<p><strong>Signature:</strong> <code>{bundle.signed.get('signature', 'unknown')[:64]}...</code></p>",
+            "</div>",
+            "",
+            "<hr>",
+            f"<p class='meta'><em>Generated by {bundle.artifact.generator} on {bundle.artifact.timestamp}</em></p>",
+            "</body>",
+            "</html>",
+        ])
+        
+        return "\n".join(html)
     
     def _create_artifact_metadata(self, code: str, language: str,
                                    name: Optional[str]) -> ArtifactMetadata:
@@ -200,7 +415,7 @@ class ProofAssembler:
             hash=code_hash,
             language=language,
             generator=f"ACPG-{llm_name}",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
     
     def _compile_policy_outcomes(self, adjudication: AdjudicationResult) -> List[PolicyOutcome]:
@@ -254,13 +469,26 @@ class ProofAssembler:
         
         return evidence_list
     
-    def _extract_argumentation(self, adjudication: AdjudicationResult) -> Dict[str, Any]:
+    def _extract_argumentation(self, adjudication: AdjudicationResult, 
+                                analysis: Optional[AnalysisResult] = None) -> Dict[str, Any]:
         """Extract full formal argumentation proof for the bundle."""
+        # Extract tools used from violations
+        tools_used = set()
+        tool_versions = {}
+        if analysis:
+            for violation in analysis.violations:
+                if violation.detector and violation.detector != "regex" and violation.detector != "ast":
+                    tools_used.add(violation.detector)
+        
         # Build the formal proof structure
         formal_proof = {
             "framework": "Dung's Abstract Argumentation Framework",
             "semantics": "Grounded Extension",
             "decision": "Compliant" if adjudication.compliant else "Non-Compliant",
+            
+            # Tools used in analysis
+            "tools_used": sorted(list(tools_used)) if tools_used else [],
+            "tool_versions": tool_versions,  # Tool versions extracted from tool execution
             
             # Arguments in the framework
             "arguments": [],
@@ -288,7 +516,7 @@ class ProofAssembler:
                 "unsatisfied_rules": len(adjudication.unsatisfied_rules)
             },
             
-            # Visual graph representation (ASCII art)
+            # Visual graph representation
             "graph_visual": "",
             
             # Plain English explanation

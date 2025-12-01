@@ -8,7 +8,7 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  List, Plus, Edit2, BookOpen
+  List, Plus, Edit2, BookOpen, Settings, Link2, Power
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -61,7 +61,7 @@ def login(username: str, password_input: str) -> Optional[dict]:
 `;
 
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
-type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify';
+type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools' | 'metrics';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
 
 interface WorkflowState {
@@ -77,6 +77,12 @@ interface SavedCode {
   code: string;
   language: string;
   savedAt: string;
+  tags?: string[];
+  favorite?: boolean;
+  lastAnalysis?: {
+    compliant: boolean;
+    violations: number;
+  };
 }
 
 export default function App() {
@@ -91,6 +97,11 @@ export default function App() {
   });
   const [policies, setPolicies] = useState<PolicyRule[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  
+  // Real-time analysis
+  const [realTimeEnabled, setRealTimeEnabled] = useState(false);
+  const [realTimeLoading, setRealTimeLoading] = useState(false);
+  const realTimeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [adjudication, setAdjudication] = useState<AdjudicationResult | null>(null);
   const [enforceResult, setEnforceResult] = useState<EnforceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +112,8 @@ export default function App() {
   const [savedCodes, setSavedCodes] = useState<SavedCode[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const [saveTags, setSaveTags] = useState('');
+  const [bookmarkFilter, setBookmarkFilter] = useState<string | null>(null);
   const [complianceReport, setComplianceReport] = useState<any>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
@@ -108,7 +121,55 @@ export default function App() {
   const [sampleFilesLoading, setSampleFilesLoading] = useState(true);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
+  const [policyCreationData, setPolicyCreationData] = useState<{toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<any>(null);
+  
+  // Handle editor mount to get reference
+  const handleEditorMount = (editor: any) => {
+    editorRef.current = editor;
+  };
+  
+  // Highlight a specific line in the editor
+  const highlightLine = (lineNumber: number) => {
+    if (editorRef.current) {
+      // Scroll to and highlight the line
+      editorRef.current.revealLineInCenter(lineNumber);
+      editorRef.current.setPosition({ lineNumber, column: 1 });
+      editorRef.current.focus();
+      
+      // Add a temporary decoration for visibility
+      const decorations = editorRef.current.deltaDecorations([], [
+        {
+          range: { startLineNumber: lineNumber, startColumn: 1, endLineNumber: lineNumber, endColumn: 1 },
+          options: {
+            isWholeLine: true,
+            className: 'highlighted-line',
+            glyphMarginClassName: 'highlighted-glyph'
+          }
+        }
+      ]);
+      
+      // Remove decoration after 2 seconds
+      setTimeout(() => {
+        editorRef.current?.deltaDecorations(decorations, []);
+      }, 2000);
+    }
+  };
+  
+  // Analysis history
+  interface HistoryEntry {
+    id: string;
+    timestamp: string;
+    code_preview: string;
+    language: string;
+    compliant: boolean;
+    violations_count: number;
+    policies_passed: number;
+    severity_breakdown: Record<string, number>;
+  }
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Load saved codes from localStorage
   useEffect(() => {
@@ -117,6 +178,46 @@ export default function App() {
       setSavedCodes(JSON.parse(saved));
     }
   }, []);
+
+  // Real-time analysis with debouncing (500ms delay)
+  useEffect(() => {
+    if (!realTimeEnabled || workflow.step !== 'idle') return;
+    
+    // Clear any existing timeout
+    if (realTimeTimeoutRef.current) {
+      clearTimeout(realTimeTimeoutRef.current);
+    }
+    
+    // Skip if code is too short
+    if (code.trim().length < 10) {
+      setAnalysis(null);
+      setAdjudication(null);
+      return;
+    }
+    
+    // Set a new timeout for analysis
+    realTimeTimeoutRef.current = setTimeout(async () => {
+      setRealTimeLoading(true);
+      try {
+        const analysisResult = await api.analyze(code, language);
+        setAnalysis(analysisResult);
+        
+        // Quick adjudication
+        const adjResult = await api.adjudicate(analysisResult);
+        setAdjudication(adjResult);
+      } catch (e) {
+        // Silently fail for real-time analysis
+      } finally {
+        setRealTimeLoading(false);
+      }
+    }, 500);
+    
+    return () => {
+      if (realTimeTimeoutRef.current) {
+        clearTimeout(realTimeTimeoutRef.current);
+      }
+    };
+  }, [code, realTimeEnabled, workflow.step, language]);
 
   // Load policies, LLM info, and sample files on mount
   useEffect(() => {
@@ -149,6 +250,12 @@ export default function App() {
         setSampleFilesLoading(false);
       });
     
+    // Load analysis history
+    fetch('/api/v1/history?limit=20')
+      .then(res => res.json())
+      .then(data => setHistory(data.history || []))
+      .catch(() => {});
+    
     // Load enabled policy groups count
     fetch('/api/v1/policies/groups/')
       .then(res => res.json())
@@ -159,26 +266,76 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  const [analysisProgress, setAnalysisProgress] = useState<{
+    phase: string;
+    tool?: string;
+    message?: string;
+  } | null>(null);
+
+  // Refresh history after analysis
+  const refreshHistory = useCallback(() => {
+    fetch('/api/v1/history?limit=20')
+      .then(res => res.json())
+      .then(data => setHistory(data.history || []))
+      .catch(() => {});
+  }, []);
+
   const handleAnalyze = useCallback(async () => {
     setError(null);
     setEnforceResult(null);
+    setAnalysisProgress({ phase: 'starting', message: 'Initializing analysis...' });
     setWorkflow({ step: 'prosecutor', iteration: 0, maxIterations: 3, violations: 0 });
     
     try {
+      // Show language detection
+      setAnalysisProgress({ phase: 'detecting', message: 'Detecting language...' });
+      await new Promise(r => setTimeout(r, 200));
+      
+      // Show tool execution
+      setAnalysisProgress({ phase: 'tools', message: 'Running static analysis tools...' });
       const analysisResult = await api.analyze(code, language);
+      
+      // Show tool results
+      if (analysisResult.tool_execution) {
+        const tools = Object.keys(analysisResult.tool_execution);
+        if (tools.length > 0) {
+          setAnalysisProgress({ 
+            phase: 'tools', 
+            message: `Tools executed: ${tools.join(', ')}`,
+            tool: tools[0]
+          });
+        }
+      }
+      
       setAnalysis(analysisResult);
       setWorkflow(w => ({ ...w, violations: analysisResult.violations.length }));
       
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
       
+      // Show policy checks
+      setAnalysisProgress({ phase: 'policies', message: 'Running policy checks...' });
+      await new Promise(r => setTimeout(r, 200));
+      
+      // Show adjudication
+      setAnalysisProgress({ phase: 'adjudicating', message: 'Adjudicating compliance...' });
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
       const adjResult = await api.adjudicate(analysisResult);
       setAdjudication(adjResult);
       
-      await new Promise(r => setTimeout(r, 300));
-      setWorkflow(w => ({ ...w, step: 'complete' }));
+      // Refresh history sidebar
+      refreshHistory();
+      
+      await new Promise(r => setTimeout(r, 200));
+      setAnalysisProgress({ phase: 'complete', message: 'Analysis complete' });
+        setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
+        setWorkflow(w => ({ ...w, step: 'complete' }));
+        setTimeout(() => setAnalysisProgress(null), 2000);
+      
+      // Clear progress after a moment
+      setTimeout(() => setAnalysisProgress(null), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
+      setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
   }, [code, language]);
@@ -186,17 +343,33 @@ export default function App() {
   const handleEnforce = useCallback(async () => {
     setError(null);
     setOriginalCode(code); // Save original for diff
+    setAnalysisProgress({ phase: 'starting', message: 'Starting enforcement...' });
     setWorkflow({ step: 'prosecutor', iteration: 1, maxIterations: 3, violations: 0 });
     
     try {
+      setAnalysisProgress({ phase: 'tools', message: 'Running static analysis tools...' });
       const analysisResult = await api.analyze(code, language);
+      
+      if (analysisResult.tool_execution) {
+        const tools = Object.keys(analysisResult.tool_execution);
+        if (tools.length > 0) {
+          setAnalysisProgress({ 
+            phase: 'tools', 
+            message: `Tools executed: ${tools.join(', ')}`,
+            tool: tools[0]
+          });
+        }
+      }
+      
       setAnalysis(analysisResult);
       setWorkflow(w => ({ ...w, violations: analysisResult.violations.length }));
       
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 300));
+      setAnalysisProgress({ phase: 'adjudicating', message: 'Adjudicating compliance...' });
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
       
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 300));
+      setAnalysisProgress({ phase: 'generating', message: 'Generating fixes...' });
       setWorkflow(w => ({ ...w, step: 'generator' }));
       
       const result = await api.enforce(code, language, 3);
@@ -209,17 +382,22 @@ export default function App() {
       }
       
       setWorkflow(w => ({ ...w, step: 'proof', iteration: result.iterations }));
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 300));
       
+      setAnalysisProgress({ phase: 'tools', message: 'Re-analyzing fixed code...' });
       const finalAnalysis = await api.analyze(result.final_code, language);
       setAnalysis(finalAnalysis);
       
+      setAnalysisProgress({ phase: 'adjudicating', message: 'Final adjudication...' });
       const adjResult = await api.adjudicate(finalAnalysis);
       setAdjudication(adjResult);
       
+      setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
       setWorkflow(w => ({ ...w, step: 'complete', violations: finalAnalysis.violations.length }));
+      setTimeout(() => setAnalysisProgress(null), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Enforcement failed');
+      setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
   }, [code, language]);
@@ -326,12 +504,24 @@ export default function App() {
   const handleSaveCode = () => {
     if (!saveName.trim()) return;
     
+    // Parse tags from comma-separated string
+    const tags = saveTags
+      .split(',')
+      .map(t => t.trim().toLowerCase())
+      .filter(t => t.length > 0);
+    
     const newSave: SavedCode = {
       id: Date.now().toString(),
       name: saveName.trim(),
       code,
       language,
-      savedAt: new Date().toISOString()
+      savedAt: new Date().toISOString(),
+      tags: tags.length > 0 ? tags : undefined,
+      favorite: false,
+      lastAnalysis: adjudication ? {
+        compliant: adjudication.compliant,
+        violations: analysis?.violations.length || 0
+      } : undefined
     };
     
     const updated = [...savedCodes, newSave];
@@ -339,7 +529,28 @@ export default function App() {
     localStorage.setItem('acpg_saved_codes', JSON.stringify(updated));
     setShowSaveDialog(false);
     setSaveName('');
+    setSaveTags('');
   };
+  
+  const toggleFavorite = (id: string) => {
+    const updated = savedCodes.map(s => 
+      s.id === id ? { ...s, favorite: !s.favorite } : s
+    );
+    setSavedCodes(updated);
+    localStorage.setItem('acpg_saved_codes', JSON.stringify(updated));
+  };
+  
+  // Get all unique tags from saved codes
+  const allTags = Array.from(new Set(
+    savedCodes.flatMap(s => s.tags || [])
+  )).sort();
+  
+  // Filter saved codes
+  const filteredSavedCodes = savedCodes.filter(s => {
+    if (!bookmarkFilter) return true;
+    if (bookmarkFilter === 'favorites') return s.favorite;
+    return s.tags?.includes(bookmarkFilter);
+  });
 
   const handleLoadCode = (saved: SavedCode) => {
     setCode(saved.code);
@@ -386,15 +597,45 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadProof = () => {
+  const handleDownloadProof = async (format: string = 'json') => {
     if (!enforceResult?.proof_bundle) return;
-    const blob = new Blob([JSON.stringify(enforceResult.proof_bundle, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'proof_bundle.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    
+    try {
+      const response = await api.exportProof(enforceResult.proof_bundle, format);
+      const content = response.content;
+      
+      // Determine file extension and MIME type
+      let extension = 'json';
+      let mimeType = 'application/json';
+      if (format === 'markdown') {
+        extension = 'md';
+        mimeType = 'text/markdown';
+      } else if (format === 'html') {
+        extension = 'html';
+        mimeType = 'text/html';
+      } else if (format === 'summary') {
+        extension = 'txt';
+        mimeType = 'text/plain';
+      }
+      
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `proof_bundle.${extension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      // Fallback to client-side JSON export
+      const blob = new Blob([JSON.stringify(enforceResult.proof_bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'proof_bundle.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleCopyProof = useCallback(() => {
@@ -481,6 +722,19 @@ export default function App() {
                   </span>
                 </button>
                 <button
+                  onClick={() => setViewMode('tools')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    viewMode === 'tools' 
+                      ? 'bg-slate-700 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    Tools
+                  </span>
+                </button>
+                <button
                   onClick={() => setViewMode('verify')}
                   className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                     viewMode === 'verify' 
@@ -519,6 +773,24 @@ export default function App() {
               </div>
               
               <div className="h-6 w-px bg-slate-700" />
+              
+              {/* History Button */}
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`px-4 py-2 text-sm font-medium rounded-xl transition-all flex items-center gap-2 ${
+                  showHistory 
+                    ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30' 
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Clock className="w-4 h-4" />
+                History
+                {history.length > 0 && (
+                  <span className="text-xs bg-violet-500/30 text-violet-300 px-1.5 py-0.5 rounded-full">
+                    {history.length}
+                  </span>
+                )}
+              </button>
               
               {/* Sample Files Dropdown */}
               <div className="relative">
@@ -607,6 +879,112 @@ export default function App() {
           </div>
         </div>
       </header>
+      
+      {/* History Sidebar */}
+      {showHistory && (
+        <div className="fixed right-0 top-0 bottom-0 w-96 glass border-l border-white/10 z-40 flex flex-col animate-slide-in-right">
+          <div className="p-4 border-b border-white/10 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="w-5 h-5 text-violet-400" />
+              <h3 className="font-semibold text-white">Analysis History</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {history.length > 0 && (
+                <button
+                  onClick={() => {
+                    fetch('/api/v1/history', { method: 'DELETE' })
+                      .then(() => setHistory([]))
+                      .catch(() => {});
+                  }}
+                  className="text-xs text-slate-400 hover:text-red-400 px-2 py-1"
+                >
+                  Clear All
+                </button>
+              )}
+              <button
+                onClick={() => setShowHistory(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {history.length === 0 ? (
+              <div className="text-center py-12 text-slate-500">
+                <Clock className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p>No analysis history yet</p>
+                <p className="text-xs mt-1">Run an analysis to see it here</p>
+              </div>
+            ) : (
+              history.map(entry => (
+                <div
+                  key={entry.id}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer hover:bg-slate-800/50 ${
+                    entry.compliant 
+                      ? 'bg-emerald-500/5 border-emerald-500/20' 
+                      : 'bg-red-500/5 border-red-500/20'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {entry.compliant ? (
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <ShieldAlert className="w-4 h-4 text-red-400" />
+                      )}
+                      <span className={`text-xs font-semibold ${
+                        entry.compliant ? 'text-emerald-400' : 'text-red-400'
+                      }`}>
+                        {entry.compliant ? 'PASS' : 'FAIL'}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      {new Date(entry.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  
+                  <p className="text-xs text-slate-400 font-mono line-clamp-2 mb-2">
+                    {entry.code_preview}
+                  </p>
+                  
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-emerald-400">{entry.policies_passed} passed</span>
+                    {entry.violations_count > 0 && (
+                      <>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-red-400">{entry.violations_count} failed</span>
+                      </>
+                    )}
+                  </div>
+                  
+                  {Object.keys(entry.severity_breakdown || {}).length > 0 && (
+                    <div className="flex gap-1 mt-2">
+                      {entry.severity_breakdown.critical > 0 && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded">
+                          {entry.severity_breakdown.critical} critical
+                        </span>
+                      )}
+                      {entry.severity_breakdown.high > 0 && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-orange-500/20 text-orange-400 rounded">
+                          {entry.severity_breakdown.high} high
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+          
+          <div className="p-4 border-t border-white/10 text-center">
+            <p className="text-xs text-slate-500">
+              Showing last {history.length} analyses
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Workflow Pipeline */}
       <div className="max-w-[1920px] mx-auto px-8 py-6">
@@ -617,8 +995,15 @@ export default function App() {
       <main className="max-w-[1920px] mx-auto px-8 pb-12">
         {viewMode === 'verify' ? (
           <ProofVerifier />
+        ) : viewMode === 'tools' ? (
+          <ToolsConfigurationView 
+            onCreatePolicy={(data) => {
+              setPolicyCreationData(data);
+              setViewMode('policies');
+            }}
+          />
         ) : viewMode === 'policies' ? (
-          <PoliciesView policies={policies} />
+          <PoliciesView policies={policies} initialPolicyData={policyCreationData} onPolicyCreated={() => setPolicyCreationData(null)} />
         ) : viewMode === 'proof' && enforceResult?.proof_bundle ? (
           <ProofBundleView 
             proof={enforceResult.proof_bundle} 
@@ -803,6 +1188,7 @@ export default function App() {
                       language={language}
                       value={code}
                       onChange={(value) => setCode(value || '')}
+                      onMount={handleEditorMount}
                       theme="vs-dark"
                       options={{
                         minimap: { enabled: false },
@@ -816,6 +1202,7 @@ export default function App() {
                         cursorBlinking: 'smooth',
                         smoothScrolling: true,
                         bracketPairColorization: { enabled: true },
+                        glyphMargin: true,
                       }}
                     />
                   )}
@@ -825,22 +1212,90 @@ export default function App() {
               {/* Saved Codes Library */}
               {savedCodes.length > 0 && (
                 <div className="glass rounded-xl p-4 border border-white/5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <FolderOpen className="w-4 h-4 text-amber-400" />
-                    <span className="text-sm font-medium text-slate-300">Saved Code Library</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-amber-400" />
+                      <span className="text-sm font-medium text-slate-300">
+                        Bookmarks ({filteredSavedCodes.length})
+                      </span>
+                    </div>
+                    
+                    {/* Filter buttons */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setBookmarkFilter(null)}
+                        className={`px-2 py-1 text-xs rounded-lg transition-all ${
+                          !bookmarkFilter ? 'bg-violet-500/20 text-violet-300' : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        All
+                      </button>
+                      <button
+                        onClick={() => setBookmarkFilter('favorites')}
+                        className={`px-2 py-1 text-xs rounded-lg transition-all ${
+                          bookmarkFilter === 'favorites' ? 'bg-amber-500/20 text-amber-300' : 'text-slate-500 hover:text-slate-300'
+                        }`}
+                      >
+                        ★
+                      </button>
+                      {allTags.slice(0, 3).map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => setBookmarkFilter(tag === bookmarkFilter ? null : tag)}
+                          className={`px-2 py-1 text-xs rounded-lg transition-all ${
+                            bookmarkFilter === tag ? 'bg-violet-500/20 text-violet-300' : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          #{tag}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                  
                   <div className="flex flex-wrap gap-2">
-                    {savedCodes.map(saved => (
-                      <div key={saved.id} className="flex items-center gap-1 bg-slate-800/50 rounded-lg pl-3 pr-1 py-1">
+                    {filteredSavedCodes.map(saved => (
+                      <div 
+                        key={saved.id} 
+                        className={`group flex items-center gap-1 rounded-lg pl-2 pr-1 py-1 transition-all ${
+                          saved.favorite 
+                            ? 'bg-amber-500/10 border border-amber-500/20' 
+                            : 'bg-slate-800/50 hover:bg-slate-800/80'
+                        }`}
+                      >
+                        {/* Favorite star */}
+                        <button
+                          onClick={() => toggleFavorite(saved.id)}
+                          className={`p-0.5 transition-all ${
+                            saved.favorite ? 'text-amber-400' : 'text-slate-600 hover:text-amber-400 opacity-0 group-hover:opacity-100'
+                          }`}
+                        >
+                          <span className="text-xs">{saved.favorite ? '★' : '☆'}</span>
+                        </button>
+                        
+                        {/* Name + compliance indicator */}
                         <button
                           onClick={() => handleLoadCode(saved)}
-                          className="text-sm text-slate-300 hover:text-white"
+                          className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white"
                         >
+                          {saved.lastAnalysis && (
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              saved.lastAnalysis.compliant ? 'bg-emerald-400' : 'bg-red-400'
+                            }`} />
+                          )}
                           {saved.name}
                         </button>
+                        
+                        {/* Tags */}
+                        {saved.tags && saved.tags.length > 0 && (
+                          <span className="text-[10px] text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-full">
+                            {saved.tags[0]}
+                          </span>
+                        )}
+                        
+                        {/* Delete */}
                         <button
                           onClick={() => handleDeleteSaved(saved.id)}
-                          className="p-1 text-slate-500 hover:text-red-400"
+                          className="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -850,6 +1305,28 @@ export default function App() {
                 </div>
               )}
 
+              {/* Real-time Analysis Toggle */}
+              <div className="flex items-center justify-between glass rounded-xl px-4 py-3 border border-white/5 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${
+                    realTimeEnabled ? 'bg-cyan-500' : 'bg-slate-700'
+                  }`} onClick={() => setRealTimeEnabled(!realTimeEnabled)}>
+                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow ${
+                      realTimeEnabled ? 'left-5' : 'left-1'
+                    }`} />
+                  </div>
+                  <div>
+                    <span className="text-sm font-medium text-white">Real-time Analysis</span>
+                    <span className="text-xs text-slate-500 ml-2">
+                      {realTimeEnabled ? 'Analyzing as you type' : 'Disabled'}
+                    </span>
+                  </div>
+                </div>
+                {realTimeLoading && (
+                  <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
+                )}
+              </div>
+              
               {/* Action Buttons */}
               <div className="flex gap-4">
                 <button
@@ -951,6 +1428,29 @@ export default function App() {
 
             {/* Right Panel - Results (2 cols) */}
             <div className="xl:col-span-2 space-y-5">
+              {/* Analysis Progress */}
+              {analysisProgress && analysisProgress.phase !== 'complete' && (
+                <div className="glass rounded-2xl p-4 border border-violet-500/30 bg-violet-500/5 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <RefreshCw className="w-5 h-5 text-violet-400 animate-spin" />
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-violet-400">
+                        {analysisProgress.phase === 'detecting' && 'Detecting Language'}
+                        {analysisProgress.phase === 'tools' && 'Running Static Analysis Tools'}
+                        {analysisProgress.phase === 'policies' && 'Running Policy Checks'}
+                        {analysisProgress.phase === 'adjudicating' && 'Adjudicating Compliance'}
+                        {analysisProgress.phase === 'starting' && 'Starting Analysis'}
+                        {analysisProgress.phase === 'generating' && 'Generating Fixes'}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {analysisProgress.message}
+                        {analysisProgress.tool && ` (${analysisProgress.tool})`}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Compliance Status */}
               <ComplianceStatus 
                 adjudication={adjudication} 
@@ -958,9 +1458,52 @@ export default function App() {
                 enforceResult={enforceResult}
               />
 
+              {/* Tool Execution Status */}
+              {analysis && analysis.tool_execution && Object.keys(analysis.tool_execution).length > 0 && (
+                <ToolExecutionStatus toolExecution={analysis.tool_execution} />
+              )}
+
+              {/* Unmapped Findings - Prominent Section */}
+              {analysis && analysis.tool_execution && (() => {
+                const allUnmapped: Array<{tool: string; finding: any}> = [];
+                Object.entries(analysis.tool_execution).forEach(([toolName, info]: [string, any]) => {
+                  if (info.success && info.findings) {
+                    info.findings
+                      .filter((f: any) => !f.mapped)
+                      .forEach((finding: any) => {
+                        allUnmapped.push({ tool: toolName, finding });
+                      });
+                  }
+                });
+                return allUnmapped.length > 0 ? (
+                  <UnmappedFindingsSection 
+                    unmappedFindings={allUnmapped}
+                    onCreateMapping={(toolName: string, ruleId: string) => {
+                      setViewMode('tools');
+                      // Navigate to mappings tab and pre-fill form
+                      // Use a longer timeout to ensure ToolsConfigurationView is mounted
+                      setTimeout(() => {
+                        const event = new CustomEvent('createMapping', { 
+                          detail: { toolName, toolRuleId: ruleId } 
+                        });
+                        window.dispatchEvent(event);
+                        // Re-dispatch after a short delay to ensure ToolMappingsView receives it
+                        setTimeout(() => {
+                          window.dispatchEvent(event);
+                        }, 200);
+                      }, 300);
+                    }}
+                  />
+                ) : null;
+              })()}
+
               {/* Violations List */}
               {analysis && analysis.violations.length > 0 && (
-                <ViolationsList violations={analysis.violations} policies={policies} />
+                <ViolationsList 
+                  violations={analysis.violations} 
+                  policies={policies} 
+                  onLineClick={highlightLine}
+                />
               )}
 
               {/* Proof Bundle Quick View */}
@@ -983,28 +1526,74 @@ export default function App() {
       {/* Save Dialog */}
       {showSaveDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="glass rounded-2xl p-6 w-96 border border-white/10">
-            <h3 className="text-lg font-semibold text-white mb-4">Save Code</h3>
-            <input
-              type="text"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              placeholder="Enter a name..."
-              className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
-              autoFocus
-            />
-            <div className="flex gap-3 mt-4">
+          <div className="glass rounded-2xl p-6 w-[420px] border border-white/10">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-amber-400" />
+              Save Code Bookmark
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">Name</label>
+                <input
+                  type="text"
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="Enter a name..."
+                  className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-slate-400 mb-2">Tags (comma-separated)</label>
+                <input
+                  type="text"
+                  value={saveTags}
+                  onChange={(e) => setSaveTags(e.target.value)}
+                  placeholder="e.g., auth, api, security"
+                  className="w-full px-4 py-3 bg-slate-800/50 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50"
+                />
+                {allTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    <span className="text-xs text-slate-500 mr-1">Existing:</span>
+                    {allTags.slice(0, 5).map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => setSaveTags(prev => prev ? `${prev}, ${tag}` : tag)}
+                        className="px-2 py-0.5 text-xs bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 rounded-full"
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {adjudication && (
+                <div className={`p-3 rounded-xl border text-sm ${
+                  adjudication.compliant 
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                    : 'bg-red-500/10 border-red-500/20 text-red-400'
+                }`}>
+                  {adjudication.compliant ? '✓ Will save as compliant' : `⚠ Will save with ${analysis?.violations.length || 0} violations`}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setShowSaveDialog(false)}
+                onClick={() => { setShowSaveDialog(false); setSaveName(''); setSaveTags(''); }}
                 className="flex-1 px-4 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveCode}
-                className="flex-1 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-400"
+                disabled={!saveName.trim()}
+                className="flex-1 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500"
               >
-                Save
+                Save Bookmark
               </button>
             </div>
           </div>
@@ -1311,7 +1900,7 @@ function WorkflowPipeline({ workflow }: { workflow: WorkflowState }) {
   );
 }
 
-// Compliance Status Component
+// Compliance Status Component with enhanced animations
 function ComplianceStatus({ 
   adjudication, 
   violations,
@@ -1333,7 +1922,7 @@ function ComplianceStatus({
     return (
       <div className="glass rounded-2xl p-6 border border-white/5 animate-fade-in">
         <div className="flex items-center gap-4">
-          <div className="p-4 rounded-2xl bg-slate-800/50">
+          <div className="p-4 rounded-2xl bg-slate-800/50 animate-float">
             <Shield className="w-10 h-10 text-slate-500" />
           </div>
           <div>
@@ -1346,23 +1935,56 @@ function ComplianceStatus({
   }
 
   const isCompliant = adjudication.compliant;
+  const totalPolicies = adjudication.satisfied_rules.length + violationCount;
+  const passRate = totalPolicies > 0 ? (adjudication.satisfied_rules.length / totalPolicies) * 100 : 0;
 
   return (
-    <div className={`glass rounded-2xl p-6 border animate-scale-in ${
+    <div className={`relative glass rounded-2xl p-6 border overflow-hidden ${
       isCompliant 
-        ? 'border-emerald-500/30 glow-emerald' 
-        : 'border-red-500/30 glow-red'
+        ? 'border-emerald-500/30 animate-success-celebration animate-success-glow' 
+        : 'border-red-500/30 animate-warning-shake animate-warning-glow'
     }`}>
-      <div className="flex items-start gap-4">
-        <div className={`p-4 rounded-2xl ${
-          isCompliant ? 'bg-emerald-500/10' : 'bg-red-500/10'
-        }`}>
-          {isCompliant ? (
-            <ShieldCheck className="w-10 h-10 text-emerald-400" />
-          ) : (
-            <ShieldAlert className="w-10 h-10 text-red-400" />
-          )}
+      {/* Background gradient effect */}
+      <div className={`absolute inset-0 opacity-10 ${
+        isCompliant 
+          ? 'bg-gradient-to-br from-emerald-500 via-transparent to-cyan-500' 
+          : 'bg-gradient-to-br from-red-500 via-transparent to-orange-500'
+      }`} />
+      
+      {/* Animated particles for compliant state */}
+      {isCompliant && (
+        <div className="particles">
+          {[...Array(6)].map((_, i) => (
+            <div 
+              key={i}
+              className="particle bg-emerald-400"
+              style={{
+                left: `${20 + i * 12}%`,
+                bottom: '20%',
+                animationDelay: `${i * 0.15}s`
+              }}
+            />
+          ))}
         </div>
+      )}
+      
+      <div className="relative flex items-start gap-4">
+        {/* Animated icon with ring */}
+        <div className="relative">
+          <div className={`absolute inset-0 rounded-2xl animate-pulse-ring ${
+            isCompliant ? 'bg-emerald-500/20' : 'bg-red-500/20'
+          }`} />
+          <div className={`relative p-4 rounded-2xl ${
+            isCompliant ? 'bg-emerald-500/10' : 'bg-red-500/10'
+          }`}>
+            {isCompliant ? (
+              <ShieldCheck className="w-10 h-10 text-emerald-400 animate-bounce-in" />
+            ) : (
+              <ShieldAlert className="w-10 h-10 text-red-400 animate-bounce-in" />
+            )}
+          </div>
+        </div>
+        
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h3 className={`text-xl font-display font-bold ${
@@ -1371,8 +1993,13 @@ function ComplianceStatus({
               {isCompliant ? 'COMPLIANT' : 'NON-COMPLIANT'}
             </h3>
             {isCompliant && (
-              <span className="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-400 rounded-full animate-pulse">
-                CERTIFIED
+              <span className="px-2 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-400 rounded-full animate-badge-pulse border border-emerald-500/30">
+                ✓ CERTIFIED
+              </span>
+            )}
+            {!isCompliant && (
+              <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded-full animate-badge-pulse border border-red-500/30">
+                ⚠ ACTION REQUIRED
               </span>
             )}
           </div>
@@ -1383,26 +2010,46 @@ function ComplianceStatus({
             }
           </p>
           
+          {/* Progress bar */}
+          <div className="mt-3 mb-2">
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-slate-500">Compliance Progress</span>
+              <span className={isCompliant ? 'text-emerald-400' : 'text-slate-400'}>
+                {passRate.toFixed(0)}%
+              </span>
+            </div>
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                  isCompliant 
+                    ? 'bg-gradient-to-r from-emerald-500 to-cyan-500' 
+                    : 'bg-gradient-to-r from-red-500 to-orange-500'
+                }`}
+                style={{ width: `${passRate}%` }}
+              />
+            </div>
+          </div>
+          
           {/* Severity breakdown for non-compliant */}
           {!isCompliant && violationCount > 0 && (
-            <div className="flex items-center gap-2 mt-2">
+            <div className="flex items-center gap-2 mt-3 flex-wrap">
               {severityCounts.critical > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-red-500/20 text-red-400 rounded border border-red-500/30 animate-pulse">
                   {severityCounts.critical} critical
                 </span>
               )}
               {severityCounts.high > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-orange-500/20 text-orange-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-orange-500/20 text-orange-400 rounded border border-orange-500/30">
                   {severityCounts.high} high
                 </span>
               )}
               {severityCounts.medium > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-amber-500/20 text-amber-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
                   {severityCounts.medium} medium
                 </span>
               )}
               {severityCounts.low > 0 && (
-                <span className="px-2 py-0.5 text-xs font-semibold bg-slate-500/20 text-slate-400 rounded">
+                <span className="px-2 py-0.5 text-xs font-semibold bg-slate-500/20 text-slate-400 rounded border border-slate-500/30">
                   {severityCounts.low} low
                 </span>
               )}
@@ -1417,20 +2064,27 @@ function ComplianceStatus({
               </div>
               <div className="h-8 w-px bg-slate-700" />
               <div className="text-center">
-                <div className="text-2xl font-bold text-emerald-400">
+                <div className="text-2xl font-bold text-emerald-400 animate-bounce-in" style={{ animationDelay: '0.2s' }}>
                   {adjudication.satisfied_rules.length}
                 </div>
-                <div className="text-xs text-slate-500">Policies Passed</div>
+                <div className="text-xs text-slate-500">Passed</div>
               </div>
               {!isCompliant && (
                 <>
                   <div className="h-8 w-px bg-slate-700" />
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-red-400">{violationCount}</div>
-                    <div className="text-xs text-slate-500">Remaining</div>
+                    <div className="text-2xl font-bold text-red-400 animate-bounce-in" style={{ animationDelay: '0.3s' }}>
+                      {violationCount}
+                    </div>
+                    <div className="text-xs text-slate-500">Failed</div>
                   </div>
                 </>
               )}
+              <div className="h-8 w-px bg-slate-700" />
+              <div className="text-center">
+                <div className="text-2xl font-bold text-slate-300">{totalPolicies}</div>
+                <div className="text-xs text-slate-500">Total</div>
+              </div>
             </div>
           )}
         </div>
@@ -1439,19 +2093,352 @@ function ComplianceStatus({
   );
 }
 
+// Unmapped Findings Section - Prominent display of all unmapped findings
+function UnmappedFindingsSection({ 
+  unmappedFindings,
+  onCreateMapping
+}: { 
+  unmappedFindings: Array<{tool: string; finding: any}>;
+  onCreateMapping: (toolName: string, ruleId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="glass rounded-2xl overflow-hidden border border-amber-500/20 animate-slide-up">
+      <div className="px-5 py-4 border-b border-amber-500/20 bg-amber-500/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/10">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <span className="font-semibold text-slate-200">Unmapped Findings</span>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {unmappedFindings.length} finding{unmappedFindings.length !== 1 ? 's' : ''} from tools that aren't mapped to policies
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="px-3 py-1.5 text-sm bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg transition-colors flex items-center gap-2"
+          >
+            {expanded ? (
+              <>
+                <ChevronDown className="w-4 h-4" />
+                Hide
+              </>
+            ) : (
+              <>
+                <ChevronRight className="w-4 h-4" />
+                Show All
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="max-h-[400px] overflow-y-auto p-5 space-y-3 animate-fade-in">
+          {unmappedFindings.map((item, i) => (
+            <div 
+              key={i} 
+              className="p-4 bg-amber-500/5 rounded-xl border border-amber-500/20 hover:border-amber-500/40 transition-colors"
+            >
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-1 bg-violet-500/20 text-violet-400 text-xs font-mono rounded">
+                    {item.tool}
+                  </span>
+                  <span className="px-2 py-1 bg-amber-500/20 text-amber-400 text-xs font-mono rounded">
+                    {item.finding.rule_id}
+                  </span>
+                  {item.finding.line && (
+                    <span className="text-xs text-slate-400">Line {item.finding.line}</span>
+                  )}
+                  {item.finding.severity && (
+                    <span className={`px-2 py-1 text-xs rounded ${
+                      item.finding.severity === 'high' || item.finding.severity === 'critical' 
+                        ? 'bg-red-500/20 text-red-400' 
+                        : item.finding.severity === 'medium'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-slate-500/20 text-slate-400'
+                    }`}>
+                      {item.finding.severity}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => onCreateMapping(item.tool, item.finding.rule_id)}
+                  className="px-3 py-1.5 text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Link2 className="w-3 h-3" />
+                  Map Rule
+                </button>
+              </div>
+              <p className="text-sm text-slate-300">{item.finding.message}</p>
+            </div>
+          ))}
+          <div className="mt-4 p-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
+            <p className="text-xs text-slate-400">
+              💡 <strong>Tip:</strong> Click "Map Rule" to create a mapping from this tool rule to an ACPG policy. 
+              This will make future findings from this rule appear as violations.
+            </p>
+          </div>
+        </div>
+      )}
+      {!expanded && unmappedFindings.length > 0 && (
+        <div className="px-5 py-3 border-t border-amber-500/20">
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-slate-400">
+              {unmappedFindings.slice(0, 3).map((item, i) => (
+                <span key={i} className="mr-3">
+                  <span className="font-mono text-amber-400">{item.tool}:{item.finding.rule_id}</span>
+                  {item.finding.line && <span className="text-slate-500"> (L{item.finding.line})</span>}
+                </span>
+              ))}
+              {unmappedFindings.length > 3 && (
+                <span className="text-slate-500">+ {unmappedFindings.length - 3} more</span>
+              )}
+            </div>
+            <button
+              onClick={() => setExpanded(true)}
+              className="text-xs text-amber-400 hover:text-amber-300"
+            >
+              View all →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Tool Execution Status Component
+function ToolExecutionStatus({ 
+  toolExecution 
+}: { 
+  toolExecution: Record<string, any>;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showUnmapped, setShowUnmapped] = useState<Record<string, boolean>>({});
+
+  const toggleExpand = (toolName: string) => {
+    setExpanded(prev => ({ ...prev, [toolName]: !prev[toolName] }));
+  };
+
+  const toggleUnmapped = (toolName: string) => {
+    setShowUnmapped(prev => ({ ...prev, [toolName]: !prev[toolName] }));
+  };
+
+  const tools = Object.entries(toolExecution);
+  const successfulTools = tools.filter(([_, info]) => info.success);
+  const failedTools = tools.filter(([_, info]) => !info.success);
+  const totalFindings = tools.reduce((sum, [_, info]) => sum + (info.findings_count || 0), 0);
+  const totalMapped = tools.reduce((sum, [_, info]) => sum + (info.mapped_findings || 0), 0);
+  const totalUnmapped = tools.reduce((sum, [_, info]) => sum + (info.unmapped_findings || 0), 0);
+
+  return (
+    <div className="glass rounded-2xl overflow-hidden border border-white/5 animate-slide-up">
+      <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-violet-500/10">
+            <Terminal className="w-5 h-5 text-violet-400" />
+          </div>
+          <span className="font-semibold text-slate-200">Tool Execution</span>
+        </div>
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-slate-400">
+            {successfulTools.length}/{tools.length} tools ran
+          </span>
+          {totalFindings > 0 && (
+            <span className="text-slate-400">
+              {totalFindings} findings ({totalMapped} mapped, {totalUnmapped} unmapped)
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="max-h-[300px] overflow-y-auto">
+        {/* Successful Tools */}
+        {successfulTools.map(([toolName, info]: [string, any]) => {
+          const isExpanded = expanded[toolName];
+          const showUnmappedFindings = showUnmapped[toolName];
+          
+          return (
+            <div key={toolName} className="border-b border-white/5 last:border-b-0">
+              <button
+                onClick={() => toggleExpand(toolName)}
+                className="w-full px-5 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors text-left"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="px-2 py-1 text-xs font-mono font-semibold rounded-lg bg-violet-500/20 text-violet-400">
+                  {toolName}
+                  {info.tool_version && (
+                    <span className="ml-1 text-violet-300/70">v{info.tool_version}</span>
+                  )}
+                </span>
+                <span className="flex-1 text-sm text-slate-300">
+                  {info.findings_count || 0} findings
+                </span>
+                <div className="flex items-center gap-2 text-xs">
+                  {info.mapped_findings > 0 && (
+                    <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">
+                      {info.mapped_findings} mapped
+                    </span>
+                  )}
+                  {info.unmapped_findings > 0 && (
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                      {info.unmapped_findings} unmapped
+                    </span>
+                  )}
+                  {info.execution_time && (
+                    <span className="text-slate-500">
+                      {(info.execution_time * 1000).toFixed(0)}ms
+                    </span>
+                  )}
+                </div>
+                {isExpanded ? (
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                )}
+              </button>
+              {isExpanded && (
+                <div className="px-5 pb-3 pl-12 space-y-2 animate-fade-in">
+                  <div className="grid grid-cols-3 gap-3 text-xs">
+                    <div className="p-2 bg-slate-800/50 rounded">
+                      <div className="text-slate-500">Total Findings</div>
+                      <div className="text-white font-semibold">{info.findings_count || 0}</div>
+                    </div>
+                    <div className="p-2 bg-emerald-500/10 rounded">
+                      <div className="text-slate-500">Mapped</div>
+                      <div className="text-emerald-400 font-semibold">{info.mapped_findings || 0}</div>
+                    </div>
+                    <div className="p-2 bg-amber-500/10 rounded">
+                      <div className="text-slate-500">Unmapped</div>
+                      <div className="text-amber-400 font-semibold">{info.unmapped_findings || 0}</div>
+                    </div>
+                  </div>
+                  {info.unmapped_findings > 0 && (
+                    <div>
+                      <button
+                        onClick={() => toggleUnmapped(toolName)}
+                        className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1"
+                      >
+                        {showUnmappedFindings ? (
+                          <ChevronDown className="w-3 h-3" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3" />
+                        )}
+                        Show {info.unmapped_findings} unmapped finding{info.unmapped_findings !== 1 ? 's' : ''}
+                      </button>
+                      {showUnmappedFindings && info.findings && (
+                        <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                          {info.findings
+                            .filter((f: any) => !f.mapped)
+                            .map((finding: any, i: number) => (
+                            <div key={i} className="p-2 bg-amber-500/5 rounded border border-amber-500/20 text-xs">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 font-mono rounded">
+                                  {finding.rule_id}
+                                </span>
+                                {finding.line && (
+                                  <span className="text-slate-500">Line {finding.line}</span>
+                                )}
+                                <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-[10px]">
+                                  Unmapped
+                                </span>
+                              </div>
+                              <div className="text-slate-300">{finding.message}</div>
+                            </div>
+                          ))}
+                          {info.findings.filter((f: any) => f.mapped).length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-slate-700">
+                              <div className="text-xs text-slate-500 mb-1">Mapped findings:</div>
+                              {info.findings
+                                .filter((f: any) => f.mapped)
+                                .map((finding: any, i: number) => (
+                                <div key={i} className="p-2 bg-emerald-500/5 rounded border border-emerald-500/20 text-xs mb-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 font-mono rounded">
+                                      {finding.rule_id}
+                                    </span>
+                                    <span className="text-slate-400">→</span>
+                                    <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 font-mono rounded">
+                                      {finding.policy_id}
+                                    </span>
+                                    {finding.line && (
+                                      <span className="text-slate-500">Line {finding.line}</span>
+                                    )}
+                                  </div>
+                                  <div className="text-slate-300">{finding.message}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        
+        {/* Failed Tools */}
+        {failedTools.map(([toolName, info]: [string, any]) => (
+          <div key={toolName} className="border-b border-white/5 last:border-b-0">
+            <div className="px-5 py-3 flex items-center gap-3">
+              <XCircle className="w-4 h-4 text-red-400" />
+              <span className="px-2 py-1 text-xs font-mono font-semibold rounded-lg bg-violet-500/20 text-violet-400">
+                {toolName}
+              </span>
+              <span className="flex-1 text-sm text-red-400">
+                Failed: {info.error || 'Unknown error'}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Violations List Component
 function ViolationsList({ 
   violations, 
-  policies 
+  policies,
+  onLineClick
 }: { 
   violations: Violation[];
   policies: PolicyRule[];
+  onLineClick?: (line: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [severityFilter, setSeverityFilter] = useState<string | null>(null);
 
   const toggleExpand = (index: number) => {
     setExpanded(prev => ({ ...prev, [index]: !prev[index] }));
   };
+  
+  const handleLineClick = (line: number | undefined, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (line && onLineClick) {
+      onLineClick(line);
+    }
+  };
+  
+  // Count violations by severity
+  const severityCounts = {
+    critical: violations.filter(v => v.severity === 'critical').length,
+    high: violations.filter(v => v.severity === 'high').length,
+    medium: violations.filter(v => v.severity === 'medium').length,
+    low: violations.filter(v => v.severity === 'low').length,
+  };
+  
+  // Filter violations
+  const filteredViolations = severityFilter 
+    ? violations.filter(v => v.severity === severityFilter)
+    : violations;
 
   const getSeverityConfig = (severity: string) => {
     switch (severity) {
@@ -1461,6 +2448,13 @@ function ViolationsList({
       default: return { color: 'text-slate-400', bg: 'bg-slate-500/10', border: 'border-slate-500/30' };
     }
   };
+
+  // Get violations with available fixes
+  const [showQuickFixes, setShowQuickFixes] = useState(true);
+  const fixableViolations = violations.filter(v => {
+    const policy = policies.find(p => p.id === v.rule_id);
+    return policy?.fix_suggestion;
+  });
 
   return (
     <div className="glass rounded-2xl overflow-hidden border border-white/5 animate-slide-up stagger-1">
@@ -1475,6 +2469,59 @@ function ViolationsList({
           {violations.length} found
         </span>
       </div>
+      
+      {/* Quick Fixes Summary Panel */}
+      {fixableViolations.length > 0 && (
+        <div className="border-b border-white/5">
+          <button
+            onClick={() => setShowQuickFixes(!showQuickFixes)}
+            className="w-full px-5 py-3 flex items-center justify-between hover:bg-cyan-500/5 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-cyan-400" />
+              <span className="text-sm font-medium text-cyan-400">
+                Quick Fixes Available ({fixableViolations.length})
+              </span>
+            </div>
+            <ChevronDown className={`w-4 h-4 text-cyan-400 transition-transform ${showQuickFixes ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showQuickFixes && (
+            <div className="px-5 pb-4 space-y-2 animate-fade-in">
+              {fixableViolations.slice(0, 5).map((violation, idx) => {
+                const policy = policies.find(p => p.id === violation.rule_id);
+                return (
+                  <div 
+                    key={idx}
+                    className="flex items-start gap-3 p-3 bg-gradient-to-r from-cyan-500/5 to-transparent rounded-lg border border-cyan-500/10"
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <div className="w-6 h-6 rounded-full bg-cyan-500/20 flex items-center justify-center">
+                        <span className="text-xs font-bold text-cyan-400">{idx + 1}</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-mono font-semibold text-violet-400">{violation.rule_id}</span>
+                        {violation.line && (
+                          <span className="text-xs text-slate-500">Line {violation.line}</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-300">{policy?.fix_suggestion}</p>
+                    </div>
+                  </div>
+                );
+              })}
+              {fixableViolations.length > 5 && (
+                <p className="text-xs text-slate-500 text-center pt-2">
+                  +{fixableViolations.length - 5} more fixes available
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      
       <div className="max-h-[280px] overflow-y-auto">
         {violations.map((violation, index) => {
           const severity = getSeverityConfig(violation.severity);
@@ -1496,13 +2543,22 @@ function ViolationsList({
                 <span className={`px-2.5 py-1 text-xs font-mono font-semibold rounded-lg ${severity.bg} ${severity.color}`}>
                   {violation.rule_id}
                 </span>
+                {violation.detector && violation.detector !== 'regex' && violation.detector !== 'ast' && (
+                  <span className="px-2 py-1 text-xs font-medium rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20" title={`Found by ${violation.detector}`}>
+                    {violation.detector}
+                  </span>
+                )}
                 <span className="flex-1 text-sm text-slate-300 truncate">
                   {violation.description}
                 </span>
                 {violation.line && (
-                  <span className="text-xs text-slate-500 font-mono bg-slate-800/50 px-2 py-1 rounded">
-                    L{violation.line}
-                  </span>
+                  <button
+                    onClick={(e) => handleLineClick(violation.line, e)}
+                    className="text-xs text-cyan-400 font-mono bg-cyan-500/10 hover:bg-cyan-500/20 px-2 py-1 rounded border border-cyan-500/20 transition-all"
+                    title="Click to jump to line"
+                  >
+                    ↗ L{violation.line}
+                  </button>
                 )}
               </button>
               {isExpanded && (
@@ -1605,10 +2661,19 @@ function ProofBundleView({
   proof: ProofBundle;
   iterations: number;
   onCopy: () => void;
-  onDownload: () => void;
+  onDownload: (format: string) => void;
   copied: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'formal' | 'json'>('overview');
+  const [exportFormat, setExportFormat] = useState<string>('json');
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  
+  const exportFormats = [
+    { value: 'json', label: 'JSON', icon: '{}' },
+    { value: 'markdown', label: 'Markdown', icon: '📝' },
+    { value: 'html', label: 'HTML', icon: '🌐' },
+    { value: 'summary', label: 'Summary', icon: '📄' },
+  ];
   
   return (
     <div className="space-y-6">
@@ -1632,13 +2697,36 @@ function ProofBundleView({
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied!' : 'Copy JSON'}
             </button>
-            <button
-              onClick={onDownload}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl"
-            >
-              <Download className="w-4 h-4" />
-              Download
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl"
+              >
+                <Download className="w-4 h-4" />
+                Download
+                <ChevronDown className="w-4 h-4" />
+              </button>
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-white/10 rounded-xl shadow-xl z-10 overflow-hidden">
+                  {exportFormats.map((fmt) => (
+                    <button
+                      key={fmt.value}
+                      onClick={() => {
+                        setExportFormat(fmt.value);
+                        onDownload(fmt.value);
+                        setShowExportMenu(false);
+                      }}
+                      className={`w-full text-left px-4 py-3 hover:bg-slate-700 transition-colors flex items-center gap-3 ${
+                        exportFormat === fmt.value ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-300'
+                      }`}
+                    >
+                      <span>{fmt.icon}</span>
+                      <span>{fmt.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         
@@ -2428,6 +3516,12 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
 }
 
 // Policy Group interface
+interface PolicyGroupPolicyDetail {
+  id: string;
+  description: string;
+  severity: string;
+}
+
 interface PolicyGroup {
   id: string;
   name: string;
@@ -2435,6 +3529,1470 @@ interface PolicyGroup {
   enabled: boolean;
   policies: string[];
   policy_count?: number;
+  policy_details?: PolicyGroupPolicyDetail[];
+}
+
+// Tools Configuration View
+function ToolsConfigurationView({ 
+  onCreatePolicy 
+}: { 
+  onCreatePolicy?: (data: {toolName: string; toolRuleId: string; description?: string; severity?: string}) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'tools' | 'mappings' | 'rules'>('tools');
+  
+  // Listen for createMapping events to switch to mappings tab
+  useEffect(() => {
+    const handleCreateMapping = (event: CustomEvent) => {
+      setActiveTab('mappings');
+      // Re-dispatch the event after tab switch so ToolMappingsView can handle it
+      setTimeout(() => {
+        window.dispatchEvent(event);
+      }, 100);
+    };
+    
+    window.addEventListener('createMapping', handleCreateMapping as EventListener);
+    return () => {
+      window.removeEventListener('createMapping', handleCreateMapping as EventListener);
+    };
+  }, []);
+  const [tools, setTools] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState<Set<string>>(new Set());
+
+  const loadTools = useCallback(() => {
+    setLoading(true);
+    fetch('/api/v1/static-analysis/tools')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setTools(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    loadTools();
+  }, [loadTools]);
+
+  const toggleTool = async (language: string, toolName: string, currentEnabled: boolean) => {
+    const key = `${language}:${toolName}`;
+    setToggling(prev => new Set(prev).add(key));
+    
+    try {
+      const response = await fetch(
+        `/api/v1/static-analysis/tools/${language}/${toolName}?enabled=${!currentEnabled}`,
+        { method: 'PATCH' }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`Failed to toggle tool: ${response.statusText}`);
+      }
+      
+      // Reload tools to get updated state
+      await loadTools();
+    } catch (err: any) {
+      setError(err.message || 'Failed to toggle tool');
+    } finally {
+      setToggling(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  if (loading && !tools) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tools configuration...</p>
+      </div>
+    );
+  }
+
+  if (error && !tools) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading tools: {error}</p>
+        <button
+          onClick={() => { setError(null); loadTools(); }}
+          className="mt-4 px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header with Tabs */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center gap-4 mb-4">
+          <div className="p-4 rounded-2xl bg-violet-500/20 border border-violet-500/30">
+            <Settings className="w-10 h-10 text-violet-400" />
+          </div>
+          <div className="flex-1">
+            <h2 className="text-2xl font-display font-bold text-white">Static Analysis Configuration</h2>
+            <p className="text-slate-400">Configure tools and policy mappings</p>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={() => setActiveTab('tools')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              activeTab === 'tools'
+                ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Power className="w-4 h-4" />
+              Tools
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('rules')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              activeTab === 'rules'
+                ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <List className="w-4 h-4" />
+              Browse Rules
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('mappings')}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+              activeTab === 'mappings'
+                ? 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Link2 className="w-4 h-4" />
+              Mappings
+            </div>
+          </button>
+        </div>
+
+        {/* Cache Stats */}
+        {tools?.cache_stats && (
+          <div className="mt-4 p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="w-4 h-4 text-cyan-400" />
+              <span className="text-sm font-semibold text-slate-300">Cache Statistics</span>
+            </div>
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="text-slate-500">Entries:</span>
+                <span className="ml-2 text-slate-300 font-mono">{tools.cache_stats.total_entries}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">Size:</span>
+                <span className="ml-2 text-slate-300 font-mono">
+                  {(tools.cache_stats.total_size_bytes / 1024).toFixed(1)} KB
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500">TTL:</span>
+                <span className="ml-2 text-slate-300 font-mono">{tools.cache_stats.ttl_seconds}s</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Content based on active tab */}
+      {activeTab === 'rules' ? (
+        <ToolRulesBrowser onCreatePolicy={onCreatePolicy} />
+      ) : activeTab === 'tools' ? (
+        tools?.tools_by_language ? (
+          Object.entries(tools.tools_by_language).map(([language, langTools]: [string, any]) => (
+            <div key={language} className="glass rounded-2xl p-6 border border-white/5">
+              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-violet-400" />
+                {language.charAt(0).toUpperCase() + language.slice(1)}
+              </h3>
+              
+              <div className="space-y-3">
+                {langTools.map((tool: any) => {
+                  const toggleKey = `${language}:${tool.name}`;
+                  const isToggling = toggling.has(toggleKey);
+                  
+                  return (
+                    <div
+                      key={tool.name}
+                      className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 flex items-center justify-between"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <span className="px-3 py-1 bg-violet-500/20 text-violet-400 text-sm font-mono font-semibold rounded-lg">
+                            {tool.name}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-4 text-xs text-slate-400">
+                          <div>
+                            <span className="text-slate-500">Timeout:</span> {tool.timeout}s
+                          </div>
+                          <div>
+                            <span className="text-slate-500">Format:</span> {tool.output_format}
+                          </div>
+                          {tool.requires_config && (
+                            <div>
+                              <span className="text-slate-500">Config:</span> {tool.requires_config}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="ml-4 flex items-center gap-3">
+                        <button
+                          onClick={() => toggleTool(language, tool.name, tool.enabled)}
+                          disabled={isToggling}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            tool.enabled
+                              ? 'bg-emerald-500'
+                              : 'bg-slate-600'
+                          } ${isToggling ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              tool.enabled ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                        {isToggling && (
+                          <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+            <p className="text-slate-400">No tools configured</p>
+          </div>
+        )
+      ) : (
+        <ToolMappingsView onCreatePolicy={onCreatePolicy} />
+      )}
+    </div>
+  );
+}
+
+// Tool Rules Browser - Browse available rules from tools
+function ToolRulesBrowser({ 
+  onCreatePolicy 
+}: { 
+  onCreatePolicy?: (data: {toolName: string; toolRuleId: string; description?: string; severity?: string}) => void;
+}) {
+  const [allRules, setAllRules] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTool, setSelectedTool] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'mapped' | 'unmapped'>('all');
+  const [showMappingForm, setShowMappingForm] = useState(false);
+  const [mappingRule, setMappingRule] = useState<{toolName: string; ruleId: string; rule: any} | null>(null);
+  const [newMapping, setNewMapping] = useState({
+    policyId: '',
+    confidence: 'medium',
+    severity: 'medium',
+    description: ''
+  });
+
+  useEffect(() => {
+    fetch('/api/v1/static-analysis/tools/rules')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setAllRules(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  const loadRules = () => {
+    fetch('/api/v1/static-analysis/tools/rules')
+      .then(res => res.json())
+      .then(data => setAllRules(data))
+      .catch(err => setError(err.message));
+  };
+
+  const handleCreateMapping = (toolName: string, ruleId: string, rule: any) => {
+    setMappingRule({ toolName, ruleId, rule });
+    setNewMapping({
+      policyId: '',
+      confidence: rule.severity === 'critical' || rule.severity === 'high' ? 'high' : 'medium',
+      severity: rule.severity || 'medium',
+      description: rule.description || ''
+    });
+    setShowMappingForm(true);
+  };
+
+  const handleSaveMapping = async () => {
+    if (!mappingRule || !newMapping.policyId) {
+      alert('Please enter a policy ID');
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/v1/static-analysis/mappings/${mappingRule.toolName}/${mappingRule.ruleId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            policy_id: newMapping.policyId,
+            confidence: newMapping.confidence,
+            severity: newMapping.severity,
+            description: newMapping.description || mappingRule.rule.description
+          })
+        }
+      );
+      
+      if (response.ok) {
+        loadRules();
+        setShowMappingForm(false);
+        setMappingRule(null);
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to save mapping');
+      }
+    } catch (err) {
+      alert('Failed to save mapping');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tool rules...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading rules: {error}</p>
+        <button
+          onClick={() => { setError(null); loadRules(); }}
+          className="mt-4 px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!allRules || Object.keys(allRules).length === 0) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <p className="text-slate-400">No tool rules available</p>
+      </div>
+    );
+  }
+
+  const tools = Object.keys(allRules);
+  const currentTool = selectedTool || tools[0];
+  const toolData = allRules[currentTool];
+  const rules = Object.entries(toolData.rules || {}).filter(([_, rule]: [string, any]) => {
+    if (filter === 'mapped') return rule.mapped;
+    if (filter === 'unmapped') return !rule.mapped;
+    return true;
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Pipeline Visualization */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <h3 className="text-lg font-semibold text-white mb-4">How Tools Work in the Pipeline</h3>
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg">
+            <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-400 font-bold">1</div>
+            <div className="flex-1">
+              <div className="font-semibold text-white">Code Analysis</div>
+              <div className="text-slate-400">When you analyze code, enabled tools run automatically</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg">
+            <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-400 font-bold">2</div>
+            <div className="flex-1">
+              <div className="font-semibold text-white">Tool Execution</div>
+              <div className="text-slate-400">Tools (Bandit, ESLint, etc.) scan code and find issues</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg">
+            <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-400 font-bold">3</div>
+            <div className="flex-1">
+              <div className="font-semibold text-white">Rule Mapping</div>
+              <div className="text-slate-400">Tool findings are mapped to ACPG policies (only mapped rules create violations)</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg">
+            <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-400 font-bold">4</div>
+            <div className="flex-1">
+              <div className="font-semibold text-white">Violation Creation</div>
+              <div className="text-slate-400">Mapped findings become violations in the compliance report</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tool Selection and Filter */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Browse Tool Rules</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              View available rules from static analysis tools and create mappings
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-4 mb-4">
+          <div className="flex-1">
+            <label className="block text-sm text-slate-400 mb-2">Select Tool</label>
+            <select
+              value={currentTool}
+              onChange={(e) => setSelectedTool(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+            >
+              {tools.map(tool => (
+                <option key={tool} value={tool}>{tool}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="block text-sm text-slate-400 mb-2">Filter</label>
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as 'all' | 'mapped' | 'unmapped')}
+              className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+            >
+              <option value="all">All Rules</option>
+              <option value="mapped">Mapped Only</option>
+              <option value="unmapped">Unmapped Only</option>
+            </select>
+          </div>
+        </div>
+
+        {toolData && (
+          <div className="p-4 bg-slate-800/30 rounded-lg">
+            <div className="flex gap-6 text-sm">
+              <div>
+                <span className="text-slate-500">Total Rules:</span>{' '}
+                <span className="text-white font-semibold">{toolData.total_rules}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">Mapped:</span>{' '}
+                <span className="text-emerald-400 font-semibold">{toolData.mapped_rules}</span>
+              </div>
+              <div>
+                <span className="text-slate-500">Unmapped:</span>{' '}
+                <span className="text-amber-400 font-semibold">{toolData.unmapped_rules}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Mapping Form Modal */}
+      {showMappingForm && mappingRule && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <h4 className="text-md font-semibold text-white mb-4">
+            Create Mapping: {mappingRule.toolName}:{mappingRule.ruleId}
+          </h4>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Tool Rule</label>
+              <div className="p-3 bg-slate-800/50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="px-2 py-1 bg-amber-500/20 text-amber-400 text-xs font-mono rounded">
+                    {mappingRule.ruleId}
+                  </span>
+                  <span className="text-sm text-slate-300">{mappingRule.rule.description}</span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Severity: {mappingRule.rule.severity || 'medium'}
+                </div>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Policy ID *</label>
+              <input
+                type="text"
+                value={newMapping.policyId}
+                onChange={(e) => setNewMapping({...newMapping, policyId: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., SQL-001"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Confidence</label>
+                <select
+                  value={newMapping.confidence}
+                  onChange={(e) => setNewMapping({...newMapping, confidence: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                <select
+                  value={newMapping.severity}
+                  onChange={(e) => setNewMapping({...newMapping, severity: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Description</label>
+              <textarea
+                value={newMapping.description}
+                onChange={(e) => setNewMapping({...newMapping, description: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                rows={2}
+                placeholder="Description of the mapping"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveMapping}
+                className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors"
+              >
+                Create Mapping
+              </button>
+              <button
+                onClick={() => {
+                  setShowMappingForm(false);
+                  setMappingRule(null);
+                }}
+                className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+              >
+                Cancel
+              </button>
+              {onCreatePolicy && (
+                <button
+                  onClick={() => {
+                    onCreatePolicy({
+                      toolName: mappingRule.toolName,
+                      toolRuleId: mappingRule.ruleId,
+                      description: newMapping.description || mappingRule.rule.description,
+                      severity: newMapping.severity
+                    });
+                    setShowMappingForm(false);
+                  }}
+                  className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors"
+                >
+                  Create Policy First
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rules List */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <h4 className="text-md font-semibold text-white mb-4">
+          {currentTool.charAt(0).toUpperCase() + currentTool.slice(1)} Rules ({rules.length})
+        </h4>
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {rules.map(([ruleId, rule]: [string, any]) => (
+            <div
+              key={ruleId}
+              className={`p-4 rounded-xl border ${
+                rule.mapped 
+                  ? 'bg-emerald-500/5 border-emerald-500/20' 
+                  : 'bg-slate-800/50 border-slate-700/50'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-2 py-1 bg-amber-500/20 text-amber-400 text-xs font-mono rounded">
+                      {ruleId}
+                    </span>
+                    {rule.mapped ? (
+                      <>
+                        <span className="text-slate-400">→</span>
+                        <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                          {rule.mapped_to_policy}
+                        </span>
+                        <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded">
+                          Mapped
+                        </span>
+                      </>
+                    ) : (
+                      <span className="px-2 py-1 bg-slate-700 text-slate-500 text-xs rounded">
+                        Unmapped
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-300 mb-2">{rule.description}</p>
+                  <div className="flex gap-4 text-xs text-slate-400">
+                    <div>
+                      <span className="text-slate-500">Severity:</span>{' '}
+                      <span className={`font-semibold ${
+                        rule.severity === 'critical' ? 'text-red-400' :
+                        rule.severity === 'high' ? 'text-orange-400' :
+                        rule.severity === 'medium' ? 'text-amber-400' :
+                        'text-slate-400'
+                      }`}>
+                        {rule.severity || 'medium'}
+                      </span>
+                    </div>
+                    {rule.category && (
+                      <div>
+                        <span className="text-slate-500">Category:</span>{' '}
+                        <span className="text-slate-300">{rule.category}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {!rule.mapped && (
+                  <div className="ml-4 flex gap-2">
+                    <button
+                      onClick={() => handleCreateMapping(currentTool, ruleId, rule)}
+                      className="px-3 py-1.5 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors text-xs flex items-center gap-1"
+                    >
+                      <Link2 className="w-3 h-3" />
+                      Map
+                    </button>
+                    {onCreatePolicy && (
+                      <button
+                        onClick={() => {
+                          onCreatePolicy({
+                            toolName: currentTool,
+                            toolRuleId: ruleId,
+                            description: rule.description,
+                            severity: rule.severity || 'medium'
+                          });
+                        }}
+                        className="px-3 py-1.5 bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors text-xs flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Policy
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Tool Mappings View
+function ToolMappingsView({ 
+  onCreatePolicy 
+}: { 
+  onCreatePolicy?: (data: {toolName: string; toolRuleId: string; description?: string; severity?: string}) => void;
+}) {
+  const [mappings, setMappings] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editingMapping, setEditingMapping] = useState<{toolName: string; ruleId: string; mapping: any} | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [showBulkForm, setShowBulkForm] = useState(false);
+  const [bulkMappings, setBulkMappings] = useState<Array<{toolName: string; toolRuleId: string; policyId: string; confidence: string; severity: string; description: string}>>([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkResults, setBulkResults] = useState<{succeeded: number; failed: number; results: any} | null>(null);
+  const [newMapping, setNewMapping] = useState({
+    toolName: '',
+    toolRuleId: '',
+    policyId: '',
+    confidence: 'medium',
+    severity: 'medium',
+    description: ''
+  });
+  
+  // Listen for createMapping events from unmapped findings
+  useEffect(() => {
+    const handleCreateMapping = (event: CustomEvent) => {
+      const { toolName, toolRuleId } = event.detail;
+      setNewMapping({
+        toolName,
+        toolRuleId,
+        policyId: '',
+        confidence: 'medium',
+        severity: 'medium',
+        description: ''
+      });
+      setShowAddForm(true);
+    };
+    
+    window.addEventListener('createMapping', handleCreateMapping as EventListener);
+    return () => {
+      window.removeEventListener('createMapping', handleCreateMapping as EventListener);
+    };
+  }, []);
+
+  const loadMappings = useCallback(() => {
+    setLoading(true);
+    fetch('/api/v1/static-analysis/mappings')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setMappings(data.mappings || {});
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    loadMappings();
+  }, [loadMappings]);
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tool mappings...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading mappings: {error}</p>
+      </div>
+    );
+  }
+
+  if (!mappings || Object.keys(mappings).length === 0) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <p className="text-slate-400">No tool mappings configured</p>
+        <p className="text-slate-500 text-sm mt-2">Mappings are defined in policies/tool_mappings.json</p>
+      </div>
+    );
+  }
+
+  const handleEdit = (toolName: string, ruleId: string, mapping: any) => {
+    setEditingMapping({ toolName, ruleId, mapping });
+    setNewMapping({
+      toolName,
+      toolRuleId: ruleId,
+      policyId: mapping.policy_id,
+      confidence: mapping.confidence || 'medium',
+      severity: mapping.severity || 'medium',
+      description: mapping.description || ''
+    });
+    setShowAddForm(true);
+  };
+
+  const handleDelete = async (toolName: string, ruleId: string) => {
+    if (!confirm(`Delete mapping for ${toolName}:${ruleId}?`)) return;
+    
+    try {
+      const response = await fetch(`/api/v1/static-analysis/mappings/${toolName}/${ruleId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        loadMappings();
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to delete mapping');
+      }
+    } catch (err) {
+      alert('Failed to delete mapping');
+    }
+  };
+
+  const handleSaveMapping = async () => {
+    try {
+      const response = await fetch(
+        `/api/v1/static-analysis/mappings/${newMapping.toolName}/${newMapping.toolRuleId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            policy_id: newMapping.policyId,
+            confidence: newMapping.confidence,
+            severity: newMapping.severity,
+            description: newMapping.description
+          })
+        }
+      );
+      
+      if (response.ok) {
+        loadMappings();
+        setShowAddForm(false);
+        setEditingMapping(null);
+        setNewMapping({
+          toolName: '',
+          toolRuleId: '',
+          policyId: '',
+          confidence: 'medium',
+          severity: 'medium',
+          description: ''
+        });
+      } else {
+        const error = await response.json();
+        alert(error.detail || 'Failed to save mapping');
+      }
+    } catch (err) {
+      alert('Failed to save mapping');
+    }
+  };
+
+  const handleCreatePolicy = (toolName: string, ruleId: string, mapping: any) => {
+    if (onCreatePolicy) {
+      onCreatePolicy({
+        toolName,
+        toolRuleId: ruleId,
+        description: mapping.description || `${toolName} rule ${ruleId}`,
+        severity: mapping.severity || 'medium'
+      });
+    }
+  };
+
+  const handleBulkAdd = () => {
+    setBulkMappings([...bulkMappings, {
+      toolName: '',
+      toolRuleId: '',
+      policyId: '',
+      confidence: 'medium',
+      severity: 'medium',
+      description: ''
+    }]);
+  };
+
+  const handleBulkRemove = (index: number) => {
+    setBulkMappings(bulkMappings.filter((_, i) => i !== index));
+  };
+
+  const handleBulkUpdate = (index: number, field: string, value: string) => {
+    const updated = [...bulkMappings];
+    updated[index] = { ...updated[index], [field]: value };
+    setBulkMappings(updated);
+  };
+
+  const handleBulkSave = async () => {
+    // Validate all mappings have required fields
+    const invalid = bulkMappings.filter(m => !m.toolName || !m.toolRuleId || !m.policyId);
+    if (invalid.length > 0) {
+      alert(`Please fill in all required fields for ${invalid.length} mapping(s)`);
+      return;
+    }
+
+    setBulkProcessing(true);
+    setBulkResults(null);
+
+    try {
+      const response = await fetch('/api/v1/static-analysis/mappings/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mappings: bulkMappings })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      setBulkResults(result);
+      
+      if (result.failed === 0) {
+        // All succeeded, reload mappings and close form
+        loadMappings();
+        setTimeout(() => {
+          setShowBulkForm(false);
+          setBulkMappings([]);
+          setBulkResults(null);
+        }, 2000);
+      }
+    } catch (err: any) {
+      alert(`Failed to save bulk mappings: ${err.message}`);
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading tool mappings...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-red-500/20 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-4" />
+        <p className="text-red-400">Error loading mappings: {error}</p>
+        <button
+          onClick={() => { setError(null); loadMappings(); }}
+          className="mt-4 px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!mappings || Object.keys(mappings).length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Tool-to-Policy Mappings</h3>
+              <p className="text-sm text-slate-400 mt-1">
+                Map static analysis tool rules to ACPG policies
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Mapping
+            </button>
+          </div>
+        </div>
+        {showAddForm && (
+          <div className="glass rounded-2xl p-6 border border-white/5">
+            <h4 className="text-md font-semibold text-white mb-4">
+              {editingMapping ? 'Edit Mapping' : 'Add New Mapping'}
+            </h4>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Tool Name</label>
+                <input
+                  type="text"
+                  value={newMapping.toolName}
+                  onChange={(e) => setNewMapping({...newMapping, toolName: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="e.g., bandit"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Tool Rule ID</label>
+                <input
+                  type="text"
+                  value={newMapping.toolRuleId}
+                  onChange={(e) => setNewMapping({...newMapping, toolRuleId: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="e.g., B608"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Policy ID</label>
+                <input
+                  type="text"
+                  value={newMapping.policyId}
+                  onChange={(e) => setNewMapping({...newMapping, policyId: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="e.g., SQL-001"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Confidence</label>
+                  <select
+                    value={newMapping.confidence}
+                    onChange={(e) => setNewMapping({...newMapping, confidence: e.target.value})}
+                    className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                  <select
+                    value={newMapping.severity}
+                    onChange={(e) => setNewMapping({...newMapping, severity: e.target.value})}
+                    className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Description</label>
+                <textarea
+                  value={newMapping.description}
+                  onChange={(e) => setNewMapping({...newMapping, description: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  rows={2}
+                  placeholder="Description of the mapping"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSaveMapping}
+                  className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddForm(false);
+                    setEditingMapping(null);
+                    setNewMapping({
+                      toolName: '',
+                      toolRuleId: '',
+                      policyId: '',
+                      confidence: 'medium',
+                      severity: 'medium',
+                      description: ''
+                    });
+                  }}
+                  className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+          <p className="text-slate-400">No tool mappings configured</p>
+          <p className="text-slate-500 text-sm mt-2">Click "Add Mapping" to create your first mapping</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Tool-to-Policy Mappings</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              Map static analysis tool rules to ACPG policies
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setShowBulkForm(true);
+                setBulkMappings([]);
+                setBulkResults(null);
+              }}
+              className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-lg hover:bg-cyan-500/30 transition-colors flex items-center gap-2"
+            >
+              <List className="w-4 h-4" />
+              Bulk Mapping
+            </button>
+            <button
+              onClick={() => {
+                setShowAddForm(true);
+                setEditingMapping(null);
+                setNewMapping({
+                  toolName: '',
+                  toolRuleId: '',
+                  policyId: '',
+                  confidence: 'medium',
+                  severity: 'medium',
+                  description: ''
+                });
+              }}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Mapping
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {showBulkForm && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h4 className="text-md font-semibold text-white">Bulk Mapping</h4>
+              <p className="text-sm text-slate-400 mt-1">
+                Create multiple mappings at once
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setShowBulkForm(false);
+                setBulkMappings([]);
+                setBulkResults(null);
+              }}
+              className="px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors text-sm"
+            >
+              Close
+            </button>
+          </div>
+
+          {bulkResults && (
+            <div className={`mb-4 p-4 rounded-lg border ${
+              bulkResults.failed === 0 
+                ? 'bg-emerald-500/10 border-emerald-500/30' 
+                : 'bg-amber-500/10 border-amber-500/30'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                {bulkResults.failed === 0 ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                )}
+                <span className={`font-semibold ${
+                  bulkResults.failed === 0 ? 'text-emerald-400' : 'text-amber-400'
+                }`}>
+                  {bulkResults.succeeded} succeeded, {bulkResults.failed} failed
+                </span>
+              </div>
+              {bulkResults.results.failed.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {bulkResults.results.failed.slice(0, 5).map((f: any, i: number) => (
+                    <div key={i} className="text-xs text-red-400">
+                      {f.mapping.toolName}:{f.mapping.toolRuleId} - {f.error}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-3 max-h-96 overflow-y-auto mb-4">
+            {bulkMappings.length === 0 ? (
+              <div className="text-center py-8 text-slate-400">
+                <p>No mappings added yet</p>
+                <p className="text-sm mt-1">Click "Add Row" to start</p>
+              </div>
+            ) : (
+              bulkMappings.map((mapping, index) => (
+                <div key={index} className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                  <div className="flex items-start gap-2 mb-3">
+                    <span className="px-2 py-1 bg-violet-500/20 text-violet-400 text-xs font-mono rounded">
+                      #{index + 1}
+                    </span>
+                    <button
+                      onClick={() => handleBulkRemove(index)}
+                      className="ml-auto px-2 py-1 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors text-xs"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <input
+                      type="text"
+                      placeholder="Tool (e.g., bandit)"
+                      value={mapping.toolName}
+                      onChange={(e) => handleBulkUpdate(index, 'toolName', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Rule ID (e.g., B608)"
+                      value={mapping.toolRuleId}
+                      onChange={(e) => handleBulkUpdate(index, 'toolRuleId', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Policy ID (e.g., SQL-001)"
+                      value={mapping.policyId}
+                      onChange={(e) => handleBulkUpdate(index, 'policyId', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={mapping.confidence}
+                      onChange={(e) => handleBulkUpdate(index, 'confidence', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    >
+                      <option value="low">Low Confidence</option>
+                      <option value="medium">Medium Confidence</option>
+                      <option value="high">High Confidence</option>
+                    </select>
+                    <select
+                      value={mapping.severity}
+                      onChange={(e) => handleBulkUpdate(index, 'severity', e.target.value)}
+                      className="px-2 py-1.5 bg-slate-900/50 border border-slate-700 rounded text-white text-sm"
+                    >
+                      <option value="low">Low Severity</option>
+                      <option value="medium">Medium Severity</option>
+                      <option value="high">High Severity</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleBulkAdd}
+              className="px-4 py-2 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Row
+            </button>
+            <button
+              onClick={handleBulkSave}
+              disabled={bulkMappings.length === 0 || bulkProcessing}
+              className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {bulkProcessing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save All ({bulkMappings.length})
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showAddForm && (
+        <div className="glass rounded-2xl p-6 border border-white/5">
+          <h4 className="text-md font-semibold text-white mb-4">
+            {editingMapping ? 'Edit Mapping' : 'Add New Mapping'}
+          </h4>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Tool Name</label>
+              <input
+                type="text"
+                value={newMapping.toolName}
+                onChange={(e) => setNewMapping({...newMapping, toolName: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., bandit"
+                disabled={!!editingMapping}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Tool Rule ID</label>
+              <input
+                type="text"
+                value={newMapping.toolRuleId}
+                onChange={(e) => setNewMapping({...newMapping, toolRuleId: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., B608"
+                disabled={!!editingMapping}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Policy ID</label>
+              <input
+                type="text"
+                value={newMapping.policyId}
+                onChange={(e) => setNewMapping({...newMapping, policyId: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="e.g., SQL-001"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Confidence</label>
+                <select
+                  value={newMapping.confidence}
+                  onChange={(e) => setNewMapping({...newMapping, confidence: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-400 mb-1">Severity</label>
+                <select
+                  value={newMapping.severity}
+                  onChange={(e) => setNewMapping({...newMapping, severity: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Description</label>
+              <textarea
+                value={newMapping.description}
+                onChange={(e) => setNewMapping({...newMapping, description: e.target.value})}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                rows={2}
+                placeholder="Description of the mapping"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveMapping}
+                className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddForm(false);
+                  setEditingMapping(null);
+                  setNewMapping({
+                    toolName: '',
+                    toolRuleId: '',
+                    policyId: '',
+                    confidence: 'medium',
+                    severity: 'medium',
+                    description: ''
+                  });
+                }}
+                className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {Object.entries(mappings).map(([toolName, toolMappings]: [string, any]) => (
+        <div key={toolName} className="glass rounded-2xl p-6 border border-white/5">
+          <h4 className="text-md font-semibold text-white mb-4 flex items-center gap-2">
+            <span className="px-3 py-1 bg-violet-500/20 text-violet-400 text-sm font-mono rounded-lg">
+              {toolName}
+            </span>
+            <span className="text-slate-400 text-sm">
+              {Object.keys(toolMappings).length} mapping{Object.keys(toolMappings).length !== 1 ? 's' : ''}
+            </span>
+          </h4>
+          
+          <div className="space-y-2">
+            {Object.entries(toolMappings).map(([ruleId, mapping]: [string, any]) => (
+              <div
+                key={ruleId}
+                className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="px-2 py-1 bg-amber-500/20 text-amber-400 text-xs font-mono rounded">
+                        {ruleId}
+                      </span>
+                      <span className="text-slate-400">→</span>
+                      <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
+                        {mapping.policy_id}
+                      </span>
+                    </div>
+                    {mapping.description && (
+                      <p className="text-sm text-slate-300 mb-2">{mapping.description}</p>
+                    )}
+                    <div className="flex gap-4 text-xs text-slate-400">
+                      <div>
+                        <span className="text-slate-500">Confidence:</span>{' '}
+                        <span className={`font-semibold ${
+                          mapping.confidence === 'high' ? 'text-emerald-400' :
+                          mapping.confidence === 'medium' ? 'text-amber-400' :
+                          'text-slate-400'
+                        }`}>
+                          {mapping.confidence || 'medium'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Severity:</span>{' '}
+                        <span className={`font-semibold ${
+                          mapping.severity === 'critical' ? 'text-red-400' :
+                          mapping.severity === 'high' ? 'text-orange-400' :
+                          mapping.severity === 'medium' ? 'text-amber-400' :
+                          'text-slate-400'
+                        }`}>
+                          {mapping.severity || 'medium'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 ml-4">
+                    <button
+                      onClick={() => handleCreatePolicy(toolName, ruleId, mapping)}
+                      className="px-3 py-1.5 bg-violet-500/20 text-violet-400 rounded-lg hover:bg-violet-500/30 transition-colors text-xs flex items-center gap-1"
+                      title="Create Policy from this mapping"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Policy
+                    </button>
+                    <button
+                      onClick={() => handleEdit(toolName, ruleId, mapping)}
+                      className="px-3 py-1.5 bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors text-xs flex items-center gap-1"
+                      title="Edit mapping"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(toolName, ruleId)}
+                      className="px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors text-xs flex items-center gap-1"
+                      title="Delete mapping"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // Proof Bundle Verifier - Check for tampering
@@ -2508,6 +5066,40 @@ function ProofVerifier() {
       setVerificationResult(null);
     } catch {
       setError('Cannot tamper - invalid JSON');
+    }
+  };
+
+  const handleExportProof = async (format: string = 'json') => {
+    if (!proofJson) return;
+    try {
+      const proofBundle = JSON.parse(proofJson);
+      const response = await api.exportProof(proofBundle, format);
+      const content = response.content;
+      
+      // Determine file extension and MIME type
+      let extension = 'json';
+      let mimeType = 'application/json';
+      if (format === 'markdown') {
+        extension = 'md';
+        mimeType = 'text/markdown';
+      } else if (format === 'html') {
+        extension = 'html';
+        mimeType = 'text/html';
+      } else if (format === 'summary') {
+        extension = 'txt';
+        mimeType = 'text/plain';
+      }
+      
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `proof_bundle.${extension}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export failed:', error);
+      setError('Export failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 
@@ -2684,6 +5276,48 @@ function ProofVerifier() {
                 </div>
               )}
 
+              {/* Export Options */}
+              <div className="p-4 bg-slate-800/50 rounded-xl">
+                <h5 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                  <Download className="w-4 h-4" />
+                  Export Proof Bundle
+                </h5>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleExportProof('json')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    JSON
+                  </button>
+                  <button
+                    onClick={() => handleExportProof('markdown')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Markdown
+                  </button>
+                  <button
+                    onClick={() => handleExportProof('html')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    HTML
+                  </button>
+                  <button
+                    onClick={() => handleExportProof('summary')}
+                    disabled={!proofJson}
+                    className="px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Summary
+                  </button>
+                </div>
+              </div>
+
               {/* Errors */}
               {verificationResult.errors?.length > 0 && (
                 <div className="p-4 bg-red-500/10 rounded-xl border border-red-500/20">
@@ -2731,7 +5365,15 @@ function ProofVerifier() {
 }
 
 // Policies View with Editor and Groups
-function PoliciesView({ policies }: { policies: PolicyRule[] }) {
+function PoliciesView({ 
+  policies, 
+  initialPolicyData,
+  onPolicyCreated 
+}: { 
+  policies: PolicyRule[];
+  initialPolicyData?: {toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null;
+  onPolicyCreated?: () => void;
+}) {
   const [activeTab, setActiveTab] = useState<'policies' | 'groups'>('policies');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'strict' | 'defeasible'>('all');
@@ -2752,6 +5394,68 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     enabled: true,
     policies: [] as string[]
   });
+  
+  // Policy templates
+  interface PolicyTemplate {
+    id: string;
+    name: string;
+    description: string;
+    icon: string;
+    category: string;
+    policy_count: number;
+    policies: string[];
+  }
+  const [templates, setTemplates] = useState<PolicyTemplate[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [loadingTemplate, setLoadingTemplate] = useState<string | null>(null);
+  const groupFileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Export/Import policy groups
+  const handleExportGroups = async () => {
+    try {
+      const res = await fetch('/api/v1/policies/groups/export');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `acpg-policy-groups-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export failed:', e);
+    }
+  };
+  
+  const handleImportGroups = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const groups = data.groups || [];
+      
+      const res = await fetch('/api/v1/policies/groups/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groups, overwrite: false })
+      });
+      
+      if (res.ok) {
+        const result = await res.json();
+        alert(`Imported ${result.total_imported} groups${result.total_skipped > 0 ? ` (${result.total_skipped} skipped)` : ''}`);
+        loadPolicyGroups();
+      }
+    } catch (e) {
+      alert('Invalid JSON file');
+    }
+    
+    // Reset file input
+    if (groupFileInputRef.current) {
+      groupFileInputRef.current.value = '';
+    }
+  };
   
   // Form state for policy editor
   const [formData, setFormData] = useState({
@@ -2779,6 +5483,31 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
     
     loadPolicyGroups();
   }, []);
+
+  // Handle initial policy data from tool mappings
+  useEffect(() => {
+    if (initialPolicyData) {
+      const suggestedId = initialPolicyData.toolRuleId 
+        ? `${initialPolicyData.toolName?.toUpperCase() || 'TOOL'}-${initialPolicyData.toolRuleId}`
+        : 'NEW-001';
+      
+      setFormData({
+        id: suggestedId,
+        description: initialPolicyData.description || `Policy for ${initialPolicyData.toolName}:${initialPolicyData.toolRuleId}`,
+        type: 'strict',
+        severity: (initialPolicyData.severity as 'low' | 'medium' | 'high' | 'critical') || 'medium',
+        checkType: 'manual',
+        pattern: '',
+        message: initialPolicyData.description || '',
+        languages: ['python'],
+        fix_suggestion: ''
+      });
+      setShowEditor(true);
+      if (onPolicyCreated) {
+        onPolicyCreated();
+      }
+    }
+  }, [initialPolicyData, onPolicyCreated]);
   
   const loadPolicyGroups = () => {
     fetch('/api/v1/policies/groups/')
@@ -2790,6 +5519,40 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
       })
       .catch(() => {});
   };
+  
+  const loadTemplates = () => {
+    fetch('/api/v1/policies/groups/templates/')
+      .then(res => res.json())
+      .then(data => {
+        if (data.templates) {
+          setTemplates(data.templates);
+        }
+      })
+      .catch(() => {});
+  };
+  
+  const applyTemplate = async (templateId: string) => {
+    setLoadingTemplate(templateId);
+    try {
+      const res = await fetch(`/api/v1/policies/groups/templates/${templateId}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        loadPolicyGroups();
+        setShowTemplates(false);
+      }
+    } catch (e) {
+      console.error('Failed to apply template:', e);
+    } finally {
+      setLoadingTemplate(null);
+    }
+  };
+  
+  // Load templates on mount
+  useEffect(() => {
+    loadTemplates();
+  }, []);
   
   const allPolicies = [...policies, ...customPolicies.filter(cp => 
     !policies.some(p => p.id === cp.id)
@@ -2906,6 +5669,9 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
         setCustomPolicies(customData.policies || []);
         setShowEditor(false);
         resetForm();
+        if (onPolicyCreated) {
+          onPolicyCreated();
+        }
       } else {
         const error = await response.json();
         alert(error.detail || 'Failed to save policy');
@@ -3048,13 +5814,43 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
                 New Policy
               </button>
             ) : (
-              <button
-                onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
-              >
-                <Plus className="w-5 h-5" />
-                New Group
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowTemplates(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  Templates
+                </button>
+                <button
+                  onClick={handleExportGroups}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
+                  title="Export policy groups"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => groupFileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
+                  title="Import policy groups"
+                >
+                  <Upload className="w-4 h-4" />
+                </button>
+                <input
+                  type="file"
+                  ref={groupFileInputRef}
+                  accept=".json"
+                  onChange={handleImportGroups}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
+                >
+                  <Plus className="w-5 h-5" />
+                  New Group
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -3228,6 +6024,78 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
               >
                 {editingGroup ? 'Update Group' : 'Create Group'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Policy Templates Modal */}
+      {showTemplates && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                  <Sparkles className="w-6 h-6 text-violet-400" />
+                  Policy Templates
+                </h3>
+                <p className="text-sm text-slate-400 mt-1">Quick-start with pre-built policy groups</p>
+              </div>
+              <button onClick={() => setShowTemplates(false)} className="text-slate-400 hover:text-white">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6">
+              <div className="grid grid-cols-2 gap-4">
+                {templates.map(template => (
+                  <div 
+                    key={template.id}
+                    className="group p-4 bg-slate-800/30 hover:bg-slate-800/50 border border-white/5 hover:border-violet-500/30 rounded-xl transition-all cursor-pointer"
+                    onClick={() => applyTemplate(template.id)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{template.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-white group-hover:text-violet-300 transition-colors">
+                            {template.name}
+                          </h4>
+                          <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded">
+                            {template.policy_count} policies
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-400 mt-1">{template.description}</p>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {template.policies.slice(0, 4).map(policyId => (
+                            <span key={policyId} className="text-[10px] font-mono px-1.5 py-0.5 bg-violet-500/10 text-violet-400 rounded">
+                              {policyId}
+                            </span>
+                          ))}
+                          {template.policies.length > 4 && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-700 text-slate-400 rounded">
+                              +{template.policies.length - 4}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {loadingTemplate === template.id && (
+                      <div className="mt-3 flex items-center gap-2 text-sm text-violet-400">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Creating group...
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              {templates.length === 0 && (
+                <div className="text-center py-12 text-slate-400">
+                  <Sparkles className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No templates available</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3568,16 +6436,40 @@ function PoliciesView({ policies }: { policies: PolicyRule[] }) {
                   </div>
                 </div>
                 
-                {/* Policy list */}
+                {/* Policy list with descriptions */}
                 <div className="flex flex-wrap gap-2">
-                  {group.policies.slice(0, 10).map(policyId => (
-                    <span 
-                      key={policyId} 
-                      className="px-2 py-1 bg-slate-800/50 text-slate-300 text-xs font-mono rounded-lg"
-                    >
-                      {policyId}
-                    </span>
-                  ))}
+                  {group.policies.slice(0, 10).map((policyId, idx) => {
+                    // Use policy_details from API response, or fallback to allPolicies lookup
+                    const policyDetail = group.policy_details?.[idx];
+                    const policy = policyDetail || allPolicies.find(p => p.id === policyId);
+                    const description = policyDetail?.description || (policy as any)?.description || policyId;
+                    const severity = policyDetail?.severity || (policy as any)?.severity;
+                    
+                    return (
+                      <span 
+                        key={policyId} 
+                        className="group/policy relative px-2 py-1 bg-slate-800/50 text-slate-300 text-xs font-mono rounded-lg cursor-help"
+                        title={description}
+                      >
+                        {policyId}
+                        {/* Tooltip with description */}
+                        <div className="absolute bottom-full left-0 mb-2 hidden group-hover/policy:block z-50 w-72 p-3 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-left">
+                          <div className="font-semibold text-violet-400 mb-1">{policyId}</div>
+                          <div className="text-slate-300 text-xs font-sans leading-relaxed">{description}</div>
+                          {severity && (
+                            <div className="flex gap-2 mt-2">
+                              <span className={`px-1.5 py-0.5 text-[10px] uppercase font-semibold rounded ${
+                                severity === 'critical' ? 'bg-red-500/20 text-red-400' :
+                                severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
+                                severity === 'medium' ? 'bg-amber-500/20 text-amber-400' :
+                                'bg-slate-700 text-slate-400'
+                              }`}>{severity}</span>
+                            </div>
+                          )}
+                        </div>
+                      </span>
+                    );
+                  })}
                   {group.policies.length > 10 && (
                     <span className="px-2 py-1 bg-slate-800/50 text-slate-500 text-xs rounded-lg">
                       +{group.policies.length - 10} more

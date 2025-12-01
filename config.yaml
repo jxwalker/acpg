@@ -1,0 +1,42 @@
+# ACPG Configuration
+# Ports and service settings
+
+services:
+  backend:
+    base_port: 6000
+    host: "0.0.0.0"
+    auto_find_port: true  # If base_port is in use, find next available
+    workers: 1
+    reload: false  # Set to true for development
+    
+  frontend:
+    base_port: 6001
+    auto_find_port: true
+    host: "localhost"
+    
+  # Optional: Additional services
+  # database:
+  #   port: 5432
+  #   host: "localhost"
+
+# API Configuration
+api:
+  base_path: "/api/v1"
+  cors_origins:
+    - "http://localhost:6001"
+    - "http://localhost:6002"
+    - "http://localhost:6003"
+    - "http://localhost:6004"
+    - "http://localhost:6005"
+
+# Logging
+logging:
+  backend_log: "/tmp/acpg_backend.log"
+  frontend_log: "/tmp/acpg_frontend.log"
+  level: "INFO"
+
+# Process Management
+process:
+  pid_dir: "/tmp/acpg_pids"
+  graceful_shutdown_timeout: 10  # seconds
+

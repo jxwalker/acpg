@@ -1,0 +1,65 @@
+# ACPG Development Docker Compose
+# Usage: docker compose -f docker-compose.dev.yml up
+
+services:
+  acpg-backend:
+    container_name: acpg-backend
+    image: acpg-backend:dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - DATABASE_URL=sqlite:///data/acpg.db
+      - POLICIES_DIR=/policies
+      - SAMPLES_DIR=/samples
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./backend:/app
+      - ./policies:/policies
+      - ./samples:/samples
+      - ./backend/data:/app/data
+      - ./backend/keys:/app/keys
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - acpg-network
+
+  acpg-frontend:
+    container_name: acpg-frontend
+    image: acpg-frontend:dev
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - DOCKER_ENV=true
+      - VITE_API_URL=http://acpg-backend:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Preserve node_modules from container
+    depends_on:
+      acpg-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - acpg-network
+
+networks:
+  acpg-network:
+    name: acpg-network
+    driver: bridge
+

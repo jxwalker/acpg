@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     OPENAI_MAX_TOKENS: int = 2000
     
     # Policy Configuration
-    POLICIES_DIR: Path = Path(__file__).parent.parent.parent.parent / "policies"
+    POLICIES_DIR: Path = Path(os.environ.get("POLICIES_DIR", Path(__file__).parent.parent.parent.parent / "policies"))
     DEFAULT_POLICIES_FILE: str = "default_policies.json"
     
     # Compliance Configuration
@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     
     # Logging
     LOG_LEVEL: str = "INFO"
+    
+    # Static Analysis Configuration
+    ENABLE_STATIC_ANALYSIS: bool = True
+    STATIC_ANALYSIS_TIMEOUT: int = 30  # Default timeout in seconds
+    STATIC_ANALYSIS_CACHE_TTL: int = 3600  # Cache TTL in seconds (1 hour)
     
     model_config = {
         "env_file": ".env",

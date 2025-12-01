@@ -1,5 +1,5 @@
 """Agent nodes for the ACPG LangGraph compliance workflow."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from .state import ComplianceState, AgentMessage, Violation
@@ -39,7 +39,7 @@ def prosecutor_node(state: ComplianceState) -> Dict[str, Any]:
         agent="prosecutor",
         action="analyze",
         content=f"Found {len(violations)} violation(s)",
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )
     
     return {
@@ -87,7 +87,7 @@ def adjudicator_node(state: ComplianceState) -> Dict[str, Any]:
         agent="adjudicator",
         action="adjudicate",
         content=f"Decision: {decision} ({len(result.unsatisfied_rules)} unsatisfied rules)",
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )
     
     return {
@@ -138,7 +138,7 @@ def generator_node(state: ComplianceState) -> Dict[str, Any]:
             agent="generator",
             action="fix",
             content=f"Attempted to fix {len(violations)} violation(s)",
-            timestamp=datetime.utcnow().isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
         
         return {
@@ -153,7 +153,7 @@ def generator_node(state: ComplianceState) -> Dict[str, Any]:
             agent="generator",
             action="error",
             content=f"Fix failed: {str(e)}",
-            timestamp=datetime.utcnow().isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
         
         return {
@@ -201,12 +201,12 @@ def proof_assembler_node(state: ComplianceState) -> Dict[str, Any]:
         agent="proof_assembler",
         action="generate_proof",
         content=f"Proof bundle generated: {proof.artifact.hash[:16]}...",
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )
     
     return {
         "proof_bundle": proof.model_dump(),
-        "completed_at": datetime.utcnow().isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
         "messages": [message]
     }
 
@@ -221,11 +221,11 @@ def finalize_node(state: ComplianceState) -> Dict[str, Any]:
         agent="orchestrator",
         action="finalize",
         content=f"Workflow complete. Compliant: {state['compliant']}, Iterations: {state['iteration']}",
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )
     
     return {
-        "completed_at": datetime.utcnow().isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
         "messages": [message]
     }
 

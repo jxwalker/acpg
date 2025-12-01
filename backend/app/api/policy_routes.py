@@ -551,6 +551,57 @@ async def list_policy_groups():
     }
 
 
+@groups_router.get("/export", response_model=dict)
+async def export_policy_groups():
+    """Export all policy groups as JSON for sharing."""
+    data = load_policy_groups()
+    return {
+        "version": "1.0",
+        "exported_at": datetime.now().isoformat(),
+        "groups": data.get('groups', []),
+        "active_profile": data.get('active_profile', 'default')
+    }
+
+
+@groups_router.post("/import", response_model=dict)
+async def import_policy_groups(
+    groups: List[dict] = Body(..., embed=True),
+    overwrite: bool = Body(False, embed=True)
+):
+    """Import policy groups from JSON."""
+    data = load_policy_groups()
+    existing_ids = {g['id'] for g in data.get('groups', [])}
+    
+    imported = []
+    skipped = []
+    
+    for group in groups:
+        group_id = group.get('id')
+        if not group_id:
+            continue
+        
+        if group_id in existing_ids:
+            if overwrite:
+                data['groups'] = [g for g in data['groups'] if g['id'] != group_id]
+                data['groups'].append(group)
+                imported.append(group_id)
+            else:
+                skipped.append(group_id)
+        else:
+            data['groups'].append(group)
+            imported.append(group_id)
+            existing_ids.add(group_id)
+    
+    save_policy_groups(data)
+    
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "total_imported": len(imported),
+        "total_skipped": len(skipped)
+    }
+
+
 @groups_router.get("/{group_id}")
 async def get_policy_group(group_id: str):
     """Get a specific policy group."""
@@ -685,5 +736,180 @@ async def get_enabled_policies():
         "enabled_policy_ids": enabled_ids,
         "policies": enabled_policies,
         "count": len(enabled_policies)
+    }
+
+
+# ============================================================================
+# Policy Templates - Pre-built policy group configurations
+# ============================================================================
+
+POLICY_TEMPLATES = {
+    "owasp-top-10": {
+        "name": "OWASP Top 10",
+        "description": "Essential web application security policies based on OWASP Top 10 vulnerabilities",
+        "icon": "🛡️",
+        "category": "security",
+        "policies": [
+            "OWASP-A01", "OWASP-A02", "OWASP-A03", "OWASP-A04", "OWASP-A05",
+            "OWASP-A06", "OWASP-A07", "OWASP-A08", "OWASP-A09", "OWASP-A10"
+        ]
+    },
+    "secure-coding": {
+        "name": "Secure Coding Basics",
+        "description": "Fundamental security practices for any codebase",
+        "icon": "🔐",
+        "category": "security",
+        "policies": [
+            "SEC-001", "SEC-002", "SEC-003", "SEC-004", "SEC-005",
+            "SEC-006", "SEC-007", "SEC-008"
+        ]
+    },
+    "nist-compliance": {
+        "name": "NIST 800-218",
+        "description": "Secure Software Development Framework compliance",
+        "icon": "📋",
+        "category": "compliance",
+        "policies": [
+            "NIST-AC-3", "NIST-AU-2", "NIST-IA-5", "NIST-SC-8",
+            "NIST-SC-12", "NIST-SC-13", "NIST-SI-10", "NIST-SI-11"
+        ]
+    },
+    "injection-prevention": {
+        "name": "Injection Prevention",
+        "description": "Prevent SQL, command, and code injection attacks",
+        "icon": "💉",
+        "category": "security",
+        "policies": [
+            "SEC-002", "SEC-003", "SEC-006", "OWASP-A03"
+        ]
+    },
+    "credential-security": {
+        "name": "Credential Security",
+        "description": "Protect secrets, API keys, and authentication data",
+        "icon": "🔑",
+        "category": "security",
+        "policies": [
+            "SEC-001", "NIST-IA-5", "OWASP-A02", "OWASP-A07"
+        ]
+    },
+    "cryptography": {
+        "name": "Cryptography Standards",
+        "description": "Enforce strong encryption and secure random generation",
+        "icon": "🔒",
+        "category": "security",
+        "policies": [
+            "SEC-004", "SEC-005", "NIST-SC-12", "NIST-SC-13"
+        ]
+    },
+    "input-validation": {
+        "name": "Input Validation",
+        "description": "Validate and sanitize all user inputs",
+        "icon": "✅",
+        "category": "security",
+        "policies": [
+            "NIST-SI-10", "OWASP-A03", "SEC-002", "SEC-003"
+        ]
+    },
+    "javascript-security": {
+        "name": "JavaScript Security",
+        "description": "Security policies for JavaScript/TypeScript applications",
+        "icon": "🟨",
+        "category": "language",
+        "policies": [
+            "JS-001", "JS-002", "JS-003", "JS-004", "JS-005",
+            "JS-006", "JS-007", "JS-008", "JS-009", "JS-010"
+        ]
+    },
+    "minimal": {
+        "name": "Minimal Security",
+        "description": "Basic security checks for quick validation",
+        "icon": "⚡",
+        "category": "quick",
+        "policies": [
+            "SEC-001", "SEC-002", "SEC-003"
+        ]
+    },
+    "comprehensive": {
+        "name": "Comprehensive Audit",
+        "description": "Full security audit with all available policies",
+        "icon": "🔍",
+        "category": "audit",
+        "policies": []  # Will be populated with all policies
+    }
+}
+
+
+@groups_router.get("/templates/", response_model=dict)
+async def list_policy_templates():
+    """List all available policy templates."""
+    compiler = get_policy_compiler()
+    all_policy_ids = {p.id for p in compiler.get_all_policies()}
+    
+    templates = []
+    for template_id, template in POLICY_TEMPLATES.items():
+        # For comprehensive template, include all policies
+        if template_id == "comprehensive":
+            policies = list(all_policy_ids)
+        else:
+            # Filter to only existing policies
+            policies = [p for p in template["policies"] if p in all_policy_ids]
+        
+        templates.append({
+            "id": template_id,
+            "name": template["name"],
+            "description": template["description"],
+            "icon": template["icon"],
+            "category": template["category"],
+            "policy_count": len(policies),
+            "policies": policies
+        })
+    
+    return {
+        "templates": templates,
+        "categories": list(set(t["category"] for t in POLICY_TEMPLATES.values()))
+    }
+
+
+@groups_router.post("/templates/{template_id}/apply", response_model=dict)
+async def apply_policy_template(template_id: str, group_name: str = None):
+    """Create a policy group from a template."""
+    if template_id not in POLICY_TEMPLATES:
+        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
+    
+    template = POLICY_TEMPLATES[template_id]
+    compiler = get_policy_compiler()
+    all_policy_ids = {p.id for p in compiler.get_all_policies()}
+    
+    # Get valid policies for this template
+    if template_id == "comprehensive":
+        policies = list(all_policy_ids)
+    else:
+        policies = [p for p in template["policies"] if p in all_policy_ids]
+    
+    # Create unique group ID
+    data = load_policy_groups()
+    base_id = f"template-{template_id}"
+    group_id = base_id
+    counter = 1
+    while any(g.get('id') == group_id for g in data.get('groups', [])):
+        group_id = f"{base_id}-{counter}"
+        counter += 1
+    
+    # Create the group
+    new_group = {
+        "id": group_id,
+        "name": group_name or f"{template['icon']} {template['name']}",
+        "description": template["description"],
+        "enabled": True,
+        "policies": policies
+    }
+    
+    data['groups'].append(new_group)
+    save_policy_groups(data)
+    
+    return {
+        "message": f"Created group from template '{template['name']}'",
+        "group": new_group,
+        "policies_added": len(policies)
     }
 

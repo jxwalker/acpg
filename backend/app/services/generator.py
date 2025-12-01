@@ -57,18 +57,31 @@ class Generator:
 Ensure the code follows all the security policies listed in your instructions.
 Return ONLY the code, no explanations."""
 
-        # Call LLM
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=self.llm_config.get_temperature(),
-            max_tokens=self.llm_config.get_max_tokens()
-        )
-        
-        code = response.choices[0].message.content.strip()
+        # Call LLM (support both OpenAI and Anthropic formats)
+        if self.provider.type == 'anthropic':
+            # Anthropic API format
+            response = self.client.messages.create(
+                model=self.model,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=self.llm_config.get_temperature(),
+                max_tokens=self.llm_config.get_max_tokens()
+            )
+            code = response.content[0].text.strip()
+        else:
+            # OpenAI API format
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=self.llm_config.get_temperature(),
+                max_tokens=self.llm_config.get_max_tokens()
+            )
+            code = response.choices[0].message.content.strip()
         
         # Clean up code (remove markdown fences if present)
         code = self._clean_code_response(code, request.language)
@@ -124,22 +137,63 @@ ORIGINAL CODE:
 
 Return ONLY the fixed code, no explanations or markdown."""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=self.llm_config.get_temperature(),
-            max_tokens=self.llm_config.get_max_tokens()
-        )
-        
-        fixed_code = response.choices[0].message.content.strip()
-        
-        # Clean up response
-        fixed_code = self._clean_code_response(fixed_code, language)
-        
-        return fixed_code
+        try:
+            # Call LLM (support both OpenAI and Anthropic formats)
+            if self.provider.type == 'anthropic':
+                # Anthropic API format
+                response = self.client.messages.create(
+                    model=self.model,
+                    system=system_prompt,
+                    messages=[
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=self.llm_config.get_temperature(),
+                    max_tokens=self.llm_config.get_max_tokens()
+                )
+                fixed_code = response.content[0].text.strip()
+            else:
+                # OpenAI API format
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=self.llm_config.get_temperature(),
+                    max_tokens=self.llm_config.get_max_tokens()
+                )
+                
+                if not response.choices or not response.choices[0].message.content:
+                    raise ValueError("LLM returned empty response")
+                
+                fixed_code = response.choices[0].message.content.strip()
+            
+            # Clean up response
+            fixed_code = self._clean_code_response(fixed_code, language)
+            
+            return fixed_code
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            error_msg = str(e)
+            error_type = type(e).__name__
+            
+            # Check for specific exception types first
+            if "ConnectionError" in error_type or "ConnectTimeout" in error_type or "ConnectionRefusedError" in error_type:
+                raise ValueError(f"LLM connection failed. Cannot reach {self.provider.name} at {self.llm_config.get_active_provider().base_url}. Is the service running? Error: {error_msg}")
+            elif "Timeout" in error_type or "timeout" in error_msg.lower():
+                raise ValueError(f"LLM request timed out. The service at {self.llm_config.get_active_provider().base_url} may be slow or overloaded. Error: {error_msg}")
+            elif "api_key" in error_msg.lower() or "authentication" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
+                raise ValueError(f"LLM authentication failed. Check your API key configuration. Error: {error_msg}")
+            elif "rate limit" in error_msg.lower() or "429" in error_msg:
+                raise ValueError(f"LLM rate limit exceeded. Please try again later. Error: {error_msg}")
+            elif "connection" in error_msg.lower() or "network" in error_msg.lower() or "NameResolutionError" in error_type:
+                raise ValueError(f"LLM connection failed. Cannot reach {self.provider.name} at {self.llm_config.get_active_provider().base_url}. Check your network and LLM service configuration. Error: {error_msg}")
+            elif "model" in error_msg.lower() and "not found" in error_msg.lower() or "404" in error_msg:
+                raise ValueError(f"LLM model '{self.model}' not found. Check your LLM configuration. Error: {error_msg}")
+            else:
+                logger.error(f"LLM fix_violations error ({error_type}): {e}", exc_info=True)
+                raise ValueError(f"Failed to fix code with LLM ({self.provider.name}): {error_msg}")
     
     def explain_fix(self, original: str, fixed: str, violations: List[Violation]) -> str:
         """
@@ -171,14 +225,25 @@ FIXED CODE:
 
 Provide a brief, clear explanation of each fix."""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_tokens=500
-        )
-        
-        return response.choices[0].message.content.strip()
+        # Call LLM (support both OpenAI and Anthropic formats)
+        if self.provider.type == 'anthropic':
+            # Anthropic API format
+            response = self.client.messages.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.5,
+                max_tokens=500
+            )
+            return response.content[0].text.strip()
+        else:
+            # OpenAI API format
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.5,
+                max_tokens=500
+            )
+            return response.choices[0].message.content.strip()
     
     def create_artifact_metadata(self, code: str, language: str, 
                                   name: Optional[str] = None) -> ArtifactMetadata:
