@@ -8,7 +8,8 @@ import {
   Bot, Search, Scale, FileCheck, Lock, Fingerprint,
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
-  List, Plus, Edit2, BookOpen, Settings, Link2, Power
+  List, Plus, Edit2, BookOpen, Settings, Link2, Power,
+  Keyboard, HelpCircle, Sun, Moon, Monitor
 } from 'lucide-react';
 import { api } from './api';
 import type { 
@@ -85,7 +86,27 @@ interface SavedCode {
   };
 }
 
+type Theme = 'dark' | 'light' | 'system';
+
 export default function App() {
+  // Theme state - persist to localStorage
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = localStorage.getItem('acpg-theme');
+    return (saved as Theme) || 'dark';
+  });
+  
+  // Apply theme to document
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'system') {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.classList.toggle('light-theme', !prefersDark);
+    } else {
+      root.classList.toggle('light-theme', theme === 'light');
+    }
+    localStorage.setItem('acpg-theme', theme);
+  }, [theme]);
+
   const [code, setCode] = useState(SAMPLE_CODE);
   const [originalCode, setOriginalCode] = useState(SAMPLE_CODE);
   const [language] = useState('python');
@@ -122,6 +143,17 @@ export default function App() {
   const [showSampleMenu, setShowSampleMenu] = useState(false);
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
   const [policyCreationData, setPolicyCreationData] = useState<{toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null>(null);
+  const [showMinimap, setShowMinimap] = useState(() => {
+    const saved = localStorage.getItem('acpg-minimap');
+    return saved === 'true';
+  });
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  
+  // Persist minimap preference
+  useEffect(() => {
+    localStorage.setItem('acpg-minimap', String(showMinimap));
+  }, [showMinimap]);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<any>(null);
   
@@ -792,6 +824,43 @@ export default function App() {
                 )}
               </button>
               
+              {/* Theme Toggle */}
+              <div className="flex items-center bg-slate-800/50 rounded-xl p-1 border border-slate-700/50">
+                <button
+                  onClick={() => setTheme('light')}
+                  className={`p-1.5 rounded-lg transition-all ${
+                    theme === 'light' 
+                      ? 'bg-amber-500/20 text-amber-400' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                  title="Light theme"
+                >
+                  <Sun className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setTheme('dark')}
+                  className={`p-1.5 rounded-lg transition-all ${
+                    theme === 'dark' 
+                      ? 'bg-violet-500/20 text-violet-400' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                  title="Dark theme"
+                >
+                  <Moon className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setTheme('system')}
+                  className={`p-1.5 rounded-lg transition-all ${
+                    theme === 'system' 
+                      ? 'bg-cyan-500/20 text-cyan-400' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                  title="System theme"
+                >
+                  <Monitor className="w-4 h-4" />
+                </button>
+              </div>
+              
               {/* Sample Files Dropdown */}
               <div className="relative">
                 <button
@@ -1129,6 +1198,21 @@ export default function App() {
                       <Save className="w-4 h-4" />
                     </button>
                     <div className="h-4 w-px bg-slate-700" />
+                    <button
+                      onClick={() => setShowMinimap(!showMinimap)}
+                      className={`p-2 rounded-lg transition-all ${
+                        showMinimap 
+                          ? 'text-cyan-400 bg-cyan-500/10' 
+                          : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                      }`}
+                      title={showMinimap ? "Hide minimap" : "Show minimap"}
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="14" y="3" width="7" height="18" rx="1" />
+                        <rect x="3" y="3" width="8" height="18" rx="1" />
+                      </svg>
+                    </button>
+                    <div className="h-4 w-px bg-slate-700" />
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <Terminal className="w-4 h-4" />
                       <span>{(codeViewMode === 'original' ? originalCode : code).split('\n').length} lines</span>
@@ -1144,11 +1228,11 @@ export default function App() {
                       language={language}
                       original={originalCode}
                       modified={code}
-                      theme="vs-dark"
+                      theme={theme === 'light' ? 'vs' : 'vs-dark'}
                       options={{
                         readOnly: true,
                         renderSideBySide: true,
-                        minimap: { enabled: false },
+                        minimap: { enabled: showMinimap },
                         fontSize: 14,
                         fontFamily: "'JetBrains Mono', monospace",
                         padding: { top: 20, bottom: 20 },
@@ -1159,10 +1243,10 @@ export default function App() {
                       height="100%"
                       language={language}
                       value={originalCode}
-                      theme="vs-dark"
+                      theme={theme === 'light' ? 'vs' : 'vs-dark'}
                       options={{
                         readOnly: true,
-                        minimap: { enabled: false },
+                        minimap: { enabled: showMinimap },
                         fontSize: 14,
                         fontFamily: "'JetBrains Mono', monospace",
                         fontLigatures: true,
@@ -1177,10 +1261,10 @@ export default function App() {
                       height="100%"
                       language={language}
                       value={code}
-                      theme="vs-dark"
+                      theme={theme === 'light' ? 'vs' : 'vs-dark'}
                       options={{
                         readOnly: true,
-                        minimap: { enabled: false },
+                        minimap: { enabled: showMinimap },
                         fontSize: 14,
                         fontFamily: "'JetBrains Mono', monospace",
                         fontLigatures: true,
@@ -1197,9 +1281,9 @@ export default function App() {
                       value={code}
                       onChange={(value) => setCode(value || '')}
                       onMount={handleEditorMount}
-                      theme="vs-dark"
+                      theme={theme === 'light' ? 'vs' : 'vs-dark'}
                       options={{
-                        minimap: { enabled: false },
+                        minimap: { enabled: showMinimap },
                         fontSize: 14,
                         fontFamily: "'JetBrains Mono', monospace",
                         fontLigatures: true,

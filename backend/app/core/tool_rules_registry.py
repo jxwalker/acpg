@@ -55,6 +55,38 @@ TOOL_RULES_REGISTRY: Dict[str, Dict[str, Dict[str, Any]]] = {
             "severity": "high",
             "test_id": "hardcoded_password_default"
         },
+        "B108": {
+            "id": "B108",
+            "name": "hardcoded_tmp_directory",
+            "description": "Probable insecure usage of temp file/directory.",
+            "severity": "medium",
+            "test_id": "hardcoded_tmp_directory",
+            "cwe": ["CWE-377"],
+            "category": "filesystem"
+        },
+        "B110": {
+            "id": "B110",
+            "name": "try_except_pass",
+            "description": "Try, Except, Pass detected - error is silently ignored.",
+            "severity": "low",
+            "test_id": "try_except_pass"
+        },
+        "B112": {
+            "id": "B112",
+            "name": "try_except_continue",
+            "description": "Try, Except, Continue detected - error handling may be insufficient.",
+            "severity": "low",
+            "test_id": "try_except_continue"
+        },
+        "B113": {
+            "id": "B113",
+            "name": "request_without_timeout",
+            "description": "Requests call without timeout - could hang indefinitely.",
+            "severity": "medium",
+            "test_id": "request_without_timeout",
+            "cwe": ["CWE-400"],
+            "category": "network"
+        },
         "B201": {
             "id": "B201",
             "name": "flask_debug_true",

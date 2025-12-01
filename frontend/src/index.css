@@ -5,12 +5,90 @@
 :root {
   --bg-primary: #030712;
   --bg-secondary: #0a0f1a;
+  --bg-glass: rgba(15, 23, 42, 0.8);
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --border-color: rgba(255, 255, 255, 0.1);
   --accent-emerald: #10b981;
   --accent-cyan: #06b6d4;
   --accent-violet: #8b5cf6;
   --accent-amber: #f59e0b;
   --accent-red: #ef4444;
   --accent-blue: #3b82f6;
+}
+
+/* Light theme overrides */
+.light-theme {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-glass: rgba(255, 255, 255, 0.9);
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --border-color: rgba(0, 0, 0, 0.1);
+}
+
+.light-theme body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.light-theme .glass {
+  background: var(--bg-glass);
+  border-color: var(--border-color);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+.light-theme .bg-mesh {
+  background: 
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(16, 185, 129, 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 50%, rgba(6, 182, 212, 0.06), transparent),
+    radial-gradient(ellipse 50% 50% at 0% 100%, rgba(139, 92, 246, 0.06), transparent),
+    var(--bg-primary);
+}
+
+.light-theme .grid-pattern {
+  background-image: 
+    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
+}
+
+.light-theme .text-slate-200,
+.light-theme .text-slate-300 {
+  color: #334155;
+}
+
+.light-theme .text-slate-400,
+.light-theme .text-slate-500 {
+  color: #64748b;
+}
+
+.light-theme .text-white {
+  color: #0f172a;
+}
+
+.light-theme .bg-slate-800,
+.light-theme .bg-slate-800\/50 {
+  background-color: rgba(241, 245, 249, 0.8);
+}
+
+.light-theme .bg-slate-900,
+.light-theme .bg-slate-900\/50 {
+  background-color: rgba(226, 232, 240, 0.6);
+}
+
+.light-theme .border-slate-700,
+.light-theme .border-slate-700\/50 {
+  border-color: rgba(203, 213, 225, 0.8);
+}
+
+.light-theme .border-white\/5,
+.light-theme .border-white\/10 {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.light-theme header {
+  background: rgba(255, 255, 255, 0.95);
+  border-bottom-color: rgba(0, 0, 0, 0.1);
 }
 
 * {
@@ -21,7 +99,7 @@ body {
   margin: 0;
   min-height: 100vh;
   background: var(--bg-primary);
-  color: #e2e8f0;
+  color: var(--text-primary);
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
