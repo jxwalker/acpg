@@ -62,7 +62,7 @@ def login(username: str, password_input: str) -> Optional[dict]:
 `;
 
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
-type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools' | 'metrics';
+type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools' | 'metrics' | 'models';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
 
 interface WorkflowState {
@@ -776,6 +776,19 @@ export default function App() {
                   </span>
                 </button>
                 <button
+                  onClick={() => setViewMode('models')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    viewMode === 'models' 
+                      ? 'bg-slate-700 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Bot className="w-4 h-4" />
+                    Models
+                  </span>
+                </button>
+                <button
                   onClick={() => setViewMode('verify')}
                   className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
                     viewMode === 'verify' 
@@ -1184,6 +1197,8 @@ export default function App() {
               setViewMode('policies');
             }}
           />
+        ) : viewMode === 'models' ? (
+          <ModelsConfigurationView />
         ) : viewMode === 'policies' ? (
           <PoliciesView policies={policies} initialPolicyData={policyCreationData} onPolicyCreated={() => setPolicyCreationData(null)} />
         ) : viewMode === 'proof' && enforceResult?.proof_bundle ? (
@@ -6753,6 +6768,491 @@ function PoliciesView({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Models Configuration View
+function ModelsConfigurationView() {
+  const [providers, setProviders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeProvider, setActiveProvider] = useState<string>('');
+  const [editingProvider, setEditingProvider] = useState<any>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<any>(null);
+  
+  const [newProvider, setNewProvider] = useState({
+    id: '',
+    type: 'openai',
+    name: '',
+    base_url: 'https://api.openai.com/v1',
+    api_key: '${OPENAI_API_KEY}',
+    model: 'gpt-4',
+    max_tokens: 2000,
+    temperature: 0.3,
+    context_window: 8192
+  });
+
+  const loadProviders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/v1/llm/config');
+      const data = await res.json();
+      setActiveProvider(data.active_provider || '');
+      setProviders(
+        Object.entries(data.providers || {}).map(([id, config]: [string, any]) => ({
+          id,
+          ...config
+        }))
+      );
+    } catch (err) {
+      setError('Failed to load providers');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProviders();
+  }, [loadProviders]);
+
+  const handleSaveProvider = async () => {
+    setSaving(true);
+    try {
+      const providerData = editingProvider || newProvider;
+      const isNew = !editingProvider;
+      
+      const url = isNew 
+        ? '/api/v1/llm/providers/'
+        : `/api/v1/llm/providers/${providerData.id}`;
+      
+      const res = await fetch(url, {
+        method: isNew ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(providerData)
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to save');
+      }
+      
+      await loadProviders();
+      setShowAddForm(false);
+      setEditingProvider(null);
+      setNewProvider({
+        id: '', type: 'openai', name: '', base_url: 'https://api.openai.com/v1',
+        api_key: '${OPENAI_API_KEY}', model: 'gpt-4', max_tokens: 2000,
+        temperature: 0.3, context_window: 8192
+      });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteProvider = async (id: string) => {
+    if (!confirm(`Delete provider "${id}"?`)) return;
+    try {
+      const res = await fetch(`/api/v1/llm/providers/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to delete');
+      }
+      await loadProviders();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleSetActive = async (id: string) => {
+    try {
+      const res = await fetch('/api/v1/llm/config/set-active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: id })
+      });
+      if (!res.ok) throw new Error('Failed to set active');
+      setActiveProvider(id);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleTestProvider = async (id: string) => {
+    setTesting(id);
+    setTestResult(null);
+    try {
+      // First switch to this provider temporarily
+      await fetch('/api/v1/llm/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: id })
+      });
+      
+      // Run the test
+      const res = await fetch('/api/v1/llm/test', { method: 'POST' });
+      const result = await res.json();
+      setTestResult({ id, ...result });
+      
+      // Switch back to original active
+      if (activeProvider && activeProvider !== id) {
+        await fetch('/api/v1/llm/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider_id: activeProvider })
+        });
+      }
+    } catch (err: any) {
+      setTestResult({ id, success: false, error: err.message });
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  const providerTypes = [
+    { value: 'openai', label: 'OpenAI API' },
+    { value: 'openai_compatible', label: 'OpenAI Compatible (vLLM, Ollama)' },
+    { value: 'anthropic', label: 'Anthropic API (Claude, Kimi)' }
+  ];
+
+  if (loading) {
+    return (
+      <div className="glass rounded-2xl p-12 border border-white/5 text-center">
+        <RefreshCw className="w-8 h-8 text-slate-400 animate-spin mx-auto mb-4" />
+        <p className="text-slate-400">Loading model configuration...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-4 rounded-2xl bg-cyan-500/20 border border-cyan-500/30">
+              <Bot className="w-10 h-10 text-cyan-400" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-display font-bold text-white">Model Configuration</h2>
+              <p className="text-slate-400">Configure and manage LLM providers for code generation</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-xl hover:bg-cyan-500/30 transition-colors flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Add Provider
+          </button>
+        </div>
+      </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="glass rounded-xl p-4 border border-red-500/30 bg-red-500/10">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <span className="text-red-300">{error}</span>
+            </div>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300">
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Form */}
+      {(showAddForm || editingProvider) && (
+        <div className="glass rounded-2xl p-6 border border-cyan-500/20 bg-cyan-500/5">
+          <h3 className="text-lg font-semibold text-white mb-4">
+            {editingProvider ? 'Edit Provider' : 'Add New Provider'}
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Provider ID</label>
+              <input
+                type="text"
+                value={(editingProvider || newProvider).id}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, id: e.target.value})
+                  : setNewProvider({...newProvider, id: e.target.value})
+                }
+                disabled={!!editingProvider}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white disabled:opacity-50"
+                placeholder="my_provider"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Display Name</label>
+              <input
+                type="text"
+                value={(editingProvider || newProvider).name}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, name: e.target.value})
+                  : setNewProvider({...newProvider, name: e.target.value})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="My Custom Model"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Provider Type</label>
+              <select
+                value={(editingProvider || newProvider).type}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, type: e.target.value})
+                  : setNewProvider({...newProvider, type: e.target.value})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              >
+                {providerTypes.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Model Name</label>
+              <input
+                type="text"
+                value={(editingProvider || newProvider).model}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, model: e.target.value})
+                  : setNewProvider({...newProvider, model: e.target.value})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="gpt-4"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm text-slate-400 mb-1">Base URL</label>
+              <input
+                type="text"
+                value={(editingProvider || newProvider).base_url}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, base_url: e.target.value})
+                  : setNewProvider({...newProvider, base_url: e.target.value})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white font-mono text-sm"
+                placeholder="https://api.openai.com/v1"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm text-slate-400 mb-1">
+                API Key 
+                <span className="text-xs text-slate-500 ml-2">
+                  (use {"${ENV_VAR}"} to reference environment variables)
+                </span>
+              </label>
+              <input
+                type="text"
+                value={(editingProvider || newProvider).api_key}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, api_key: e.target.value})
+                  : setNewProvider({...newProvider, api_key: e.target.value})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white font-mono text-sm"
+                placeholder="${OPENAI_API_KEY}"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Max Tokens</label>
+              <input
+                type="number"
+                value={(editingProvider || newProvider).max_tokens}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, max_tokens: parseInt(e.target.value)})
+                  : setNewProvider({...newProvider, max_tokens: parseInt(e.target.value)})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Temperature</label>
+              <input
+                type="number"
+                step="0.1"
+                value={(editingProvider || newProvider).temperature}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, temperature: parseFloat(e.target.value)})
+                  : setNewProvider({...newProvider, temperature: parseFloat(e.target.value)})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Context Window</label>
+              <input
+                type="number"
+                value={(editingProvider || newProvider).context_window}
+                onChange={(e) => editingProvider 
+                  ? setEditingProvider({...editingProvider, context_window: parseInt(e.target.value)})
+                  : setNewProvider({...newProvider, context_window: parseInt(e.target.value)})
+                }
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+          </div>
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={handleSaveProvider}
+              disabled={saving}
+              className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-lg hover:bg-cyan-500/30 transition-colors disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Provider'}
+            </button>
+            <button
+              onClick={() => { setShowAddForm(false); setEditingProvider(null); }}
+              className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Test Result */}
+      {testResult && (
+        <div className={`glass rounded-xl p-4 border ${
+          testResult.success ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10'
+        }`}>
+          <div className="flex items-center gap-3">
+            {testResult.success ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            ) : (
+              <XCircle className="w-5 h-5 text-red-400" />
+            )}
+            <div>
+              <span className={testResult.success ? 'text-emerald-300' : 'text-red-300'}>
+                {testResult.success ? 'Connection successful!' : 'Connection failed'}
+              </span>
+              {testResult.response && (
+                <p className="text-sm text-slate-400 mt-1">Response: {testResult.response}</p>
+              )}
+              {testResult.error && (
+                <p className="text-sm text-red-400 mt-1">{testResult.error}</p>
+              )}
+            </div>
+            <button 
+              onClick={() => setTestResult(null)}
+              className="ml-auto text-slate-400 hover:text-white"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Providers List */}
+      <div className="space-y-4">
+        {providers.map(provider => (
+          <div
+            key={provider.id}
+            className={`glass rounded-2xl p-6 border transition-all ${
+              provider.id === activeProvider 
+                ? 'border-cyan-500/30 bg-cyan-500/5' 
+                : 'border-white/5 hover:border-white/10'
+            }`}
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex items-start gap-4">
+                <div className={`p-3 rounded-xl ${
+                  provider.id === activeProvider 
+                    ? 'bg-cyan-500/20' 
+                    : 'bg-slate-800/50'
+                }`}>
+                  <Bot className={`w-6 h-6 ${
+                    provider.id === activeProvider ? 'text-cyan-400' : 'text-slate-400'
+                  }`} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-semibold text-white">{provider.name}</h3>
+                    {provider.id === activeProvider && (
+                      <span className="px-2 py-0.5 text-xs bg-cyan-500/20 text-cyan-400 rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-400 font-mono mt-1">{provider.id}</p>
+                  <div className="flex items-center gap-4 mt-3 text-sm">
+                    <span className="text-slate-400">
+                      <span className="text-slate-500">Type:</span>{' '}
+                      <span className="text-slate-300">{provider.type}</span>
+                    </span>
+                    <span className="text-slate-400">
+                      <span className="text-slate-500">Model:</span>{' '}
+                      <span className="text-slate-300 font-mono">{provider.model}</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 mt-2 text-sm text-slate-500">
+                    <span>Max tokens: {provider.max_tokens}</span>
+                    <span>Temp: {provider.temperature}</span>
+                    <span>Context: {provider.context_window?.toLocaleString()}</span>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 font-mono truncate max-w-md">
+                    {provider.base_url}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {provider.id !== activeProvider && (
+                  <button
+                    onClick={() => handleSetActive(provider.id)}
+                    className="px-3 py-1.5 text-sm bg-cyan-500/10 text-cyan-400 rounded-lg hover:bg-cyan-500/20 transition-colors"
+                  >
+                    Set Active
+                  </button>
+                )}
+                <button
+                  onClick={() => handleTestProvider(provider.id)}
+                  disabled={testing === provider.id}
+                  className="px-3 py-1.5 text-sm bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                >
+                  {testing === provider.id ? 'Testing...' : 'Test'}
+                </button>
+                <button
+                  onClick={() => setEditingProvider(provider)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                {provider.id !== activeProvider && (
+                  <button
+                    onClick={() => handleDeleteProvider(provider.id)}
+                    className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Help Text */}
+      <div className="glass rounded-xl p-4 border border-white/5">
+        <div className="flex items-start gap-3">
+          <Info className="w-5 h-5 text-slate-400 mt-0.5" />
+          <div className="text-sm text-slate-400">
+            <p className="mb-2">
+              <strong className="text-slate-300">Security Tip:</strong> Use environment variable references 
+              (e.g., <code className="text-cyan-400">{"${OPENAI_API_KEY}"}</code>) instead of hardcoding API keys.
+            </p>
+            <p>
+              Configuration is saved to <code className="text-cyan-400">llm_config.yaml</code>. 
+              Set environment variables in your <code className="text-cyan-400">.env</code> file.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

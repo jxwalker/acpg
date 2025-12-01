@@ -1,9 +1,15 @@
 """LLM Management API routes."""
-from typing import List, Optional
+import os
+import yaml
+from pathlib import Path
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/llm", tags=["LLM Management"])
+
+# Path to LLM config file
+LLM_CONFIG_PATH = Path(__file__).parent.parent.parent / "llm_config.yaml"
 
 
 class LLMProvider(BaseModel):
@@ -26,6 +32,65 @@ class LLMTestResult(BaseModel):
 class SwitchProviderRequest(BaseModel):
     """Request to switch LLM provider."""
     provider_id: str
+
+
+class ProviderConfig(BaseModel):
+    """Full provider configuration."""
+    id: str
+    type: str  # openai, openai_compatible, anthropic
+    name: str
+    base_url: str
+    api_key: str  # Can be ${ENV_VAR} or actual key
+    model: str
+    max_tokens: int = 2000
+    temperature: float = 0.3
+    context_window: int = 8192
+
+
+class UpdateProviderRequest(BaseModel):
+    """Request to update a provider."""
+    name: Optional[str] = None
+    type: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    context_window: Optional[int] = None
+
+
+class CreateProviderRequest(BaseModel):
+    """Request to create a new provider."""
+    id: str
+    type: str
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+    max_tokens: int = 2000
+    temperature: float = 0.3
+    context_window: int = 8192
+
+
+def _load_config() -> Dict[str, Any]:
+    """Load the LLM config file."""
+    if not LLM_CONFIG_PATH.exists():
+        return {"active_provider": "", "providers": {}}
+    with open(LLM_CONFIG_PATH, 'r') as f:
+        return yaml.safe_load(f) or {"active_provider": "", "providers": {}}
+
+
+def _save_config(config: Dict[str, Any]):
+    """Save the LLM config file."""
+    # Add header comment
+    header = """# ACPG LLM Server Configuration
+# Configure multiple LLM providers and select the active one
+# API keys should use ${ENV_VAR} syntax to reference environment variables
+
+"""
+    with open(LLM_CONFIG_PATH, 'w') as f:
+        f.write(header)
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
 @router.get("/providers", response_model=List[LLMProvider])
@@ -209,4 +274,173 @@ async def test_code_fixing():
             "success": False,
             "error": str(e)
         }
+
+
+# =============================================================================
+# Provider CRUD Operations
+# =============================================================================
+
+@router.get("/providers/{provider_id}")
+async def get_provider(provider_id: str):
+    """Get detailed configuration for a specific provider."""
+    config = _load_config()
+    providers = config.get('providers', {})
+    
+    if provider_id not in providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+    
+    provider_data = providers[provider_id]
+    return {
+        "id": provider_id,
+        "is_active": config.get('active_provider') == provider_id,
+        **provider_data
+    }
+
+
+@router.post("/providers/")
+async def create_provider(request: CreateProviderRequest):
+    """Create a new LLM provider configuration."""
+    config = _load_config()
+    providers = config.get('providers', {})
+    
+    if request.id in providers:
+        raise HTTPException(status_code=400, detail=f"Provider '{request.id}' already exists")
+    
+    # Create provider entry
+    providers[request.id] = {
+        "type": request.type,
+        "name": request.name,
+        "base_url": request.base_url,
+        "api_key": request.api_key,
+        "model": request.model,
+        "max_tokens": request.max_tokens,
+        "temperature": request.temperature,
+        "context_window": request.context_window
+    }
+    
+    config['providers'] = providers
+    _save_config(config)
+    
+    return {
+        "success": True,
+        "message": f"Provider '{request.id}' created",
+        "provider": {"id": request.id, **providers[request.id]}
+    }
+
+
+@router.put("/providers/{provider_id}")
+async def update_provider(provider_id: str, request: UpdateProviderRequest):
+    """Update an existing LLM provider configuration."""
+    config = _load_config()
+    providers = config.get('providers', {})
+    
+    if provider_id not in providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+    
+    # Update only provided fields
+    provider_data = providers[provider_id]
+    update_dict = request.model_dump(exclude_unset=True)
+    
+    for key, value in update_dict.items():
+        if value is not None:
+            provider_data[key] = value
+    
+    providers[provider_id] = provider_data
+    config['providers'] = providers
+    _save_config(config)
+    
+    # Reset cached config to pick up changes
+    from ..core.llm_config import get_llm_config
+    llm_config = get_llm_config()
+    llm_config._config = None
+    llm_config._active_provider = None
+    llm_config._client = None
+    
+    return {
+        "success": True,
+        "message": f"Provider '{provider_id}' updated",
+        "provider": {"id": provider_id, **provider_data}
+    }
+
+
+@router.delete("/providers/{provider_id}")
+async def delete_provider(provider_id: str):
+    """Delete an LLM provider configuration."""
+    config = _load_config()
+    providers = config.get('providers', {})
+    
+    if provider_id not in providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+    
+    # Don't allow deleting the active provider
+    if config.get('active_provider') == provider_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot delete the active provider. Switch to another provider first."
+        )
+    
+    del providers[provider_id]
+    config['providers'] = providers
+    _save_config(config)
+    
+    return {
+        "success": True,
+        "message": f"Provider '{provider_id}' deleted"
+    }
+
+
+@router.get("/config")
+async def get_full_config():
+    """Get the full LLM configuration (for the editor)."""
+    config = _load_config()
+    
+    # Mask actual API keys for security (show only env var references)
+    providers = config.get('providers', {})
+    masked_providers = {}
+    
+    for pid, pdata in providers.items():
+        masked_data = pdata.copy()
+        api_key = masked_data.get('api_key', '')
+        # If it's an actual key (not an env var reference), mask it
+        if api_key and not api_key.startswith('${') and api_key not in ['not-needed', 'ollama']:
+            masked_data['api_key'] = '***HIDDEN***'
+            masked_data['api_key_set'] = True
+        else:
+            masked_data['api_key_set'] = api_key.startswith('${')
+        masked_providers[pid] = masked_data
+    
+    return {
+        "active_provider": config.get('active_provider'),
+        "providers": masked_providers
+    }
+
+
+@router.post("/config/set-active")
+async def set_active_provider(request: SwitchProviderRequest):
+    """Set the active provider in the config file (persists across restarts)."""
+    config = _load_config()
+    providers = config.get('providers', {})
+    
+    if request.provider_id not in providers:
+        raise HTTPException(status_code=404, detail=f"Provider '{request.provider_id}' not found")
+    
+    config['active_provider'] = request.provider_id
+    _save_config(config)
+    
+    # Also switch the in-memory provider
+    from ..core.llm_config import get_llm_config
+    llm_config = get_llm_config()
+    llm_config._config = None
+    llm_config._active_provider = None
+    llm_config._client = None
+    
+    # Reset generator
+    from ..services.generator import _generator
+    global _generator
+    _generator = None
+    
+    return {
+        "success": True,
+        "message": f"Active provider set to '{request.provider_id}' and saved to config"
+    }
 
