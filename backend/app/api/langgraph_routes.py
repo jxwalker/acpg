@@ -13,6 +13,7 @@ class GraphEnforceRequest(BaseModel):
     language: str = "python"
     max_iterations: int = 3
     policies: Optional[List[str]] = None
+    semantics: Optional[str] = None  # grounded, stable, preferred, auto
 
 
 class AgentMessageResponse(BaseModel):
@@ -32,7 +33,10 @@ class GraphEnforceResponse(BaseModel):
     violations_fixed: List[str]
     satisfied_rules: List[str]
     unsatisfied_rules: List[str]
+    semantics: Optional[str] = None
+    secondary_semantics: Optional[dict] = None
     messages: List[AgentMessageResponse]
+    runtime_events: Optional[List[dict]] = None
     proof_bundle: Optional[dict] = None
     error: Optional[str] = None
     duration_ms: float
@@ -61,7 +65,8 @@ async def graph_enforce(request: GraphEnforceRequest):
             code=request.code,
             language=request.language,
             policy_ids=request.policies,
-            max_iterations=request.max_iterations
+            max_iterations=request.max_iterations,
+            semantics=request.semantics or "auto",
         )
         
         end_time = datetime.utcnow()
@@ -75,10 +80,13 @@ async def graph_enforce(request: GraphEnforceRequest):
             violations_fixed=final_state["violations_fixed"],
             satisfied_rules=final_state["satisfied_rules"],
             unsatisfied_rules=final_state["unsatisfied_rules"],
+            semantics=final_state.get("semantics"),
+            secondary_semantics=final_state.get("secondary_semantics"),
             messages=[
                 AgentMessageResponse(**msg) 
                 for msg in final_state["messages"]
             ],
+            runtime_events=final_state.get("runtime_events"),
             proof_bundle=final_state.get("proof_bundle"),
             error=final_state.get("error"),
             duration_ms=duration_ms
@@ -127,6 +135,7 @@ class StreamingEnforceRequest(BaseModel):
     language: str = "python"
     max_iterations: int = 3
     policies: Optional[List[str]] = None
+    semantics: Optional[str] = None  # grounded, stable, preferred, auto
 
 
 @router.post("/enforce/stream")
@@ -155,7 +164,8 @@ async def graph_enforce_stream(request: StreamingEnforceRequest):
                 code=request.code,
                 language=request.language,
                 policy_ids=request.policies,
-                max_iterations=request.max_iterations
+                max_iterations=request.max_iterations,
+                semantics=request.semantics or "auto",
             )
             
             # Stream state updates
@@ -164,12 +174,16 @@ async def graph_enforce_stream(request: StreamingEnforceRequest):
                     if "messages" in node_output:
                         for msg in node_output["messages"]:
                             yield f"event: agent_message\ndata: {json.dumps(msg)}\n\n"
+                    if "runtime_events" in node_output:
+                        for evt in node_output["runtime_events"]:
+                            yield f"event: runtime_event\ndata: {json.dumps(evt)}\n\n"
                     
                     # Send state update
                     update = {
                         "node": node_name,
                         "compliant": node_output.get("compliant"),
                         "iteration": node_output.get("iteration"),
+                        "semantics": node_output.get("semantics"),
                     }
                     yield f"event: state_update\ndata: {json.dumps(update)}\n\n"
                     
@@ -188,4 +202,3 @@ async def graph_enforce_stream(request: StreamingEnforceRequest):
             "Connection": "keep-alive",
         }
     )
-

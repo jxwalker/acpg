@@ -27,6 +27,8 @@ def test_create_initial_state():
     assert state["iteration"] == 0
     assert state["compliant"] == False
     assert state["violations"] == []
+    assert state["semantics"] == "auto"
+    assert state["runtime_events"] == []
 
 
 def test_prosecutor_node():
@@ -44,6 +46,7 @@ def test_prosecutor_node():
     assert "violations" in result
     assert "artifact_hash" in result
     assert "messages" in result
+    assert "runtime_events" in result
     assert len(result["violations"]) > 0
     assert result["violations"][0]["rule_id"] == "SEC-001"
 
@@ -70,6 +73,8 @@ def test_adjudicator_node_non_compliant():
     assert result["compliant"] == False
     assert "SEC-001" in result["unsatisfied_rules"]
     assert len(result["messages"]) > 0
+    assert result.get("semantics") is not None
+    assert "runtime_events" in result
 
 
 def test_adjudicator_node_compliant():
@@ -88,6 +93,7 @@ def test_adjudicator_node_compliant():
     
     assert result["compliant"] == True
     assert len(result["unsatisfied_rules"]) == 0
+    assert result.get("semantics") is not None
 
 
 def test_should_continue_compliant():
@@ -188,4 +194,3 @@ def test_sync_compliance_check_dirty_code():
     else:
         # Code remains non-compliant (LLM unavailable or failed)
         assert len(result["violations"]) > 0
-

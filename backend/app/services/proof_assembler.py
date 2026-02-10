@@ -1,5 +1,6 @@
 """Proof Assembler Service - Compile and sign proof-carrying artifacts."""
 from typing import List, Optional, Dict, Any
+import json
 from datetime import datetime, timezone
 
 from ..models.schemas import (
@@ -33,7 +34,8 @@ class ProofAssembler:
                        analysis: AnalysisResult,
                        adjudication: AdjudicationResult,
                        artifact_name: Optional[str] = None,
-                       language: str = "python") -> ProofBundle:
+                       language: str = "python",
+                       runtime_events: Optional[List[Dict[str, Any]]] = None) -> ProofBundle:
         """
         Assemble a complete proof bundle.
         
@@ -55,6 +57,15 @@ class ProofAssembler:
         
         # Gather evidence
         evidence = self._gather_evidence(analysis, adjudication)
+        if runtime_events:
+            evidence.append(
+                Evidence(
+                    rule_id="RUNTIME",
+                    type="runtime_trace",
+                    tool="langgraph",
+                    output=json.dumps(runtime_events, indent=2, default=str),
+                )
+            )
         
         # Extract argumentation trace (with tool metadata)
         argumentation = self._extract_argumentation(adjudication, analysis)

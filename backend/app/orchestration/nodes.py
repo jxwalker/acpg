@@ -2,7 +2,17 @@
 from datetime import datetime, timezone
 from typing import Dict, Any
 
-from .state import ComplianceState, AgentMessage, Violation
+from .state import ComplianceState, AgentMessage, Violation, RuntimeEvent
+
+
+def _runtime_event(state: ComplianceState, node: str, kind: str, details: Dict[str, Any]) -> RuntimeEvent:
+    return RuntimeEvent(
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        node=node,
+        kind=kind,
+        iteration=state.get("iteration", 0),
+        details=details,
+    )
 
 
 def prosecutor_node(state: ComplianceState) -> Dict[str, Any]:
@@ -45,7 +55,18 @@ def prosecutor_node(state: ComplianceState) -> Dict[str, Any]:
     return {
         "artifact_hash": result.artifact_id,
         "violations": violations,
-        "messages": [message]
+        "messages": [message],
+        "runtime_events": [
+            _runtime_event(
+                state,
+                node="prosecutor",
+                kind="analysis",
+                details={
+                    "artifact_hash": result.artifact_id,
+                    "violations_count": len(violations),
+                },
+            )
+        ],
     }
 
 
@@ -80,7 +101,8 @@ def adjudicator_node(state: ComplianceState) -> Dict[str, Any]:
     )
     
     # Run adjudication
-    result = adjudicator.adjudicate(analysis, state["policy_ids"])
+    requested_semantics = state.get("semantics", "auto")
+    result = adjudicator.adjudicate(analysis, state["policy_ids"], semantics=requested_semantics)
     
     decision = "COMPLIANT" if result.compliant else "NON-COMPLIANT"
     message = AgentMessage(
@@ -91,11 +113,27 @@ def adjudicator_node(state: ComplianceState) -> Dict[str, Any]:
     )
     
     return {
+        # Update semantics to the semantics actually used for the decision (AUTO -> grounded).
+        "semantics": result.semantics or requested_semantics,
+        "secondary_semantics": result.secondary_semantics,
         "compliant": result.compliant,
         "satisfied_rules": result.satisfied_rules,
         "unsatisfied_rules": result.unsatisfied_rules,
         "reasoning": result.reasoning,
-        "messages": [message]
+        "messages": [message],
+        "runtime_events": [
+            _runtime_event(
+                state,
+                node="adjudicator",
+                kind="adjudication",
+                details={
+                    "requested_semantics": requested_semantics,
+                    "used_semantics": result.semantics or requested_semantics,
+                    "compliant": result.compliant,
+                    "unsatisfied_rules": result.unsatisfied_rules,
+                },
+            )
+        ],
     }
 
 
@@ -145,7 +183,18 @@ def generator_node(state: ComplianceState) -> Dict[str, Any]:
             "current_code": fixed_code,
             "violations_fixed": violations_fixed,
             "iteration": 1,  # Will be added to current iteration
-            "messages": [message]
+            "messages": [message],
+            "runtime_events": [
+                _runtime_event(
+                    state,
+                    node="generator",
+                    kind="fix_attempt",
+                    details={
+                        "violations_count": len(violations),
+                        "violations_fixed": violations_fixed,
+                    },
+                )
+            ],
         }
     
     except Exception as e:
@@ -159,7 +208,15 @@ def generator_node(state: ComplianceState) -> Dict[str, Any]:
         return {
             "error": str(e),
             "iteration": 1,
-            "messages": [message]
+            "messages": [message],
+            "runtime_events": [
+                _runtime_event(
+                    state,
+                    node="generator",
+                    kind="error",
+                    details={"error": str(e)},
+                )
+            ],
         }
 
 
@@ -183,6 +240,8 @@ def proof_assembler_node(state: ComplianceState) -> Dict[str, Any]:
     
     # Reconstruct adjudication result
     adjudication = AdjudicationResult(
+        semantics=state.get("semantics"),
+        secondary_semantics=state.get("secondary_semantics"),
         compliant=True,
         satisfied_rules=state["satisfied_rules"],
         unsatisfied_rules=[],
@@ -194,7 +253,8 @@ def proof_assembler_node(state: ComplianceState) -> Dict[str, Any]:
         code=state["current_code"],
         analysis=analysis,
         adjudication=adjudication,
-        language=state["language"]
+        language=state["language"],
+        runtime_events=state.get("runtime_events"),
     )
     
     message = AgentMessage(
@@ -207,7 +267,15 @@ def proof_assembler_node(state: ComplianceState) -> Dict[str, Any]:
     return {
         "proof_bundle": proof.model_dump(),
         "completed_at": datetime.now(timezone.utc).isoformat(),
-        "messages": [message]
+        "messages": [message],
+        "runtime_events": [
+            _runtime_event(
+                state,
+                node="proof_assembler",
+                kind="proof_bundle",
+                details={"artifact_hash": proof.artifact.hash},
+            )
+        ],
     }
 
 
@@ -226,6 +294,13 @@ def finalize_node(state: ComplianceState) -> Dict[str, Any]:
     
     return {
         "completed_at": datetime.now(timezone.utc).isoformat(),
-        "messages": [message]
+        "messages": [message],
+        "runtime_events": [
+            _runtime_event(
+                state,
+                node="finalize",
+                kind="finalize",
+                details={"compliant": state["compliant"], "iterations": state["iteration"]},
+            )
+        ],
     }
-

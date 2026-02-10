@@ -1,5 +1,5 @@
 """State definitions for ACPG LangGraph orchestration."""
-from typing import TypedDict, List, Optional, Annotated
+from typing import TypedDict, List, Optional, Annotated, Dict, Any
 from datetime import datetime, timezone
 import operator
 
@@ -21,6 +21,15 @@ class AgentMessage(TypedDict):
     timestamp: str
 
 
+class RuntimeEvent(TypedDict, total=False):
+    """Runtime trace event emitted by a graph node."""
+    timestamp: str
+    node: str
+    kind: str
+    iteration: int
+    details: Dict[str, Any]
+
+
 class ComplianceState(TypedDict):
     """
     State object passed through the ACPG compliance graph.
@@ -33,6 +42,7 @@ class ComplianceState(TypedDict):
     language: str
     policy_ids: Optional[List[str]]
     max_iterations: int
+    semantics: str  # grounded, stable, preferred, auto
     
     # Analysis state
     artifact_hash: str
@@ -43,6 +53,7 @@ class ComplianceState(TypedDict):
     satisfied_rules: List[str]
     unsatisfied_rules: List[str]
     reasoning: List[dict]
+    secondary_semantics: Optional[Dict[str, Any]]
     
     # Iteration tracking
     iteration: Annotated[int, operator.add]  # Accumulates across iterations
@@ -50,6 +61,7 @@ class ComplianceState(TypedDict):
     
     # Agent communication log
     messages: Annotated[List[AgentMessage], operator.add]
+    runtime_events: Annotated[List[RuntimeEvent], operator.add]
     
     # Output
     proof_bundle: Optional[dict]
@@ -64,7 +76,8 @@ def create_initial_state(
     code: str,
     language: str = "python",
     policy_ids: Optional[List[str]] = None,
-    max_iterations: int = 3
+    max_iterations: int = 3,
+    semantics: str = "auto",
 ) -> ComplianceState:
     """Create initial state for a compliance check."""
     return ComplianceState(
@@ -73,18 +86,20 @@ def create_initial_state(
         language=language,
         policy_ids=policy_ids,
         max_iterations=max_iterations,
+        semantics=semantics,
         artifact_hash="",
         violations=[],
         compliant=False,
         satisfied_rules=[],
         unsatisfied_rules=[],
         reasoning=[],
+        secondary_semantics=None,
         iteration=0,
         violations_fixed=[],
         messages=[],
+        runtime_events=[],
         proof_bundle=None,
         error=None,
         started_at=datetime.now(timezone.utc).isoformat(),
         completed_at=None
     )
-
