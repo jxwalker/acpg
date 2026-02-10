@@ -102,6 +102,8 @@ class ArgumentationGraph(BaseModel):
 
 class AdjudicationResult(BaseModel):
     """Result of adjudication."""
+    semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    secondary_semantics: Optional[Dict[str, Any]] = None  # Optional solver-backed cross-checks
     compliant: bool
     unsatisfied_rules: List[str]
     satisfied_rules: List[str]
@@ -162,6 +164,7 @@ class EnforceRequest(BaseModel):
     language: str = "python"
     max_iterations: int = 3
     policies: Optional[List[str]] = None
+    semantics: Optional[str] = None  # grounded, stable, preferred, auto
 
 
 class EnforceResponse(BaseModel):

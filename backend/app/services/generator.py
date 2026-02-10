@@ -11,6 +11,7 @@ from ..models.schemas import (
 )
 from ..core.config import settings
 from ..core.llm_config import get_llm_config, get_llm_client
+from ..core.llm_text import openai_text
 from .policy_compiler import get_policy_compiler
 
 
@@ -26,14 +27,58 @@ class Generator:
     
     def __init__(self):
         self.llm_config = get_llm_config()
+        # Do not permanently bind a client/provider here: model management can switch providers at runtime.
+        # We refresh `self.client/self.provider` at the start of each LLM call.
+        self.client = None
+        self.provider = None
+        self.model = None
+        self.model_name = None  # Human-readable name for metadata
+        self.policy_compiler = get_policy_compiler()
+        
+        # Log current provider (best-effort; may change later)
+        try:
+            self._refresh_llm()
+            print(f"🤖 Generator using: {self.provider.name} ({self.provider.model})")
+        except Exception:
+            pass
+
+    def _refresh_llm(self):
+        """Refresh LLM client/provider for the currently active config."""
         self.client = get_llm_client()
         self.provider = self.llm_config.get_active_provider()
         self.model = self.provider.model
-        self.model_name = self.provider.name  # Human-readable name for metadata
-        self.policy_compiler = get_policy_compiler()
-        
-        # Log which LLM we're using
-        print(f"🤖 Generator using: {self.provider.name} ({self.provider.model})")
+        self.model_name = self.provider.name
+
+    def _generate_text(self, *, system_prompt: str, user_prompt: str, max_output_tokens: Optional[int] = None) -> str:
+        """Generate text using the active provider.
+
+        OpenAI providers: Responses API first, Chat Completions fallback.
+        Anthropic providers: messages API.
+        """
+        self._refresh_llm()
+        max_out = max_output_tokens or self.llm_config.get_max_tokens()
+
+        if self.provider.type == 'anthropic':
+            # Anthropic API format
+            response = self.client.messages.create(
+                model=self.model,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+                temperature=self.llm_config.get_temperature(),
+                max_tokens=max_out,
+            )
+            return response.content[0].text.strip()
+
+        # OpenAI / OpenAI-compatible
+        return openai_text(
+            self.client,
+            model=self.model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=self.llm_config.get_temperature(),
+            max_output_tokens=max_out,
+            max_tokens_fallback=max_out,
+        )
     
     def generate_code(self, request: GeneratorRequest) -> GeneratorResponse:
         """
@@ -57,31 +102,7 @@ class Generator:
 Ensure the code follows all the security policies listed in your instructions.
 Return ONLY the code, no explanations."""
 
-        # Call LLM (support both OpenAI and Anthropic formats)
-        if self.provider.type == 'anthropic':
-            # Anthropic API format
-            response = self.client.messages.create(
-                model=self.model,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=self.llm_config.get_temperature(),
-                max_tokens=self.llm_config.get_max_tokens()
-            )
-            code = response.content[0].text.strip()
-        else:
-            # OpenAI API format
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=self.llm_config.get_temperature(),
-                max_tokens=self.llm_config.get_max_tokens()
-            )
-            code = response.choices[0].message.content.strip()
+        code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt)
         
         # Clean up code (remove markdown fences if present)
         code = self._clean_code_response(code, request.language)
@@ -135,38 +156,12 @@ ORIGINAL CODE:
 {code}
 ```
 
-Return ONLY the fixed code, no explanations or markdown."""
+        Return ONLY the fixed code, no explanations or markdown."""
 
         try:
-            # Call LLM (support both OpenAI and Anthropic formats)
-            if self.provider.type == 'anthropic':
-                # Anthropic API format
-                response = self.client.messages.create(
-                    model=self.model,
-                    system=system_prompt,
-                    messages=[
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=self.llm_config.get_temperature(),
-                    max_tokens=self.llm_config.get_max_tokens()
-                )
-                fixed_code = response.content[0].text.strip()
-            else:
-                # OpenAI API format
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=self.llm_config.get_temperature(),
-                    max_tokens=self.llm_config.get_max_tokens()
-                )
-                
-                if not response.choices or not response.choices[0].message.content:
-                    raise ValueError("LLM returned empty response")
-                
-                fixed_code = response.choices[0].message.content.strip()
+            fixed_code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt)
+            if not fixed_code:
+                raise ValueError("LLM returned empty response")
             
             # Clean up response
             fixed_code = self._clean_code_response(fixed_code, language)
@@ -225,25 +220,8 @@ FIXED CODE:
 
 Provide a brief, clear explanation of each fix."""
 
-        # Call LLM (support both OpenAI and Anthropic formats)
-        if self.provider.type == 'anthropic':
-            # Anthropic API format
-            response = self.client.messages.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
-                max_tokens=500
-            )
-            return response.content[0].text.strip()
-        else:
-            # OpenAI API format
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
-                max_tokens=500
-            )
-            return response.choices[0].message.content.strip()
+        # Explanations don't need a system prompt.
+        return self._generate_text(system_prompt="", user_prompt=prompt, max_output_tokens=500)
     
     def create_artifact_metadata(self, code: str, language: str, 
                                   name: Optional[str] = None) -> ArtifactMetadata:
@@ -260,6 +238,13 @@ Provide a brief, clear explanation of each fix."""
         """
         import hashlib
         
+        # Ensure we record the active provider used at this time.
+        try:
+            self._refresh_llm()
+        except Exception:
+            # Fall back to settings/default metadata if LLM isn't configured.
+            self.model_name = self.model_name or settings.OPENAI_MODEL
+
         code_hash = hashlib.sha256(code.encode()).hexdigest()
         
         return ArtifactMetadata(
@@ -360,3 +345,8 @@ def get_generator() -> Generator:
         _generator = Generator()
     return _generator
 
+
+def reset_generator():
+    """Reset the global generator so it picks up new provider/client config."""
+    global _generator
+    _generator = None

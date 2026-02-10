@@ -1203,14 +1203,20 @@ async def fix_code(request: FixCodeRequest):
 # ============================================================================
 
 @router.post("/adjudicate", response_model=AdjudicationResult)
-async def adjudicate_analysis(analysis: AnalysisResult):
+async def adjudicate_analysis(
+    analysis: AnalysisResult,
+    semantics: str = Query(
+        "grounded",
+        description="Argumentation semantics: grounded, auto (planned: stable, preferred)",
+    ),
+):
     """
     Run adjudication on analysis results.
     
     Uses formal argumentation to determine compliance status.
     """
     adjudicator = get_adjudicator()
-    return adjudicator.adjudicate(analysis)
+    return adjudicator.adjudicate(analysis, semantics=semantics)
 
 
 class GuidanceResponse(BaseModel):
@@ -1277,6 +1283,7 @@ async def enforce_compliance(
     if not policy_ids:
         policy_ids = get_enabled_policy_ids()
     
+    semantics = request.semantics or "grounded"
     code = request.code
     original_code = request.code
     violations_fixed = []
@@ -1290,7 +1297,7 @@ async def enforce_compliance(
         )
         
         # Adjudicate
-        adjudication = adjudicator.adjudicate(analysis, policy_ids)
+        adjudication = adjudicator.adjudicate(analysis, policy_ids, semantics=semantics)
         
         if adjudication.compliant:
             # Success! Generate proof bundle
@@ -1329,7 +1336,7 @@ async def enforce_compliance(
                 language=request.language,
                 policy_ids=policy_ids if policy_ids else None
             )
-            fail_adjudication = adjudicator.adjudicate(fail_analysis, policy_ids)
+            fail_adjudication = adjudicator.adjudicate(fail_analysis, policy_ids, semantics=semantics)
             fail_proof = proof_assembler.assemble_proof(
                 code=code,
                 analysis=fail_analysis,
@@ -1353,7 +1360,7 @@ async def enforce_compliance(
         language=request.language,
         policy_ids=policy_ids if policy_ids else None
     )
-    final_adjudication = adjudicator.adjudicate(final_analysis, policy_ids)
+    final_adjudication = adjudicator.adjudicate(final_analysis, policy_ids, semantics=semantics)
     
     # Generate proof bundle even for non-compliant code (for formal logic visibility)
     proof = proof_assembler.assemble_proof(
@@ -1396,7 +1403,11 @@ async def enforce_compliance(
 async def generate_proof(
     request: ComplianceRequest,
     http_request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    semantics: str = Query(
+        "grounded",
+        description="Argumentation semantics: grounded, auto (planned: stable, preferred)",
+    ),
 ):
     """
     Generate a proof bundle for code (compliant or non-compliant).
@@ -1415,7 +1426,7 @@ async def generate_proof(
         policy_ids=request.policies
     )
     
-    adjudication = adjudicator.adjudicate(analysis, request.policies)
+    adjudication = adjudicator.adjudicate(analysis, request.policies, semantics=semantics)
     
     # Generate proof bundle for both compliant and non-compliant code
     # This allows viewing the formal logic even when code fails
@@ -1899,4 +1910,3 @@ async def clear_history():
     """Clear all analysis history."""
     save_history([])
     return {"message": "History cleared"}
-

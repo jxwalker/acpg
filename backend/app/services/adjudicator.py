@@ -3,6 +3,7 @@
 Implements Dung's Abstract Argumentation Framework with grounded semantics
 to make formal compliance decisions based on competing arguments.
 """
+import shutil
 from typing import List, Dict, Set, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
@@ -46,8 +47,12 @@ class Adjudicator:
         self.policy_compiler = get_policy_compiler()
         self.reliability_checker = get_reliability_checker()
     
-    def adjudicate(self, analysis: AnalysisResult, 
-                   policy_ids: Optional[List[str]] = None) -> AdjudicationResult:
+    def adjudicate(
+        self,
+        analysis: AnalysisResult,
+        policy_ids: Optional[List[str]] = None,
+        semantics: str = "grounded",
+    ) -> AdjudicationResult:
         """
         Make a compliance decision based on analysis results.
         
@@ -58,10 +63,25 @@ class Adjudicator:
         Returns:
             AdjudicationResult with compliance decision and reasoning
         """
+        requested_semantics = (semantics or "grounded").lower()
+        semantics = requested_semantics
+        if semantics == "auto":
+            # Auto: always decide with grounded (skeptical, deterministic),
+            # and optionally compute other semantics as additional evidence.
+            semantics = "grounded"
+
         # Build argumentation graph
         graph = self.build_argumentation_graph(analysis.violations, policy_ids)
         
-        # Compute grounded extension
+        # Compute extension
+        if semantics != "grounded":
+            # Stable/preferred semantics are NP-hard in general; we treat them as optional
+            # and require an external solver integration (planned).
+            raise ValueError(
+                f"Unsupported semantics '{semantics}' in this build. "
+                "Supported: grounded, auto. Planned: stable, preferred (via ASP/clingo)."
+            )
+
         accepted = self.compute_grounded_extension(graph)
         
         # Determine compliance
@@ -78,13 +98,55 @@ class Adjudicator:
         
         # Build reasoning trace
         reasoning = self._build_reasoning_trace(graph, accepted, accepted_violations)
+
+        secondary_semantics = None
+        if requested_semantics == "auto":
+            secondary_semantics = self._auto_secondary_semantics(graph)
+            reasoning.insert(
+                0,
+                {
+                    "phase": "semantics_selection",
+                    "requested": requested_semantics,
+                    "decision_semantics": semantics,
+                    "secondary_semantics": secondary_semantics,
+                    "description": (
+                        "AUTO mode decides using grounded semantics for conservative compliance. "
+                        "Other semantics may be computed as additional evidence when a solver is available."
+                    ),
+                },
+            )
         
         return AdjudicationResult(
+            semantics=semantics,
+            secondary_semantics=secondary_semantics,
             compliant=len(accepted_violations) == 0,
             unsatisfied_rules=unsatisfied_rules,
             satisfied_rules=satisfied_rules,
             reasoning=reasoning
         )
+
+    def _auto_secondary_semantics(self, graph: ArgumentationGraph) -> Dict[str, Any]:
+        """Optional cross-checks under other semantics (preferred/stable).
+
+        This is intentionally best-effort: if no solver is available, it returns a skipped status.
+        """
+        # We currently do not ship a solver; we only detect availability so proofs are explicit.
+        # Future: export AF to ASP and compute stable/preferred extensions via clingo.
+        clingo_path = shutil.which("clingo")
+        if not clingo_path:
+            return {
+                "enabled": False,
+                "reason": "clingo not available; skipping stable/preferred cross-checks",
+                "stable": None,
+                "preferred": None,
+            }
+
+        return {
+            "enabled": False,
+            "reason": f"clingo detected at {clingo_path}, but solver integration not implemented yet",
+            "stable": None,
+            "preferred": None,
+        }
     
     def build_argumentation_graph(self, violations: List[Violation],
                                    policy_ids: Optional[List[str]] = None) -> ArgumentationGraph:
@@ -542,4 +604,3 @@ def get_adjudicator() -> Adjudicator:
     if _adjudicator is None:
         _adjudicator = Adjudicator()
     return _adjudicator
-

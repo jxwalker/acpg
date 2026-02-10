@@ -17,6 +17,7 @@ try:
 except ImportError:
     Anthropic = None
 from dotenv import load_dotenv
+from .llm_text import openai_text
 
 # Load .env file if it exists
 _env_path = Path(__file__).parent.parent.parent.parent / ".env"
@@ -184,19 +185,31 @@ class LLMConfigManager:
         client = self.get_client()
         
         try:
-            # Try a simple completion
-            response = client.chat.completions.create(
-                model=provider.model,
-                messages=[{"role": "user", "content": "Say 'OK' if you can hear me."}],
-                max_tokens=10,
-                temperature=0
-            )
-            
+            prompt = "Say 'OK' if you can hear me."
+            if provider.type == "anthropic":
+                response = client.messages.create(
+                    model=provider.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=10,
+                    temperature=0,
+                )
+                text = response.content[0].text.strip()
+            else:
+                text = openai_text(
+                    client,
+                    model=provider.model,
+                    system_prompt=None,
+                    user_prompt=prompt,
+                    temperature=0,
+                    max_output_tokens=10,
+                    max_tokens_fallback=10,
+                )
+
             return {
                 "success": True,
                 "provider": provider.name,
                 "model": provider.model,
-                "response": response.choices[0].message.content
+                "response": text
             }
         
         except Exception as e:
@@ -223,4 +236,3 @@ def get_llm_config() -> LLMConfigManager:
 def get_llm_client() -> OpenAI:
     """Get the configured LLM client."""
     return get_llm_config().get_client()
-

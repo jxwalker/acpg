@@ -483,7 +483,8 @@ class ProofAssembler:
         # Build the formal proof structure
         formal_proof = {
             "framework": "Dung's Abstract Argumentation Framework",
-            "semantics": "Grounded Extension",
+            # For auditability, record the semantics used for the decision.
+            "semantics": getattr(adjudication, "semantics", None) or "grounded",
             "decision": "Compliant" if adjudication.compliant else "Non-Compliant",
             
             # Tools used in analysis
@@ -504,6 +505,9 @@ class ProofAssembler:
             
             # Detailed reasoning trace
             "reasoning_trace": adjudication.reasoning,
+
+            # Optional solver-backed cross-checks (AUTO mode)
+            "secondary_semantics": getattr(adjudication, "secondary_semantics", None),
             
             # Summary statistics
             "summary": {
@@ -788,4 +792,3 @@ def get_proof_assembler() -> ProofAssembler:
     if _proof_assembler is None:
         _proof_assembler = ProofAssembler()
     return _proof_assembler
-
