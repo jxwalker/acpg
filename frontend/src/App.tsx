@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, createContext, useContext } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import { 
   Shield, ShieldCheck, ShieldAlert,
@@ -9,7 +9,7 @@ import {
   Sparkles, Terminal, Clock, Save, Upload, Download,
   FolderOpen, Trash2, Eye, GitBranch,
   List, Plus, Edit2, BookOpen, Settings, Link2, Power,
-  Keyboard, HelpCircle, Sun, Moon, Monitor,
+  Sun, Moon, Monitor,
   HardDrive, FileJson, FileText
 } from 'lucide-react';
 
@@ -21,18 +21,6 @@ interface Toast {
   type: ToastType;
   duration?: number;
 }
-
-// Toast Context
-const ToastContext = createContext<{
-  addToast: (message: string, type?: ToastType, duration?: number) => void;
-  removeToast: (id: string) => void;
-} | null>(null);
-
-const useToast = () => {
-  const context = useContext(ToastContext);
-  if (!context) throw new Error('useToast must be used within ToastProvider');
-  return context;
-};
 
 // Toast Container Component
 const ToastContainer = ({ toasts, removeToast }: { toasts: Toast[]; removeToast: (id: string) => void }) => {
@@ -181,6 +169,10 @@ export default function App() {
   });
   const [originalCode, setOriginalCode] = useState(SAMPLE_CODE);
   const [language] = useState('python');
+  const [semantics, setSemantics] = useState<'auto' | 'grounded'>(() => {
+    const saved = localStorage.getItem('acpg-semantics');
+    return (saved as any) || 'auto';
+  });
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [workflow, setWorkflow] = useState<WorkflowState>({ 
     step: 'idle', 
@@ -202,6 +194,7 @@ export default function App() {
   const [llmProvider, setLlmProvider] = useState<string>('Loading...');
   const [llmProviders, setLlmProviders] = useState<Array<{id: string; name: string; model: string; is_active: boolean}>>([]);
   const [showLlmSelector, setShowLlmSelector] = useState(false);
+  const [showSemanticsSelector, setShowSemanticsSelector] = useState(false);
   const [llmSwitching, setLlmSwitching] = useState(false);
   const [llmProviderStatus, setLlmProviderStatus] = useState<Record<string, 'unknown' | 'testing' | 'success' | 'error'>>({});
   const [testingAllLlm, setTestingAllLlm] = useState(false);
@@ -224,12 +217,16 @@ export default function App() {
     const saved = localStorage.getItem('acpg-minimap');
     return saved === 'true';
   });
-  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   
   // Persist minimap preference
   useEffect(() => {
     localStorage.setItem('acpg-minimap', String(showMinimap));
   }, [showMinimap]);
+
+  // Persist semantics preference
+  useEffect(() => {
+    localStorage.setItem('acpg-semantics', semantics);
+  }, [semantics]);
 
   // Auto-save code to localStorage
   const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,7 +254,6 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<any>(null);
-  const [isDragging, setIsDragging] = useState(false);
   
   // Handle editor mount to get reference
   const handleEditorMount = (editor: any) => {
@@ -337,7 +333,7 @@ export default function App() {
         setAnalysis(analysisResult);
         
         // Quick adjudication
-        const adjResult = await api.adjudicate(analysisResult);
+        const adjResult = await api.adjudicate(analysisResult, semantics);
         setAdjudication(adjResult);
       } catch (e) {
         // Silently fail for real-time analysis
@@ -351,7 +347,7 @@ export default function App() {
         clearTimeout(realTimeTimeoutRef.current);
       }
     };
-  }, [code, realTimeEnabled, workflow.step, language]);
+  }, [code, realTimeEnabled, workflow.step, language, semantics]);
 
   // Test a single LLM provider
   const testLlmProvider = async (id: string, showToast = false): Promise<boolean> => {
@@ -533,7 +529,7 @@ export default function App() {
       // Show adjudication
       setAnalysisProgress({ phase: 'adjudicating', message: 'Adjudicating compliance...' });
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
-      const adjResult = await api.adjudicate(analysisResult);
+      const adjResult = await api.adjudicate(analysisResult, semantics);
       setAdjudication(adjResult);
       
       // Refresh history sidebar
@@ -555,7 +551,7 @@ export default function App() {
       setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
-  }, [code, language, addToast]);
+  }, [code, language, semantics, addToast]);
 
   const handleEnforce = useCallback(async () => {
     setError(null);
@@ -590,7 +586,7 @@ export default function App() {
       setAnalysisProgress({ phase: 'generating', message: 'Generating fixes...' });
       setWorkflow(w => ({ ...w, step: 'generator' }));
       
-      const result = await api.enforce(code, language, 3);
+      const result = await api.enforce(code, language, 3, semantics);
       setEnforceResult(result);
       
       if (result.final_code !== code) {
@@ -607,7 +603,7 @@ export default function App() {
       setAnalysis(finalAnalysis);
       
       setAnalysisProgress({ phase: 'adjudicating', message: 'Final adjudication...' });
-      const adjResult = await api.adjudicate(finalAnalysis);
+      const adjResult = await api.adjudicate(finalAnalysis, semantics);
       setAdjudication(adjResult);
       
       setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
@@ -621,7 +617,7 @@ export default function App() {
       setAnalysisProgress(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
-  }, [code, language, addToast]);
+  }, [code, language, semantics, addToast]);
 
   const handleGenerateReport = useCallback(async (format: 'json' | 'markdown' | 'html' = 'json') => {
     setReportLoading(true);
@@ -1124,6 +1120,68 @@ export default function App() {
                         <Settings className="w-3 h-3" />
                         Configure Models
                       </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Semantics Selector */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowSemanticsSelector(!showSemanticsSelector)}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700/50 hover:border-violet-500/30 hover:bg-violet-500/5 transition-all cursor-pointer"
+                >
+                  <Scale className="w-4 h-4 text-violet-400" />
+                  <span className="text-sm text-slate-300 capitalize">{semantics}</span>
+                  <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showSemanticsSelector ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showSemanticsSelector && (
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowSemanticsSelector(false)}
+                  />
+                )}
+
+                {showSemanticsSelector && (
+                  <div className="absolute top-full right-0 mt-2 w-72 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+                    <div className="p-3 border-b border-white/10">
+                      <div className="text-xs text-slate-500 uppercase tracking-wider">Semantics</div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        AUTO decides with grounded semantics and (optionally) records solver cross-checks.
+                      </div>
+                    </div>
+                    <div className="p-2">
+                      {[
+                        { id: 'auto' as const, label: 'Auto (Recommended)', desc: 'Conservative decision + optional cross-checks' },
+                        { id: 'grounded' as const, label: 'Grounded', desc: 'Conservative, deterministic' },
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => {
+                            setSemantics(opt.id);
+                            setShowSemanticsSelector(false);
+                            addToast(`Semantics set to ${opt.id}`, 'info', 2000);
+                          }}
+                          className={`w-full text-left p-3 rounded-lg transition-all ${
+                            semantics === opt.id
+                              ? 'bg-violet-500/20 border border-violet-500/30'
+                              : 'hover:bg-slate-800/50 border border-transparent'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm text-white">{opt.label}</div>
+                            {semantics === opt.id && <CheckCircle2 className="w-4 h-4 text-violet-400" />}
+                          </div>
+                          <div className="text-xs text-slate-400 mt-1">{opt.desc}</div>
+                        </button>
+                      ))}
+
+                      <div className="mt-2 p-3 rounded-lg border border-white/10 bg-slate-900/40">
+                        <div className="text-xs text-slate-400">
+                          Planned: preferred/stable (solver-backed) for additional evidence.
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2867,7 +2925,6 @@ function ViolationsList({
   onLineClick?: (line: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  const [severityFilter, setSeverityFilter] = useState<string | null>(null);
 
   const toggleExpand = (index: number) => {
     setExpanded(prev => ({ ...prev, [index]: !prev[index] }));
@@ -2880,19 +2937,6 @@ function ViolationsList({
     }
   };
   
-  // Count violations by severity
-  const severityCounts = {
-    critical: violations.filter(v => v.severity === 'critical').length,
-    high: violations.filter(v => v.severity === 'high').length,
-    medium: violations.filter(v => v.severity === 'medium').length,
-    low: violations.filter(v => v.severity === 'low').length,
-  };
-  
-  // Filter violations
-  const filteredViolations = severityFilter 
-    ? violations.filter(v => v.severity === severityFilter)
-    : violations;
-
   const getSeverityConfig = (severity: string) => {
     switch (severity) {
       case 'critical': return { color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30' };
@@ -2926,10 +2970,10 @@ function ViolationsList({
       const rows = violations.map(v => [
         v.rule_id,
         v.severity,
-        `"${(v.message || '').replace(/"/g, '""')}"`,
+        `"${(v.description || '').replace(/"/g, '""')}"`,
         v.line || '',
-        v.category || '',
-        v.source || ''
+        '',
+        v.detector || ''
       ]);
       content = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
       filename = `violations-${new Date().toISOString().split('T')[0]}.csv`;
@@ -4767,8 +4811,8 @@ function ToolMappingsView({
   
   // Listen for createMapping events from unmapped findings
   useEffect(() => {
-    const handleCreateMapping = async (event: CustomEvent) => {
-      const { toolName, toolRuleId } = event.detail;
+    const handleCreateMapping = async (event: Event) => {
+      const { toolName, toolRuleId } = (event as CustomEvent).detail;
       
       // Fetch rule details from the API to auto-populate the form
       try {
@@ -4812,9 +4856,9 @@ function ToolMappingsView({
       setShowAddForm(true);
     };
     
-    window.addEventListener('createMapping', handleCreateMapping as EventListener);
+    window.addEventListener('createMapping', handleCreateMapping);
     return () => {
-      window.removeEventListener('createMapping', handleCreateMapping as EventListener);
+      window.removeEventListener('createMapping', handleCreateMapping);
     };
   }, []);
 
