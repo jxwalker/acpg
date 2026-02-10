@@ -3,7 +3,7 @@ import logging
 import json
 import sys
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 from contextvars import ContextVar
 
 from .config import settings

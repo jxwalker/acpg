@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from ..models.schemas import (
     Argument, Attack, ArgumentationGraph, AdjudicationResult,
-    Violation, PolicyRule, AnalysisResult
+    Violation, AnalysisResult
 )
 from .policy_compiler import get_policy_compiler
 from .tool_reliability import get_reliability_checker
@@ -452,11 +452,7 @@ class Adjudicator:
         when they conflict.
         """
         attacks = []
-        severity_order = kb['severity_order']
-        
-        # Get violation arguments
-        violation_args = [a for a in arguments if a.type == 'violation']
-        
+        # TODO: Implement actual conflict detection and priority-based attacks.
         # For conflicting rules, higher priority attacks lower
         # (This is simplified - real implementation would check for actual conflicts)
         

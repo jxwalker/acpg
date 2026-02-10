@@ -1,5 +1,4 @@
 """LLM Management API routes."""
-import os
 import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any

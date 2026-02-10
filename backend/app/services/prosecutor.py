@@ -1,14 +1,8 @@
 """Prosecutor Service - Static and dynamic analysis to find policy violations."""
-import subprocess
-import json
-import tempfile
-import os
-import re
 import logging
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
-from ..models.schemas import Violation, AnalysisResult, PolicyRule
+from ..models.schemas import Violation, AnalysisResult
 from ..core.config import settings
 from .policy_compiler import get_policy_compiler
 from .language_detector import get_language_detector

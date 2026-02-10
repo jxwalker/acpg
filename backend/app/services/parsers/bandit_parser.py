@@ -1,6 +1,6 @@
 """Parser for Bandit (Python security linter) output."""
 import json
-from typing import List, Dict, Any
+from typing import List
 from .base_parser import BaseParser, ParsedFinding
 
 
@@ -41,7 +41,7 @@ class BanditParser(BaseParser):
         
         try:
             data = json.loads(output)
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
             # If output is not valid JSON, return empty list
             return findings
         

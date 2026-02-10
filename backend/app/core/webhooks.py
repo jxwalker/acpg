@@ -7,7 +7,6 @@ from datetime import datetime
 from enum import Enum
 import httpx
 
-from .config import settings
 
 
 class WebhookEvent(str, Enum):

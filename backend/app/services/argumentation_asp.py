@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 from ..models.schemas import ArgumentationGraph
 

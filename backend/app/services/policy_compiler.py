@@ -3,7 +3,6 @@ import json
 import re
 from pathlib import Path
 from typing import Dict, List, Callable, Optional, Any
-from functools import lru_cache
 
 from ..models.schemas import PolicyRule, PolicyCheck, PolicySet, Violation
 from ..core.config import settings
@@ -83,7 +82,7 @@ class PolicyCompiler:
         """
         # Check required fields
         if not rule.id or not rule.description:
-            raise ValueError(f"Policy rule must have id and description")
+            raise ValueError("Policy rule must have id and description")
         
         # Validate check type
         if rule.check.type not in ('regex', 'ast', 'manual'):
@@ -132,7 +131,7 @@ class PolicyCompiler:
         
         def check(code: str, language: str) -> List[Violation]:
             # Skip if language not applicable
-            if languages and language.lower() not in [l.lower() for l in languages]:
+            if languages and language.lower() not in [lang.lower() for lang in languages]:
                 return []
             
             violations = []
@@ -294,4 +293,3 @@ def get_policy_compiler() -> PolicyCompiler:
                 except Exception as e:
                     print(f"Warning: Could not load {filename}: {e}")
     return _compiler
-

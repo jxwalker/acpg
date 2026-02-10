@@ -1,13 +1,10 @@
 """Generator Service - AI-powered code generation and fixing using configurable LLMs."""
-import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from datetime import datetime
 
-from openai import OpenAI
 
 from ..models.schemas import (
-    GeneratorRequest, GeneratorResponse, FixRequest,
-    Violation, PolicyRule, ArtifactMetadata
+    GeneratorRequest, GeneratorResponse, Violation, PolicyRule, ArtifactMetadata
 )
 from ..core.config import settings
 from ..core.llm_config import get_llm_config, get_llm_client

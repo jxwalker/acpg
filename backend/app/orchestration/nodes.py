@@ -170,8 +170,8 @@ def proof_assembler_node(state: ComplianceState) -> Dict[str, Any]:
     Generates a cryptographically-signed proof bundle
     for compliant code.
     """
-    from ..services import get_proof_assembler, get_adjudicator
-    from ..models.schemas import AnalysisResult, AdjudicationResult, Violation as ViolationModel
+    from ..services import get_proof_assembler
+    from ..models.schemas import AnalysisResult, AdjudicationResult
     
     proof_assembler = get_proof_assembler()
     

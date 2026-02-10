@@ -1,5 +1,5 @@
 """Tool reliability checker for creating exception arguments."""
-from typing import Optional, Dict, Any, List
+from typing import Optional
 from dataclasses import dataclass
 
 from ..models.schemas import Violation
@@ -115,8 +115,8 @@ class ToolReliabilityChecker:
                     return ReliabilityException(
                         reason="test_code_pattern",
                         confidence="low",
-                        details=f"Finding in code that appears to be test/demo code. "
-                               f"May be acceptable in non-production context."
+                        details="Finding in code that appears to be test/demo code. "
+                               "May be acceptable in non-production context."
                     )
         
         return None

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from ..models.schemas import (
     ProofBundle, ArtifactMetadata, PolicyOutcome, Evidence,
-    AnalysisResult, AdjudicationResult, Violation
+    AnalysisResult, AdjudicationResult
 )
 from ..core.crypto import get_signer
 from ..core.config import settings
@@ -153,7 +153,6 @@ class ProofAssembler:
             Serialized proof bundle
         """
         import json
-        from datetime import datetime
         
         if format == "json":
             # Convert to JSON with custom serialization for datetime
@@ -318,7 +317,7 @@ class ProofAssembler:
             "</style>",
             "</head>",
             "<body>",
-            f"<h1>ACPG Proof Bundle</h1>",
+            "<h1>ACPG Proof Bundle</h1>",
             "",
             "<div class='meta'>",
             f"<p><strong>Artifact:</strong> {bundle.artifact.name or 'unnamed'}</p>",
@@ -354,7 +353,7 @@ class ProofAssembler:
                 "<h2>Evidence</h2>",
             ])
             for i, ev in enumerate(bundle.evidence, 1):
-                html.append(f"<div class='evidence'>")
+                html.append("<div class='evidence'>")
                 html.append(f"<h3>Evidence {i}</h3>")
                 html.append(f"<p><strong>Type:</strong> {ev.type}</p>")
                 html.append(f"<p><strong>Description:</strong> {ev.description}</p>")
@@ -700,7 +699,6 @@ class ProofAssembler:
         }
         
         accepted_violations = [v for v in violation_args if v.get("status") == "accepted"]
-        rejected_violations = [v for v in violation_args if v.get("status") != "accepted"]
         
         # Generate summary
         if adjudication.compliant:
@@ -746,8 +744,8 @@ class ProofAssembler:
                 "step": 2,
                 "title": "Find Unattacked Arguments",
                 "description": (
-                    f"Identify arguments with no attackers. "
-                    f"Violation arguments V_* that have no exception arguments attacking them are unattacked."
+                    "Identify arguments with no attackers. "
+                    "Violation arguments V_* that have no exception arguments attacking them are unattacked."
                 ),
                 "result": f"Unattacked: {[v['id'] for v in accepted_violations]}" if accepted_violations else "All violations were defeated"
             },

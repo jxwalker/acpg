@@ -3,12 +3,10 @@ import os
 from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
-import json
 
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-from .config import settings
 
 # Database URL - defaults to SQLite for simplicity
 DATABASE_URL = os.environ.get(

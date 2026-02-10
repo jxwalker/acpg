@@ -1,6 +1,6 @@
 """LangGraph-based API routes for ACPG."""
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 

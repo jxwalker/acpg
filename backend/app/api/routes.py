@@ -1,6 +1,9 @@
 """API Routes for ACPG system."""
+import json
 import hashlib
 import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from fastapi.responses import Response
@@ -9,8 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..models.schemas import (
     PolicyRule, PolicySet, Violation, AnalysisResult,
-    GeneratorRequest, GeneratorResponse, FixRequest,
-    AdjudicationResult, ProofBundle,
+    GeneratorRequest, GeneratorResponse, AdjudicationResult, ProofBundle,
     ComplianceRequest, EnforceRequest, EnforceResponse
 )
 from ..services import (
@@ -212,26 +214,26 @@ async def get_metrics_prometheus():
     try:
         cache = get_tool_cache()
         stats = cache.get_stats()
-        lines.append(f"# HELP acpg_cache_entries_total Total number of cache entries")
-        lines.append(f"# TYPE acpg_cache_entries_total gauge")
+        lines.append("# HELP acpg_cache_entries_total Total number of cache entries")
+        lines.append("# TYPE acpg_cache_entries_total gauge")
         lines.append(f"acpg_cache_entries_total {stats.get('total_entries', 0)}")
         
-        lines.append(f"# HELP acpg_cache_size_bytes Total cache size in bytes")
-        lines.append(f"# TYPE acpg_cache_size_bytes gauge")
+        lines.append("# HELP acpg_cache_size_bytes Total cache size in bytes")
+        lines.append("# TYPE acpg_cache_size_bytes gauge")
         lines.append(f"acpg_cache_size_bytes {stats.get('total_size_bytes', 0)}")
         
-        lines.append(f"# HELP acpg_cache_hits_total Total cache hits")
-        lines.append(f"# TYPE acpg_cache_hits_total counter")
+        lines.append("# HELP acpg_cache_hits_total Total cache hits")
+        lines.append("# TYPE acpg_cache_hits_total counter")
         lines.append(f"acpg_cache_hits_total {stats.get('hits', 0)}")
         
-        lines.append(f"# HELP acpg_cache_misses_total Total cache misses")
-        lines.append(f"# TYPE acpg_cache_misses_total counter")
+        lines.append("# HELP acpg_cache_misses_total Total cache misses")
+        lines.append("# TYPE acpg_cache_misses_total counter")
         lines.append(f"acpg_cache_misses_total {stats.get('misses', 0)}")
         
         total_requests = stats.get('hits', 0) + stats.get('misses', 0)
         hit_rate = (stats.get('hits', 0) / total_requests * 100) if total_requests > 0 else 0.0
-        lines.append(f"# HELP acpg_cache_hit_rate Cache hit rate percentage")
-        lines.append(f"# TYPE acpg_cache_hit_rate gauge")
+        lines.append("# HELP acpg_cache_hit_rate Cache hit rate percentage")
+        lines.append("# TYPE acpg_cache_hit_rate gauge")
         lines.append(f"acpg_cache_hit_rate {hit_rate:.2f}")
     except Exception:
         pass
@@ -245,12 +247,12 @@ async def get_metrics_prometheus():
             for tool_name, tool_config in tools.items():
                 if tool_config.enabled:
                     enabled_count += 1
-                    lines.append(f"# HELP acpg_tool_enabled Whether a tool is enabled")
-                    lines.append(f"# TYPE acpg_tool_enabled gauge")
+                    lines.append("# HELP acpg_tool_enabled Whether a tool is enabled")
+                    lines.append("# TYPE acpg_tool_enabled gauge")
                     lines.append(f'acpg_tool_enabled{{tool="{tool_name}",language="{language}"}} 1')
         
-        lines.append(f"# HELP acpg_tools_enabled_total Total number of enabled tools")
-        lines.append(f"# TYPE acpg_tools_enabled_total gauge")
+        lines.append("# HELP acpg_tools_enabled_total Total number of enabled tools")
+        lines.append("# TYPE acpg_tools_enabled_total gauge")
         lines.append(f"acpg_tools_enabled_total {enabled_count}")
     except Exception:
         pass
@@ -259,18 +261,17 @@ async def get_metrics_prometheus():
     try:
         compiler = get_policy_compiler()
         policies = compiler.get_all_policies()
-        lines.append(f"# HELP acpg_policies_total Total number of policies")
-        lines.append(f"# TYPE acpg_policies_total gauge")
+        lines.append("# HELP acpg_policies_total Total number of policies")
+        lines.append("# TYPE acpg_policies_total gauge")
         lines.append(f"acpg_policies_total {len(policies)}")
     except Exception:
         pass
     
     # Health status (1 = healthy, 0 = unhealthy)
     try:
-        from datetime import datetime, timezone
-        lines.append(f"# HELP acpg_health_status System health status (1=healthy, 0=unhealthy)")
-        lines.append(f"# TYPE acpg_health_status gauge")
-        lines.append(f"acpg_health_status 1")  # Could be enhanced to check actual health
+        lines.append("# HELP acpg_health_status System health status (1=healthy, 0=unhealthy)")
+        lines.append("# TYPE acpg_health_status gauge")
+        lines.append("acpg_health_status 1")  # Could be enhanced to check actual health
     except Exception:
         pass
     
@@ -1329,7 +1330,7 @@ async def enforce_compliance(
             violations_fixed.extend([v.rule_id for v in analysis.violations])
             code = fixed_code
             
-        except Exception as e:
+        except Exception:
             # Fix failed - still generate proof bundle for formal logic visibility
             fail_analysis = prosecutor.analyze(
                 code=code,
@@ -1504,7 +1505,6 @@ async def verify_proof_bundle(request: VerifyProofRequest):
     Returns detailed information about the verification result.
     """
     from ..core.crypto import get_signer
-    from ..core.key_manager import get_key_manager
     
     proof = request.proof_bundle
     signer = get_signer()
@@ -1727,7 +1727,7 @@ async def get_system_stats(db: Session = Depends(get_db)):
     
     compliant_count = db.query(func.count(AuditLog.id)).filter(
         AuditLog.action == "analyze",
-        AuditLog.compliant == True
+        AuditLog.compliant.is_(True)
     ).scalar() or 0
     
     total_proofs = db.query(func.count(StoredProof.id)).scalar() or 0
@@ -1806,10 +1806,6 @@ async def export_proof(request: ExportProofRequest):
 # Analysis History
 # ============================================================================
 
-import json
-from datetime import datetime
-from pathlib import Path
-
 HISTORY_FILE = settings.DATA_DIR / "analysis_history.json" if hasattr(settings, 'DATA_DIR') else Path("data/analysis_history.json")
 
 
@@ -1867,7 +1863,8 @@ async def add_to_history(
     history = load_history()
     
     # Create code hash for deduplication
-    code_hash = hashlib.md5(code.encode()).hexdigest()[:8]
+    # Use a non-cryptographic identifier for dedupe; avoid weak hashes to satisfy security scans.
+    code_hash = hashlib.sha256(code.encode()).hexdigest()[:8]
     
     # Check if this exact code was just analyzed (avoid duplicates)
     if history and history[-1].get('code_hash') == code_hash:

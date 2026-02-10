@@ -4,14 +4,13 @@ import json
 import tempfile
 import os
 import time
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime, timezone
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..core.static_analyzers import ToolConfig, get_analyzer_config
-from ..core.config import settings
 from .tool_cache import get_tool_cache
 
 logger = logging.getLogger(__name__)
