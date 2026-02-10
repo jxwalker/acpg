@@ -6,7 +6,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
 from backend.app.models.schemas import Argument, Attack, ArgumentationGraph
-from backend.app.services.argumentation_asp import export_dung_af_to_asp, stable_semantics_program
+from backend.app.services.argumentation_asp import (
+  export_dung_af_to_asp,
+  stable_semantics_program,
+  admissible_semantics_program,
+  filter_maximal_by_inclusion,
+)
 
 
 def test_export_dung_af_to_asp():
@@ -24,6 +29,16 @@ def test_export_dung_af_to_asp():
 
 
 def test_stable_semantics_program_has_show():
-    prog = stable_semantics_program()
-    assert "#show in/1." in prog
+  prog = stable_semantics_program()
+  assert "#show in/1." in prog
 
+
+def test_admissible_semantics_program_has_show():
+  prog = admissible_semantics_program()
+  assert "#show in/1." in prog
+
+
+def test_filter_maximal_by_inclusion():
+  sets = [["a"], ["a", "b"], ["b"], ["c"], ["b", "c"]]
+  preferred = filter_maximal_by_inclusion(sets)
+  assert sorted(preferred) == sorted([["a", "b"], ["b", "c"]])

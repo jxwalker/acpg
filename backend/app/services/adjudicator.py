@@ -4,6 +4,7 @@ Implements Dung's Abstract Argumentation Framework with grounded semantics
 to make formal compliance decisions based on competing arguments.
 """
 import shutil
+import json
 from typing import List, Dict, Set, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
@@ -158,7 +159,11 @@ class Adjudicator:
             result["stable"] = {
                 "extensions": stable.extensions,
                 "count": len(stable.extensions),
+                "raw_size_bytes": len(json.dumps(stable.raw)),
             }
+            # Store raw only when reasonably small; otherwise keep size only.
+            if result["stable"]["raw_size_bytes"] <= 250_000:
+                result["stable"]["raw"] = stable.raw
         except Exception as e:
             result["errors"].append({"semantics": "stable", "error": str(e)})
 
@@ -168,9 +173,10 @@ class Adjudicator:
             result["preferred"] = {
                 "extensions": pref.extensions,
                 "count": len(pref.extensions),
+                "raw_size_bytes": len(json.dumps(pref.raw)),
             }
-        except NotImplementedError as e:
-            result["preferred"] = {"enabled": False, "reason": str(e)}
+            if result["preferred"]["raw_size_bytes"] <= 250_000:
+                result["preferred"]["raw"] = pref.raw
         except Exception as e:
             result["errors"].append({"semantics": "preferred", "error": str(e)})
 

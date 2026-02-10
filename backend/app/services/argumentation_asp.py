@@ -22,6 +22,51 @@ class AspResult:
     raw: Dict
 
 
+def admissible_semantics_program() -> str:
+    """ASP encoding for admissible sets in a Dung AF."""
+    return """
+% Choose a candidate set
+{in(X)} :- arg(X).
+
+% Conflict-free
+:- in(X), in(Y), att(X,Y).
+
+% An attacker is defeated if it is attacked by some in-argument
+defeated(Y) :- in(Z), att(Z,Y).
+
+% Admissible: each in-argument is defended against every attacker
+:- in(X), att(Y,X), not defeated(Y).
+
+#show in/1.
+""".lstrip()
+
+
+def filter_maximal_by_inclusion(sets: List[List[str]]) -> List[List[str]]:
+    """Keep only sets that are maximal w.r.t. subset inclusion."""
+    normalized = [sorted(set(s)) for s in sets]
+    as_sets = [set(s) for s in normalized]
+    maximal: List[List[str]] = []
+    for i, s in enumerate(as_sets):
+        is_subset = False
+        for j, t in enumerate(as_sets):
+            if i == j:
+                continue
+            if s.issubset(t) and s != t:
+                is_subset = True
+                break
+        if not is_subset:
+            maximal.append(sorted(s))
+    # De-dupe
+    uniq = []
+    seen = set()
+    for s in maximal:
+        key = tuple(s)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(s)
+    return uniq
+
+
 def export_dung_af_to_asp(graph: ArgumentationGraph) -> str:
     """Export a (binary-attack) Dung AF to ASP facts."""
     lines: List[str] = []
@@ -122,8 +167,16 @@ def compute_preferred_extensions(
 ) -> AspResult:
     """Compute preferred extensions (maximal admissible sets).
 
-    Not implemented yet. We will add it once we decide on the exact encoding and
-    whether to use optimization or enumeration + maximal filtering.
+    Implementation strategy:
+    1. Enumerate all admissible sets with clingo.
+    2. Filter to those maximal w.r.t. subset inclusion (preferred extensions).
     """
-    raise NotImplementedError("Preferred semantics via ASP not implemented yet.")
+    if getattr(graph, "set_attacks", None):
+        raise ValueError("Preferred semantics via ASP is not implemented for joint attacks yet.")
 
+    facts = export_dung_af_to_asp(graph)
+    encoding = admissible_semantics_program()
+    raw = run_clingo([facts, encoding], clingo_path=clingo_path, timeout_s=timeout_s)
+    admissible = parse_in_atoms(raw)
+    preferred = filter_maximal_by_inclusion(admissible)
+    return AspResult(extensions=preferred, raw=raw)
