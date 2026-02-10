@@ -13,6 +13,7 @@ from ..models.schemas import (
 )
 from .policy_compiler import get_policy_compiler
 from .tool_reliability import get_reliability_checker
+from .argumentation_asp import compute_stable_extensions, compute_preferred_extensions
 
 
 @dataclass
@@ -25,6 +26,8 @@ class ArgumentNode:
     details: Optional[str] = None
     attackers: Set[str] = field(default_factory=set)
     attacks: Set[str] = field(default_factory=set)
+    # Joint attacks against this node: each entry is a set of attacker IDs.
+    joint_attackers: List[Set[str]] = field(default_factory=list)
 
 
 class Adjudicator:
@@ -141,12 +144,37 @@ class Adjudicator:
                 "preferred": None,
             }
 
-        return {
-            "enabled": False,
-            "reason": f"clingo detected at {clingo_path}, but solver integration not implemented yet",
+        result: Dict[str, Any] = {
+            "enabled": True,
+            "clingo_path": clingo_path,
             "stable": None,
             "preferred": None,
+            "errors": [],
         }
+
+        # Stable semantics cross-check
+        try:
+            stable = compute_stable_extensions(graph, clingo_path=clingo_path)
+            result["stable"] = {
+                "extensions": stable.extensions,
+                "count": len(stable.extensions),
+            }
+        except Exception as e:
+            result["errors"].append({"semantics": "stable", "error": str(e)})
+
+        # Preferred semantics cross-check (not yet implemented)
+        try:
+            pref = compute_preferred_extensions(graph, clingo_path=clingo_path)
+            result["preferred"] = {
+                "extensions": pref.extensions,
+                "count": len(pref.extensions),
+            }
+        except NotImplementedError as e:
+            result["preferred"] = {"enabled": False, "reason": str(e)}
+        except Exception as e:
+            result["errors"].append({"semantics": "preferred", "error": str(e)})
+
+        return result
     
     def build_argumentation_graph(self, violations: List[Violation],
                                    policy_ids: Optional[List[str]] = None) -> ArgumentationGraph:
@@ -257,6 +285,14 @@ class Adjudicator:
             if attack.attacker in nodes and attack.target in nodes:
                 nodes[attack.target].attackers.add(attack.attacker)
                 nodes[attack.attacker].attacks.add(attack.target)
+
+        # Joint attacks (Nielsen & Parsons style): a set of attackers jointly defeats a target.
+        # A joint attack is effective when *all* attackers in the set are accepted.
+        for set_attack in getattr(graph, "set_attacks", []) or []:
+            if set_attack.target in nodes:
+                attackers = set(a for a in set_attack.attackers if a in nodes)
+                if attackers:
+                    nodes[set_attack.target].joint_attackers.append(attackers)
         
         # Compute grounded extension via characteristic function iteration
         accepted: Set[str] = set()
@@ -270,13 +306,16 @@ class Adjudicator:
                 if arg_id in accepted or arg_id in rejected:
                     continue
                 
-                # Check if all attackers are rejected
-                all_attackers_rejected = all(
-                    attacker in rejected 
-                    for attacker in node.attackers
+                # Accept when:
+                # - all individual attackers are rejected
+                # - and every joint attack set is "broken" (at least one member is rejected)
+                all_attackers_rejected = all(attacker in rejected for attacker in node.attackers)
+                all_joint_attacks_broken = all(
+                    any(attacker in rejected for attacker in attacker_set)
+                    for attacker_set in node.joint_attackers
                 )
                 
-                if all_attackers_rejected:
+                if all_attackers_rejected and all_joint_attacks_broken:
                     # Accept this argument
                     accepted.add(arg_id)
                     changed = True
@@ -285,6 +324,15 @@ class Adjudicator:
                     for target in node.attacks:
                         if target not in rejected:
                             rejected.add(target)
+                            changed = True
+
+                    # Reject targets of any joint attacks that are now fully satisfied
+                    # (i.e., the entire attacker set is accepted).
+                    for tgt_id, tgt_node in nodes.items():
+                        if tgt_id in accepted or tgt_id in rejected:
+                            continue
+                        if any(attacker_set.issubset(accepted) for attacker_set in tgt_node.joint_attackers):
+                            rejected.add(tgt_id)
                             changed = True
         
         return accepted
@@ -419,10 +467,12 @@ class Adjudicator:
             "step": 1,
             "phase": "framework_definition",
             "title": "Argumentation Framework Definition",
-            "description": "Constructing Dung's Abstract Argumentation Framework (AF = ⟨Args, Attacks⟩)",
+            "description": "Constructing an Abstract Argumentation Framework (Args, Attacks), with optional joint attacks",
             "details": {
                 "total_arguments": len(graph.arguments),
-                "total_attacks": len(graph.attacks),
+                "total_attacks": len(graph.attacks) + len(getattr(graph, "set_attacks", []) or []),
+                "binary_attacks": len(graph.attacks),
+                "joint_attacks": len(getattr(graph, "set_attacks", []) or []),
                 "argument_types": {
                     "compliance": len([a for a in graph.arguments if a.type == "compliance"]),
                     "violation": len([a for a in graph.arguments if a.type == "violation"]),
@@ -473,6 +523,23 @@ class Adjudicator:
                 "effective": attacker_accepted,
                 "reason": self._explain_attack(attacker_arg, target_arg, attacker_accepted)
             })
+
+        # Joint attacks: effective iff all attackers in the set are accepted
+        for set_attack in getattr(graph, "set_attacks", []) or []:
+            attackers = list(set_attack.attackers or [])
+            effective = all(a in accepted for a in attackers)
+            attack_list.append({
+                "attacker": attackers,
+                "target": set_attack.target,
+                "attacker_type": "joint",
+                "target_type": next((a.type for a in graph.arguments if a.id == set_attack.target), "unknown"),
+                "effective": effective,
+                "reason": (
+                    "Joint attack succeeds when all attackers are accepted"
+                    if effective else
+                    "Joint attack defeated because at least one attacker was rejected"
+                )
+            })
         
         trace.append({
             "step": 3,
@@ -482,6 +549,7 @@ class Adjudicator:
             "logic": [
                 "Violation V_P attacks Compliance C_P (evidence contradicts compliance claim)",
                 "Exception E attacks Violation V (exception condition defeats violation)",
+                "Joint attacks: a set of attackers jointly defeats a target (Nielsen & Parsons style)",
                 "Higher priority arguments attack lower priority ones"
             ],
             "attacks": attack_list
@@ -549,6 +617,21 @@ class Adjudicator:
                 "attack": f"{attack.attacker} → {attack.target}",
                 "effective": attacker_accepted,
                 "explanation": f"{'Successful' if attacker_accepted else 'Defeated'} attack"
+            })
+
+        for set_attack in getattr(graph, "set_attacks", []) or []:
+            attackers = list(set_attack.attackers or [])
+            effective = all(a in accepted for a in attackers)
+            trace.append({
+                "attack": f"{{{', '.join(attackers)}}} → {set_attack.target}",
+                "attackers": attackers,
+                "target": set_attack.target,
+                "effective": effective,
+                "explanation": (
+                    "Successful joint attack (all attackers accepted)"
+                    if effective else
+                    "Defeated joint attack (at least one attacker rejected)"
+                )
             })
         
         if accepted_violations:

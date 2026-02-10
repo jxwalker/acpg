@@ -576,10 +576,13 @@ class ProofAssembler:
                     formal_proof["summary"]["rejected_arguments"] += 1
                     
             elif "attack" in item:
+                # Support both simple attacks ("A → B") and joint attacks ("{A, B} → C")
+                attackers_list = item.get("attackers")
                 attack_entry = {
                     "relation": item["attack"],
                     "attacker": item["attack"].split(" → ")[0] if " → " in item["attack"] else "",
                     "target": item["attack"].split(" → ")[1] if " → " in item["attack"] else "",
+                    "attackers": attackers_list,
                     "effective": item.get("effective", False),
                     "explanation": item.get("explanation", "")
                 }

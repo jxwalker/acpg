@@ -94,10 +94,17 @@ class Attack(BaseModel):
     target: str
 
 
+class SetAttack(BaseModel):
+    """Joint attack: a set of attackers jointly defeats a target (Nielsen & Parsons style)."""
+    attackers: List[str]
+    target: str
+
+
 class ArgumentationGraph(BaseModel):
     """Graph of arguments and attacks."""
     arguments: List[Argument]
     attacks: List[Attack]
+    set_attacks: List[SetAttack] = Field(default_factory=list)
 
 
 class AdjudicationResult(BaseModel):

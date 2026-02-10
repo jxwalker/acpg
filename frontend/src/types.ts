@@ -54,6 +54,8 @@ export interface AnalysisResult {
 
 export interface AdjudicationResult {
   compliant: boolean;
+  semantics?: string; // grounded, auto (planned: stable, preferred)
+  secondary_semantics?: Record<string, unknown>;
   unsatisfied_rules: string[];
   satisfied_rules: string[];
   reasoning: Record<string, unknown>[];
@@ -94,6 +96,7 @@ export interface AttackEntry {
   relation: string;
   effective: boolean;
   explanation: string;
+  attackers?: string[]; // present for joint attacks
 }
 
 export interface GroundedExtension {
