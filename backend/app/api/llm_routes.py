@@ -26,6 +26,7 @@ class LLMTestResult(BaseModel):
     model: str
     response: Optional[str] = None
     error: Optional[str] = None
+    diagnostics: Optional[Dict[str, Any]] = None
 
 
 class SwitchProviderRequest(BaseModel):

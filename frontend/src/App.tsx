@@ -7126,6 +7126,17 @@ function PoliciesView({
 }
 
 // Models Configuration View
+type ModelProviderDiagnostics = {
+  code?: string;
+  summary?: string;
+  checks?: string[];
+  suggestions?: string[];
+  base_url?: string;
+  model?: string;
+  provider_type?: string;
+  raw_error?: string;
+};
+
 function ModelsConfigurationView() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -7137,7 +7148,10 @@ function ModelsConfigurationView() {
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<any>(null);
   const [providerStatus, setProviderStatus] = useState<Record<string, 'unknown' | 'testing' | 'success' | 'error'>>({});
+  const [providerDiagnostics, setProviderDiagnostics] = useState<Record<string, ModelProviderDiagnostics | null>>({});
   const [testingAll, setTestingAll] = useState(false);
+  const editFormRef = useRef<HTMLDivElement | null>(null);
+  const initialActiveTestedRef = useRef<string | null>(null);
   
   const [newProvider, setNewProvider] = useState({
     id: '',
@@ -7174,6 +7188,14 @@ function ModelsConfigurationView() {
     loadProviders();
   }, [loadProviders]);
 
+  useEffect(() => {
+    if (showAddForm || editingProvider) {
+      requestAnimationFrame(() => {
+        editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [showAddForm, editingProvider]);
+
   const handleSaveProvider = async () => {
     setSaving(true);
     try {
@@ -7202,6 +7224,8 @@ function ModelsConfigurationView() {
       }
       
       await loadProviders();
+      setProviderStatus(prev => ({ ...prev, [providerData.id]: 'unknown' }));
+      setProviderDiagnostics(prev => ({ ...prev, [providerData.id]: null }));
       setShowAddForm(false);
       setEditingProvider(null);
       setNewProvider({
@@ -7244,9 +7268,26 @@ function ModelsConfigurationView() {
     }
   };
 
-  const handleTestProvider = async (id: string, showResult = true) => {
+  const handleEditProvider = useCallback(async (id: string) => {
+    try {
+      setError(null);
+      const res = await fetch(`/api/v1/llm/providers/${id}`);
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to load provider details');
+      }
+      const provider = await res.json();
+      setShowAddForm(false);
+      setEditingProvider(provider);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load provider details');
+    }
+  }, []);
+
+  const handleTestProvider = useCallback(async (id: string, showResult = true) => {
     setTesting(id);
     setProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
+    setProviderDiagnostics(prev => ({ ...prev, [id]: null }));
     if (showResult) setTestResult(null);
     
     try {
@@ -7262,6 +7303,7 @@ function ModelsConfigurationView() {
       const result = await res.json();
       
       setProviderStatus(prev => ({ ...prev, [id]: result.success ? 'success' : 'error' }));
+      setProviderDiagnostics(prev => ({ ...prev, [id]: result.success ? null : (result.diagnostics || null) }));
       if (showResult) setTestResult({ id, ...result });
       
       // Switch back to original active
@@ -7276,12 +7318,29 @@ function ModelsConfigurationView() {
       return result.success;
     } catch (err: any) {
       setProviderStatus(prev => ({ ...prev, [id]: 'error' }));
-      if (showResult) setTestResult({ id, success: false, error: err.message });
+      const fallbackDiagnostics: ModelProviderDiagnostics = {
+        code: 'test_request_failed',
+        summary: 'Failed to call model test endpoint.',
+        suggestions: [
+          'Verify backend is running and reachable.',
+          'Inspect backend logs for /api/v1/llm/test errors.',
+        ],
+        raw_error: err.message,
+      };
+      setProviderDiagnostics(prev => ({ ...prev, [id]: fallbackDiagnostics }));
+      if (showResult) setTestResult({ id, success: false, error: err.message, diagnostics: fallbackDiagnostics });
       return false;
     } finally {
       setTesting(null);
     }
-  };
+  }, [activeProvider]);
+
+  useEffect(() => {
+    if (!loading && activeProvider && providers.some(p => p.id === activeProvider) && initialActiveTestedRef.current !== activeProvider) {
+      initialActiveTestedRef.current = activeProvider;
+      void handleTestProvider(activeProvider, false);
+    }
+  }, [loading, activeProvider, providers, handleTestProvider]);
 
   const handleTestAllProviders = async () => {
     setTestingAll(true);
@@ -7384,7 +7443,7 @@ function ModelsConfigurationView() {
 
       {/* Add/Edit Form */}
       {(showAddForm || editingProvider) && (
-        <div className="glass rounded-2xl p-6 border border-cyan-500/20 bg-cyan-500/5">
+        <div ref={editFormRef} className="glass rounded-2xl p-6 border border-cyan-500/20 bg-cyan-500/5">
           <h3 className="text-lg font-semibold text-white mb-4">
             {editingProvider ? 'Edit Provider' : 'Add New Provider'}
           </h3>
@@ -7569,6 +7628,16 @@ function ModelsConfigurationView() {
               {testResult.error && (
                 <p className="text-sm text-red-400 mt-1">{testResult.error}</p>
               )}
+              {!testResult.success && testResult.diagnostics?.summary && (
+                <p className="text-sm text-amber-300 mt-1">{testResult.diagnostics.summary}</p>
+              )}
+              {!testResult.success && testResult.diagnostics?.suggestions?.length > 0 && (
+                <div className="mt-2 text-xs text-slate-300">
+                  {testResult.diagnostics.suggestions.slice(0, 2).map((suggestion: string, idx: number) => (
+                    <p key={idx}>• {suggestion}</p>
+                  ))}
+                </div>
+              )}
             </div>
             <button 
               onClick={() => setTestResult(null)}
@@ -7639,6 +7708,11 @@ function ModelsConfigurationView() {
                         Offline
                       </span>
                     )}
+                    {editingProvider?.id === provider.id && (
+                      <span className="px-2 py-0.5 text-xs bg-violet-500/20 text-violet-300 rounded-full">
+                        Editing
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm text-slate-400 font-mono mt-1">{provider.id}</p>
                   <div className="flex items-center gap-4 mt-3 text-sm">
@@ -7659,6 +7733,25 @@ function ModelsConfigurationView() {
                   <div className="mt-2 text-xs text-slate-500 font-mono truncate max-w-md">
                     {provider.base_url}
                   </div>
+                  {providerStatus[provider.id] === 'error' && providerDiagnostics[provider.id] && (
+                    <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 max-w-2xl">
+                      <p className="text-xs text-red-300">
+                        {providerDiagnostics[provider.id]?.summary || 'Provider appears offline.'}
+                      </p>
+                      {providerDiagnostics[provider.id]?.code && (
+                        <p className="text-[11px] text-slate-400 mt-1 font-mono">
+                          code: {providerDiagnostics[provider.id]?.code}
+                        </p>
+                      )}
+                      {providerDiagnostics[provider.id]?.suggestions?.length ? (
+                        <div className="mt-1 text-[11px] text-slate-300">
+                          {providerDiagnostics[provider.id]?.suggestions?.slice(0, 2).map((suggestion, idx) => (
+                            <p key={idx}>• {suggestion}</p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -7678,7 +7771,7 @@ function ModelsConfigurationView() {
                   {testing === provider.id ? 'Testing...' : 'Test'}
                 </button>
                 <button
-                  onClick={() => setEditingProvider(provider)}
+                  onClick={() => { void handleEditProvider(provider.id); }}
                   className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all"
                 >
                   <Edit2 className="w-4 h-4" />

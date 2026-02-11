@@ -9,7 +9,7 @@ Supports multiple LLM providers:
 import os
 import yaml
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass
 from openai import OpenAI
 try:
@@ -178,6 +178,92 @@ class LLMConfigManager:
         self._config['active_provider'] = provider_name
         
         return self.get_active_provider()
+
+    def _build_connection_diagnostics(self, provider: LLMProviderConfig, error: Exception) -> Dict[str, Any]:
+        """Build structured diagnostics for offline/unavailable model scenarios."""
+        error_text = str(error).strip()
+        error_lower = error_text.lower()
+
+        code = "unknown_error"
+        summary = "Unable to reach the configured model."
+        suggestions: List[str] = [
+            "Run provider test again after verifying endpoint and credentials.",
+            "Check ACPG logs for full stack traces around /api/v1/llm/test.",
+        ]
+
+        if any(token in error_lower for token in ["connection refused", "failed to establish", "name or service not known", "nodename nor servname", "temporary failure in name resolution"]):
+            code = "connection_refused"
+            summary = "Provider endpoint is unreachable."
+            suggestions = [
+                "Verify the provider base URL and that the service is running.",
+                "If using a local model server, confirm the process and port are up.",
+                "Check firewall/network rules between ACPG and the model endpoint.",
+            ]
+        elif any(token in error_lower for token in ["timed out", "timeout"]):
+            code = "timeout"
+            summary = "Provider did not respond before timeout."
+            suggestions = [
+                "Check provider load and increase server-side request timeout if needed.",
+                "Try a smaller/faster model to confirm baseline connectivity.",
+                "Verify network latency between ACPG and the provider endpoint.",
+            ]
+        elif any(token in error_lower for token in ["401", "403", "unauthorized", "forbidden", "invalid api key", "authentication"]):
+            code = "auth_failed"
+            summary = "Provider rejected authentication credentials."
+            suggestions = [
+                "Verify the API key/env-var mapping for this provider.",
+                "Confirm key permissions include inference for the configured model.",
+                "Rotate/regenerate the key if credentials may be stale.",
+            ]
+        elif "429" in error_lower or "rate limit" in error_lower or "quota" in error_lower:
+            code = "rate_limited"
+            summary = "Provider rate limit or quota was exceeded."
+            suggestions = [
+                "Retry after cooldown or reduce request concurrency.",
+                "Check account quota and billing limits.",
+                "Use an alternate provider/model as fallback.",
+            ]
+        elif ("404" in error_lower and "responses" in error_lower) or ("/responses" in error_lower and "not found" in error_lower):
+            code = "responses_unsupported"
+            summary = "Provider does not expose Responses API."
+            suggestions = [
+                "This can be expected on some OpenAI-compatible servers.",
+                "ACPG will attempt Chat Completions fallback automatically.",
+                "If fallback also fails, verify the provider's OpenAI compatibility mode.",
+            ]
+        elif ("404" in error_lower and "model" in error_lower) or ("model" in error_lower and "not found" in error_lower):
+            code = "model_not_found"
+            summary = "Configured model was not found on the provider."
+            suggestions = [
+                "Verify the model identifier exactly matches the provider catalog.",
+                "Update the provider configuration to a model that exists on this endpoint.",
+                "Check whether the model requires a specific account tier/access flag.",
+            ]
+        elif "500" in error_lower or "502" in error_lower or "503" in error_lower or "504" in error_lower:
+            code = "provider_server_error"
+            summary = "Provider returned a server-side error."
+            suggestions = [
+                "Retry request after short delay.",
+                "Check provider health/status page if available.",
+                "Use an alternate provider while upstream recovers.",
+            ]
+
+        checks = [
+            f"Provider type: {provider.type}",
+            f"Base URL: {provider.base_url}",
+            f"Model: {provider.model}",
+        ]
+
+        return {
+            "code": code,
+            "summary": summary,
+            "checks": checks,
+            "suggestions": suggestions,
+            "base_url": provider.base_url,
+            "model": provider.model,
+            "provider_type": provider.type,
+            "raw_error": error_text,
+        }
     
     def test_connection(self) -> Dict[str, Any]:
         """Test connection to the active LLM provider."""
@@ -217,7 +303,8 @@ class LLMConfigManager:
                 "success": False,
                 "provider": provider.name,
                 "model": provider.model,
-                "error": str(e)
+                "error": str(e),
+                "diagnostics": self._build_connection_diagnostics(provider, e),
             }
 
 
