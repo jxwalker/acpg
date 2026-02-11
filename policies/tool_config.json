@@ -7,7 +7,7 @@
       "enabled": false
     },
     "safety": {
-      "enabled": false
+      "enabled": true
     }
   },
   "javascript": {

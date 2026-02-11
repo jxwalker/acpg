@@ -35,3 +35,21 @@ def test_legacy_text_model_defaults_to_legacy_completions():
     )
 
     assert cfg.preferred_endpoint == "completions_legacy"
+
+
+def test_anthropic_provider_defaults_max_output_tokens_to_safe_non_streaming_limit():
+    cfg = LLMProviderConfig.from_dict(
+        {
+            "type": "anthropic",
+            "name": "Kimi",
+            "base_url": "https://api.kimi.com/coding/",
+            "api_key": "test",
+            "model": "kimi-for-coding",
+            "max_tokens": 32768,
+            "temperature": 0.3,
+            "context_window": 262144,
+        }
+    )
+
+    assert cfg.preferred_endpoint == "anthropic_messages"
+    assert cfg.max_output_tokens == 4096

@@ -49,7 +49,6 @@ Core components:
 Optional flags:
 
 ```bash
-./scripts/install.sh --with-static-tools
 ./scripts/install.sh --recreate-venv
 ./scripts/install.sh --npm-ci
 ```
@@ -87,12 +86,6 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-```
-
-Optional but recommended tools:
-
-```bash
-pip install bandit safety
 ```
 
 Set environment variables (example):

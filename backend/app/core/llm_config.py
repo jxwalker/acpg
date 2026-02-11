@@ -72,6 +72,12 @@ class LLMProviderConfig:
             except Exception:
                 return None
 
+        max_tokens = data.get('max_tokens')
+        try:
+            max_tokens = int(max_tokens) if max_tokens is not None else 2000
+        except Exception:
+            max_tokens = 2000
+
         max_output_tokens = data.get('max_output_tokens')
         if max_output_tokens is not None:
             try:
@@ -79,11 +85,10 @@ class LLMProviderConfig:
             except Exception:
                 max_output_tokens = None
 
-        max_tokens = data.get('max_tokens')
-        try:
-            max_tokens = int(max_tokens) if max_tokens is not None else 2000
-        except Exception:
-            max_tokens = 2000
+        # Anthropic-compatible providers can reject non-streaming requests with very large
+        # output budgets. Set a safe default unless explicitly configured.
+        if max_output_tokens is None and provider_type == 'anthropic':
+            max_output_tokens = min(max_tokens, 4096)
 
         temperature = data.get('temperature')
         try:

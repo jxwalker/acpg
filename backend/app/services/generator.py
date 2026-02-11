@@ -40,6 +40,25 @@ class Generator:
         except Exception:
             pass
 
+    def _effective_max_output_tokens(self, requested_max_output_tokens: Optional[int]) -> int:
+        """Resolve a safe max output token budget for the active provider."""
+        provider_max = None
+        if self.provider is not None:
+            provider_max = self.provider.max_output_tokens
+
+        if requested_max_output_tokens is not None:
+            max_out = int(requested_max_output_tokens)
+        elif provider_max is not None:
+            max_out = int(provider_max)
+        else:
+            max_out = int(self.llm_config.get_max_tokens())
+
+        # Non-streaming Anthropic/Kimi requests can fail with very large budgets.
+        if self.provider is not None and self.provider.type == "anthropic":
+            max_out = min(max_out, 4096)
+
+        return max(1, max_out)
+
     def _refresh_llm(self):
         """Refresh LLM client/provider for the currently active config."""
         self.client = get_llm_client()
@@ -135,7 +154,7 @@ class Generator:
         Anthropic providers: messages API.
         """
         self._refresh_llm()
-        max_out = max_output_tokens or self.llm_config.get_max_tokens()
+        max_out = self._effective_max_output_tokens(max_output_tokens)
 
         if self.provider.type == 'anthropic':
             # Anthropic API format
@@ -278,6 +297,12 @@ ORIGINAL CODE:
                 raise ValueError(f"LLM connection failed. Cannot reach {self.provider.name} at {self.llm_config.get_active_provider().base_url}. Check your network and LLM service configuration. Error: {error_msg}")
             elif "model" in error_msg.lower() and "not found" in error_msg.lower() or "404" in error_msg:
                 raise ValueError(f"LLM model '{self.model}' not found. Check your LLM configuration. Error: {error_msg}")
+            elif "streaming is required" in error_msg.lower():
+                raise ValueError(
+                    f"LLM request exceeded non-streaming limits for {self.provider.name}. "
+                    "Set a smaller max_output_tokens (e.g., <= 4096) or use streaming-capable handling. "
+                    f"Error: {error_msg}"
+                )
             else:
                 logger.error(f"LLM fix_violations error ({error_type}): {e}", exc_info=True)
                 raise ValueError(f"Failed to fix code with LLM ({self.provider.name}): {error_msg}")

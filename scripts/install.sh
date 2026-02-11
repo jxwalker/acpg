@@ -13,7 +13,6 @@ FRONTEND_DIR="$PROJECT_ROOT/frontend"
 PYTHON_BIN="python3"
 INSTALL_BACKEND=1
 INSTALL_FRONTEND=1
-INSTALL_STATIC_TOOLS=0
 RECREATE_VENV=0
 USE_NPM_CI=0
 
@@ -40,7 +39,6 @@ Usage: ./scripts/install.sh [options]
 
 Options:
   --python <bin>         Python executable to use (default: python3)
-  --with-static-tools    Also install bandit and safety into backend venv
   --recreate-venv        Delete and recreate backend/venv before install
   --npm-ci               Use npm ci instead of npm install
   --skip-backend         Skip backend setup
@@ -69,7 +67,7 @@ parse_args() {
         shift 2
         ;;
       --with-static-tools)
-        INSTALL_STATIC_TOOLS=1
+        warn "--with-static-tools is no longer needed (static tools are installed by default)"
         shift
         ;;
       --recreate-venv)
@@ -150,11 +148,6 @@ setup_backend() {
 
   info "Installing backend dependencies"
   "$pip_bin" install -r "$BACKEND_DIR/requirements.txt"
-
-  if [[ "$INSTALL_STATIC_TOOLS" -eq 1 ]]; then
-    info "Installing optional static analysis tools (bandit, safety)"
-    "$pip_bin" install bandit safety
-  fi
 
   info "Backend ready"
   "$py_bin" --version
