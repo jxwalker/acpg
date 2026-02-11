@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
 from backend.app.models.schemas import Violation, AnalysisResult, Argument, Attack, ArgumentationGraph
+from backend.app.models.schemas import SetAttack
 
 
 def test_adjudicator_compliant():
@@ -63,6 +64,36 @@ def test_adjudicator_non_compliant():
     
     assert result.compliant is False
     assert "SEC-001" in result.unsatisfied_rules
+
+
+def test_adjudicator_non_kb_runtime_violation_non_compliant():
+    """Runtime policy violations not in the static KB must still drive non-compliance."""
+    from backend.app.services.adjudicator import Adjudicator
+    from backend.app.services.policy_compiler import PolicyCompiler
+
+    compiler = PolicyCompiler()
+    compiler.load_policies()
+
+    adjudicator = Adjudicator()
+    adjudicator.policy_compiler = compiler
+
+    analysis = AnalysisResult(
+        artifact_id="runtime123",
+        violations=[
+            Violation(
+                rule_id="RUNTIME-TOOL-DENYLIST",
+                description="Runtime policy denied a tool invocation",
+                evidence="tool=bandit",
+                detector="runtime_guard",
+                severity="high",
+            )
+        ],
+    )
+
+    result = adjudicator.adjudicate(analysis)
+
+    assert result.compliant is False
+    assert "RUNTIME-TOOL-DENYLIST" in result.unsatisfied_rules
 
 
 def test_build_argumentation_graph():
@@ -156,6 +187,61 @@ def test_grounded_extension_chain():
     assert "C" in accepted
 
 
+def test_grounded_extension_joint_attack():
+    """Joint attack: {A,B} attacks C. If A and B are accepted, C must not be accepted."""
+    from backend.app.services.adjudicator import Adjudicator
+
+    adjudicator = Adjudicator()
+
+    graph = ArgumentationGraph(
+        arguments=[
+            Argument(id="A", rule_id="R1", type="compliance"),
+            Argument(id="B", rule_id="R2", type="compliance"),
+            Argument(id="C", rule_id="R3", type="violation"),
+        ],
+        attacks=[],
+        set_attacks=[
+            SetAttack(attackers=["A", "B"], target="C")
+        ]
+    )
+
+    accepted = adjudicator.compute_grounded_extension(graph)
+
+    assert "A" in accepted
+    assert "B" in accepted
+    assert "C" not in accepted
+
+
+def test_grounded_extension_joint_attack_broken():
+    """If one attacker in the joint set is rejected, the joint attack is defeated and C can be accepted."""
+    from backend.app.services.adjudicator import Adjudicator
+
+    adjudicator = Adjudicator()
+
+    # D attacks A, so D accepted and A rejected. Joint attack {A,B} -> C is broken.
+    graph = ArgumentationGraph(
+        arguments=[
+            Argument(id="D", rule_id="R0", type="compliance"),
+            Argument(id="A", rule_id="R1", type="compliance"),
+            Argument(id="B", rule_id="R2", type="compliance"),
+            Argument(id="C", rule_id="R3", type="compliance"),
+        ],
+        attacks=[
+            Attack(attacker="D", target="A"),
+        ],
+        set_attacks=[
+            SetAttack(attackers=["A", "B"], target="C")
+        ]
+    )
+
+    accepted = adjudicator.compute_grounded_extension(graph)
+
+    assert "D" in accepted
+    assert "A" not in accepted
+    assert "B" in accepted
+    assert "C" in accepted
+
+
 def test_generate_guidance():
     """Test guidance generation for violations."""
     from backend.app.services.adjudicator import Adjudicator
@@ -227,4 +313,3 @@ def test_reasoning_trace():
     # Should have conclusion in reasoning
     conclusions = [r for r in result.reasoning if 'conclusion' in r]
     assert len(conclusions) > 0
-

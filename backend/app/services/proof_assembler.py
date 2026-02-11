@@ -1,10 +1,11 @@
 """Proof Assembler Service - Compile and sign proof-carrying artifacts."""
 from typing import List, Optional, Dict, Any
+import json
 from datetime import datetime, timezone
 
 from ..models.schemas import (
     ProofBundle, ArtifactMetadata, PolicyOutcome, Evidence,
-    AnalysisResult, AdjudicationResult, Violation
+    AnalysisResult, AdjudicationResult
 )
 from ..core.crypto import get_signer
 from ..core.config import settings
@@ -33,7 +34,8 @@ class ProofAssembler:
                        analysis: AnalysisResult,
                        adjudication: AdjudicationResult,
                        artifact_name: Optional[str] = None,
-                       language: str = "python") -> ProofBundle:
+                       language: str = "python",
+                       runtime_events: Optional[List[Dict[str, Any]]] = None) -> ProofBundle:
         """
         Assemble a complete proof bundle.
         
@@ -55,6 +57,15 @@ class ProofAssembler:
         
         # Gather evidence
         evidence = self._gather_evidence(analysis, adjudication)
+        if runtime_events:
+            evidence.append(
+                Evidence(
+                    rule_id="RUNTIME",
+                    type="runtime_trace",
+                    tool="langgraph",
+                    output=json.dumps(runtime_events, indent=2, default=str),
+                )
+            )
         
         # Extract argumentation trace (with tool metadata)
         argumentation = self._extract_argumentation(adjudication, analysis)
@@ -153,7 +164,6 @@ class ProofAssembler:
             Serialized proof bundle
         """
         import json
-        from datetime import datetime
         
         if format == "json":
             # Convert to JSON with custom serialization for datetime
@@ -318,7 +328,7 @@ class ProofAssembler:
             "</style>",
             "</head>",
             "<body>",
-            f"<h1>ACPG Proof Bundle</h1>",
+            "<h1>ACPG Proof Bundle</h1>",
             "",
             "<div class='meta'>",
             f"<p><strong>Artifact:</strong> {bundle.artifact.name or 'unnamed'}</p>",
@@ -354,7 +364,7 @@ class ProofAssembler:
                 "<h2>Evidence</h2>",
             ])
             for i, ev in enumerate(bundle.evidence, 1):
-                html.append(f"<div class='evidence'>")
+                html.append("<div class='evidence'>")
                 html.append(f"<h3>Evidence {i}</h3>")
                 html.append(f"<p><strong>Type:</strong> {ev.type}</p>")
                 html.append(f"<p><strong>Description:</strong> {ev.description}</p>")
@@ -483,7 +493,8 @@ class ProofAssembler:
         # Build the formal proof structure
         formal_proof = {
             "framework": "Dung's Abstract Argumentation Framework",
-            "semantics": "Grounded Extension",
+            # For auditability, record the semantics used for the decision.
+            "semantics": getattr(adjudication, "semantics", None) or "grounded",
             "decision": "Compliant" if adjudication.compliant else "Non-Compliant",
             
             # Tools used in analysis
@@ -504,6 +515,9 @@ class ProofAssembler:
             
             # Detailed reasoning trace
             "reasoning_trace": adjudication.reasoning,
+
+            # Optional solver-backed cross-checks (AUTO mode)
+            "secondary_semantics": getattr(adjudication, "secondary_semantics", None),
             
             # Summary statistics
             "summary": {
@@ -572,10 +586,13 @@ class ProofAssembler:
                     formal_proof["summary"]["rejected_arguments"] += 1
                     
             elif "attack" in item:
+                # Support both simple attacks ("A → B") and joint attacks ("{A, B} → C")
+                attackers_list = item.get("attackers") or []
                 attack_entry = {
                     "relation": item["attack"],
                     "attacker": item["attack"].split(" → ")[0] if " → " in item["attack"] else "",
                     "target": item["attack"].split(" → ")[1] if " → " in item["attack"] else "",
+                    "attackers": attackers_list,
                     "effective": item.get("effective", False),
                     "explanation": item.get("explanation", "")
                 }
@@ -693,7 +710,6 @@ class ProofAssembler:
         }
         
         accepted_violations = [v for v in violation_args if v.get("status") == "accepted"]
-        rejected_violations = [v for v in violation_args if v.get("status") != "accepted"]
         
         # Generate summary
         if adjudication.compliant:
@@ -739,8 +755,8 @@ class ProofAssembler:
                 "step": 2,
                 "title": "Find Unattacked Arguments",
                 "description": (
-                    f"Identify arguments with no attackers. "
-                    f"Violation arguments V_* that have no exception arguments attacking them are unattacked."
+                    "Identify arguments with no attackers. "
+                    "Violation arguments V_* that have no exception arguments attacking them are unattacked."
                 ),
                 "result": f"Unattacked: {[v['id'] for v in accepted_violations]}" if accepted_violations else "All violations were defeated"
             },
@@ -788,4 +804,3 @@ def get_proof_assembler() -> ProofAssembler:
     if _proof_assembler is None:
         _proof_assembler = ProofAssembler()
     return _proof_assembler
-

@@ -1,5 +1,5 @@
 """Registry of known rules for static analysis tools."""
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 # Known rules for common static analysis tools
 # This allows users to browse available rules before creating mappings

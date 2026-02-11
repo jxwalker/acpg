@@ -49,6 +49,7 @@ class ToolExecutionInfo(BaseModel):
     execution_time: Optional[float] = None
     tool_version: Optional[str] = None  # Tool version (e.g., "1.7.5")
     error: Optional[str] = None
+    policy_decision: Optional[Dict[str, Any]] = None  # Runtime guard allow/deny decision
     findings: Optional[List[Dict[str, Any]]] = None  # Raw findings for debugging
 
 
@@ -94,14 +95,23 @@ class Attack(BaseModel):
     target: str
 
 
+class SetAttack(BaseModel):
+    """Joint attack: a set of attackers jointly defeats a target (Nielsen & Parsons style)."""
+    attackers: List[str]
+    target: str
+
+
 class ArgumentationGraph(BaseModel):
     """Graph of arguments and attacks."""
     arguments: List[Argument]
     attacks: List[Attack]
+    set_attacks: List[SetAttack] = Field(default_factory=list)
 
 
 class AdjudicationResult(BaseModel):
     """Result of adjudication."""
+    semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    secondary_semantics: Optional[Dict[str, Any]] = None  # Optional solver-backed cross-checks
     compliant: bool
     unsatisfied_rules: List[str]
     satisfied_rules: List[str]
@@ -162,6 +172,7 @@ class EnforceRequest(BaseModel):
     language: str = "python"
     max_iterations: int = 3
     policies: Optional[List[str]] = None
+    semantics: Optional[str] = None  # grounded, stable, preferred, auto
 
 
 class EnforceResponse(BaseModel):

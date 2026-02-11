@@ -4,7 +4,8 @@ uvicorn[standard]==0.27.0
 pydantic>=2.7.4,<3.0.0
 pydantic-settings==2.1.0
 python-multipart==0.0.6
-httpx>=0.26.0
+# Starlette TestClient uses `httpx.Client(app=...)`; httpx 0.28 removed the `app` kwarg.
+httpx>=0.26.0,<0.28.0
 
 # OpenAI
 openai>=1.40.0

@@ -63,8 +63,8 @@ export const api = {
     }),
 
   // Adjudication
-  adjudicate: (analysis: AnalysisResult) =>
-    fetchApi<AdjudicationResult>('/adjudicate', {
+  adjudicate: (analysis: AnalysisResult, semantics: string = 'grounded') =>
+    fetchApi<AdjudicationResult>(`/adjudicate?semantics=${encodeURIComponent(semantics)}`, {
       method: 'POST',
       body: JSON.stringify(analysis),
     }),
@@ -83,13 +83,14 @@ export const api = {
     }),
 
   // Enforce (full loop)
-  enforce: (code: string, language: string = 'python', maxIterations: number = 3) =>
+  enforce: (code: string, language: string = 'python', maxIterations: number = 3, semantics: string = 'grounded') =>
     fetchApi<EnforceResponse>('/enforce', {
       method: 'POST',
       body: JSON.stringify({ 
         code, 
         language, 
-        max_iterations: maxIterations 
+        max_iterations: maxIterations,
+        semantics,
       }),
     }),
 
@@ -107,4 +108,3 @@ export const api = {
       body: JSON.stringify({ proof_bundle: proofBundle, format }),
     }),
 };
-

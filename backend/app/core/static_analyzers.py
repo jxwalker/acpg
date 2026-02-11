@@ -1,7 +1,7 @@
 """Static analyzer configuration and management."""
 import json
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional
+from dataclasses import dataclass
 from pathlib import Path
 
 

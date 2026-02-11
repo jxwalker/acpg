@@ -2,7 +2,7 @@
 import yaml
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 # Default config path
 CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "config.yaml"

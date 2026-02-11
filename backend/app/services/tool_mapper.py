@@ -1,7 +1,6 @@
 """Tool-to-policy mapping service."""
 import json
 from typing import Dict, Optional, Tuple, Any
-from pathlib import Path
 
 from ..core.config import settings
 from .parsers.base_parser import ParsedFinding
@@ -22,7 +21,7 @@ class ToolMapper:
             try:
                 with open(mappings_file, 'r') as f:
                     self._mappings = json.load(f)
-            except Exception as e:
+            except Exception:
                 # If mappings file is invalid, use empty dict
                 self._mappings = {}
         else:

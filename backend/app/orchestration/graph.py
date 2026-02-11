@@ -17,7 +17,6 @@ This module defines the agentic workflow as a state machine graph:
                           [Finalize] → [END]
 """
 from typing import Literal, Optional, Dict, Any
-from datetime import datetime
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -135,6 +134,7 @@ async def run_compliance_check(
     language: str = "python",
     policy_ids: Optional[list] = None,
     max_iterations: int = 3,
+    semantics: str = "auto",
     thread_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -163,7 +163,8 @@ async def run_compliance_check(
         code=code,
         language=language,
         policy_ids=policy_ids,
-        max_iterations=max_iterations
+        max_iterations=max_iterations,
+        semantics=semantics,
     )
     
     # Configuration
@@ -179,7 +180,8 @@ def run_compliance_check_sync(
     code: str,
     language: str = "python",
     policy_ids: Optional[list] = None,
-    max_iterations: int = 3
+    max_iterations: int = 3,
+    semantics: str = "auto",
 ) -> Dict[str, Any]:
     """
     Synchronous version of run_compliance_check.
@@ -194,7 +196,8 @@ def run_compliance_check_sync(
         code=code,
         language=language,
         policy_ids=policy_ids,
-        max_iterations=max_iterations
+        max_iterations=max_iterations,
+        semantics=semantics,
     )
     
     # Run the graph synchronously
@@ -253,4 +256,3 @@ def get_graph_visualization() -> str:
     - Generator → Prosecutor (if no error)
     - Generator → Finalize (if error)
     """
-

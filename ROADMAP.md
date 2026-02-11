@@ -15,7 +15,10 @@ Transform ACPG from a functional prototype into an enterprise-grade compliance a
 - [x] Policy-as-Code system with JSON definitions
 - [x] Static analysis with Bandit + 40+ regex patterns
 - [x] Formal argumentation engine (Dung's Framework)
+- [x] Joint attacks (Nielsen–Parsons style) for richer policy governance
+- [x] Semantics selection: grounded + AUTO (grounded-by-default, solver semantics as evidence when available)
 - [x] ECDSA-signed proof bundles
+- [x] LangGraph runtime trace captured and included in proof evidence
 - [x] Iterative compliance refinement loop
 
 ### Infrastructure
@@ -237,4 +240,3 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 ---
 
 *Last Updated: November 2024*
-

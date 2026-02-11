@@ -1,13 +1,11 @@
 """Persistent cryptographic key management for ACPG."""
 import os
-import json
 from pathlib import Path
 from typing import Optional
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 
-from .config import settings
 
 
 class PersistentKeyManager:

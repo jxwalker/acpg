@@ -1,14 +1,8 @@
 """Prosecutor Service - Static and dynamic analysis to find policy violations."""
-import subprocess
-import json
-import tempfile
-import os
-import re
 import logging
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
-from ..models.schemas import Violation, AnalysisResult, PolicyRule
+from ..models.schemas import Violation, AnalysisResult
 from ..core.config import settings
 from .policy_compiler import get_policy_compiler
 from .language_detector import get_language_detector
@@ -118,8 +112,28 @@ class Prosecutor:
             mapped_count = 0
             unmapped_count = 0
             raw_findings = []
+            policy_decision = result.policy_decision
             
             if not result.success:
+                if policy_decision and not policy_decision.get("allowed", True):
+                    violations.append(Violation(
+                        rule_id=policy_decision.get("rule_id") or "RUNTIME-GUARD",
+                        description=policy_decision.get("message") or "Runtime policy violation",
+                        line=None,
+                        evidence=policy_decision.get("evidence"),
+                        detector="runtime_guard",
+                        severity=policy_decision.get("severity") or "high",
+                    ))
+                    tool_execution_info[tool_name] = ToolExecutionInfo(
+                        tool_name=tool_name,
+                        success=False,
+                        error=policy_decision.get("message") or result.error,
+                        execution_time=result.execution_time,
+                        tool_version=result.tool_version,
+                        policy_decision=policy_decision,
+                    )
+                    continue
+
                 # Tool failed - provide helpful error message
                 error_msg = result.error or "Tool execution failed"
                 
@@ -154,7 +168,8 @@ class Prosecutor:
                     success=False,
                     error=enhanced_msg,
                     execution_time=result.execution_time,
-                    tool_version=result.tool_version
+                    tool_version=result.tool_version,
+                    policy_decision=policy_decision,
                 )
                 logger.warning(f"Tool {tool_name} failed ({error_category}): {enhanced_msg}")
                 continue
@@ -165,7 +180,8 @@ class Prosecutor:
                     tool_name=tool_name,
                     success=True,
                     findings_count=0,
-                    execution_time=result.execution_time
+                    execution_time=result.execution_time,
+                    policy_decision=policy_decision,
                 )
                 continue
             
@@ -183,7 +199,8 @@ class Prosecutor:
                         tool_name=tool_name,
                         success=True,
                         error=f"No parser available for {tool_name}",
-                        execution_time=result.execution_time
+                        execution_time=result.execution_time,
+                        policy_decision=policy_decision,
                     )
                     continue
             
@@ -198,7 +215,8 @@ class Prosecutor:
                     tool_name=tool_name,
                     success=True,
                     error=f"Parsing error: {str(e)}",
-                    execution_time=result.execution_time
+                    execution_time=result.execution_time,
+                    policy_decision=policy_decision,
                 )
                 continue
             
@@ -246,6 +264,7 @@ class Prosecutor:
                 unmapped_findings=unmapped_count,
                 execution_time=result.execution_time,
                 tool_version=getattr(result, 'tool_version', None),  # Extract tool version
+                policy_decision=policy_decision,
                 findings=raw_findings if findings_count > 0 else None  # Include all findings for visibility
             )
         
@@ -338,4 +357,3 @@ def get_prosecutor() -> Prosecutor:
     if _prosecutor is None:
         _prosecutor = Prosecutor()
     return _prosecutor
-

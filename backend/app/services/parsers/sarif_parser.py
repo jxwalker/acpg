@@ -1,6 +1,6 @@
 """Parser for SARIF (Static Analysis Results Interchange Format) output."""
 import json
-from typing import List, Dict, Any
+from typing import List
 from .base_parser import BaseParser, ParsedFinding
 
 

@@ -91,7 +91,7 @@ async def get_auth_context(
     key_hash = hash_api_key(api_key)
     db_key = db.query(APIKey).filter(
         APIKey.key_hash == key_hash,
-        APIKey.is_active == True
+        APIKey.is_active.is_(True)
     ).first()
     
     if not db_key:
@@ -192,4 +192,3 @@ class APIKeyManager:
             }
             for k in keys
         ]
-

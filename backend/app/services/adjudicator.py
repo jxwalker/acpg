@@ -3,15 +3,18 @@
 Implements Dung's Abstract Argumentation Framework with grounded semantics
 to make formal compliance decisions based on competing arguments.
 """
+import shutil
+import json
 from typing import List, Dict, Set, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
 from ..models.schemas import (
     Argument, Attack, ArgumentationGraph, AdjudicationResult,
-    Violation, PolicyRule, AnalysisResult
+    Violation, AnalysisResult
 )
 from .policy_compiler import get_policy_compiler
 from .tool_reliability import get_reliability_checker
+from .argumentation_asp import compute_stable_extensions, compute_preferred_extensions
 
 
 @dataclass
@@ -24,6 +27,8 @@ class ArgumentNode:
     details: Optional[str] = None
     attackers: Set[str] = field(default_factory=set)
     attacks: Set[str] = field(default_factory=set)
+    # Joint attacks against this node: each entry is a set of attacker IDs.
+    joint_attackers: List[Set[str]] = field(default_factory=list)
 
 
 class Adjudicator:
@@ -46,8 +51,12 @@ class Adjudicator:
         self.policy_compiler = get_policy_compiler()
         self.reliability_checker = get_reliability_checker()
     
-    def adjudicate(self, analysis: AnalysisResult, 
-                   policy_ids: Optional[List[str]] = None) -> AdjudicationResult:
+    def adjudicate(
+        self,
+        analysis: AnalysisResult,
+        policy_ids: Optional[List[str]] = None,
+        semantics: str = "grounded",
+    ) -> AdjudicationResult:
         """
         Make a compliance decision based on analysis results.
         
@@ -58,10 +67,25 @@ class Adjudicator:
         Returns:
             AdjudicationResult with compliance decision and reasoning
         """
+        requested_semantics = (semantics or "grounded").lower()
+        semantics = requested_semantics
+        if semantics == "auto":
+            # Auto: always decide with grounded (skeptical, deterministic),
+            # and optionally compute other semantics as additional evidence.
+            semantics = "grounded"
+
         # Build argumentation graph
         graph = self.build_argumentation_graph(analysis.violations, policy_ids)
         
-        # Compute grounded extension
+        # Compute extension
+        if semantics != "grounded":
+            # Stable/preferred semantics are NP-hard in general; we treat them as optional
+            # and require an external solver integration (planned).
+            raise ValueError(
+                f"Unsupported semantics '{semantics}' in this build. "
+                "Supported: grounded, auto. Planned: stable, preferred (via ASP/clingo)."
+            )
+
         accepted = self.compute_grounded_extension(graph)
         
         # Determine compliance
@@ -78,13 +102,85 @@ class Adjudicator:
         
         # Build reasoning trace
         reasoning = self._build_reasoning_trace(graph, accepted, accepted_violations)
+
+        secondary_semantics = None
+        if requested_semantics == "auto":
+            secondary_semantics = self._auto_secondary_semantics(graph)
+            reasoning.insert(
+                0,
+                {
+                    "phase": "semantics_selection",
+                    "requested": requested_semantics,
+                    "decision_semantics": semantics,
+                    "secondary_semantics": secondary_semantics,
+                    "description": (
+                        "AUTO mode decides using grounded semantics for conservative compliance. "
+                        "Other semantics may be computed as additional evidence when a solver is available."
+                    ),
+                },
+            )
         
         return AdjudicationResult(
+            semantics=semantics,
+            secondary_semantics=secondary_semantics,
             compliant=len(accepted_violations) == 0,
             unsatisfied_rules=unsatisfied_rules,
             satisfied_rules=satisfied_rules,
             reasoning=reasoning
         )
+
+    def _auto_secondary_semantics(self, graph: ArgumentationGraph) -> Dict[str, Any]:
+        """Optional cross-checks under other semantics (preferred/stable).
+
+        This is intentionally best-effort: if no solver is available, it returns a skipped status.
+        """
+        # We currently do not ship a solver; we only detect availability so proofs are explicit.
+        # Future: export AF to ASP and compute stable/preferred extensions via clingo.
+        clingo_path = shutil.which("clingo")
+        if not clingo_path:
+            return {
+                "enabled": False,
+                "reason": "clingo not available; skipping stable/preferred cross-checks",
+                "stable": None,
+                "preferred": None,
+            }
+
+        result: Dict[str, Any] = {
+            "enabled": True,
+            "clingo_path": clingo_path,
+            "stable": None,
+            "preferred": None,
+            "errors": [],
+        }
+
+        # Stable semantics cross-check
+        try:
+            stable = compute_stable_extensions(graph, clingo_path=clingo_path)
+            result["stable"] = {
+                "extensions": stable.extensions,
+                "count": len(stable.extensions),
+                "raw_size_bytes": len(json.dumps(stable.raw)),
+            }
+            # Store raw only when reasonably small; otherwise keep size only.
+            if result["stable"]["raw_size_bytes"] <= 250_000:
+                result["stable"]["raw"] = stable.raw
+        except Exception as e:
+            result["errors"].append({"semantics": "stable", "error": str(e)})
+
+        # Preferred semantics cross-check (not yet implemented)
+        try:
+            pref = compute_preferred_extensions(graph, clingo_path=clingo_path)
+            result["preferred"] = {
+                "extensions": pref.extensions,
+                "count": len(pref.extensions),
+                "raw_size_bytes": len(json.dumps(pref.raw)),
+            }
+            if result["preferred"]["raw_size_bytes"] <= 250_000:
+                result["preferred"]["raw"] = pref.raw
+        except Exception as e:
+            result["errors"].append({"semantics": "preferred", "error": str(e)})
+
+        return result
     
     def build_argumentation_graph(self, violations: List[Violation],
                                    policy_ids: Optional[List[str]] = None) -> ArgumentationGraph:
@@ -109,19 +205,24 @@ class Adjudicator:
             if v.rule_id not in violation_map:
                 violation_map[v.rule_id] = []
             violation_map[v.rule_id].append(v)
+
+        # Runtime policy violations may introduce rule IDs that are not in the static KB.
+        # Include them so they still participate in compliance adjudication.
+        all_rule_ids = list(dict.fromkeys(list(policies_to_check) + list(violation_map.keys())))
         
         # Create arguments for each policy
-        for rule_id in policies_to_check:
+        for rule_id in all_rule_ids:
             policy = kb['policies'].get(rule_id)
-            if not policy:
-                continue
             
             # Create compliance argument
+            policy_description = (
+                policy.description if policy else f"Policy {rule_id} (runtime or external)"
+            )
             compliance_arg = Argument(
                 id=f"C_{rule_id}",
                 rule_id=rule_id,
                 type="compliance",
-                details=f"Artifact complies with {rule_id}: {policy.description}"
+                details=f"Artifact complies with {rule_id}: {policy_description}"
             )
             arguments.append(compliance_arg)
             
@@ -145,7 +246,7 @@ class Adjudicator:
                     
                     # Check for exception conditions (defeasible rules or tool reliability)
                     exception_arg = None
-                    if policy.type == 'defeasible':
+                    if policy and policy.type == 'defeasible':
                         exception_arg = self._check_exceptions(rule_id, v, len(arguments))
                     
                     # Check for tool reliability exceptions (applies to all violations from tools)
@@ -195,6 +296,14 @@ class Adjudicator:
             if attack.attacker in nodes and attack.target in nodes:
                 nodes[attack.target].attackers.add(attack.attacker)
                 nodes[attack.attacker].attacks.add(attack.target)
+
+        # Joint attacks (Nielsen & Parsons style): a set of attackers jointly defeats a target.
+        # A joint attack is effective when *all* attackers in the set are accepted.
+        for set_attack in getattr(graph, "set_attacks", []) or []:
+            if set_attack.target in nodes:
+                attackers = set(a for a in set_attack.attackers if a in nodes)
+                if attackers:
+                    nodes[set_attack.target].joint_attackers.append(attackers)
         
         # Compute grounded extension via characteristic function iteration
         accepted: Set[str] = set()
@@ -208,13 +317,16 @@ class Adjudicator:
                 if arg_id in accepted or arg_id in rejected:
                     continue
                 
-                # Check if all attackers are rejected
-                all_attackers_rejected = all(
-                    attacker in rejected 
-                    for attacker in node.attackers
+                # Accept when:
+                # - all individual attackers are rejected
+                # - and every joint attack set is "broken" (at least one member is rejected)
+                all_attackers_rejected = all(attacker in rejected for attacker in node.attackers)
+                all_joint_attacks_broken = all(
+                    any(attacker in rejected for attacker in attacker_set)
+                    for attacker_set in node.joint_attackers
                 )
                 
-                if all_attackers_rejected:
+                if all_attackers_rejected and all_joint_attacks_broken:
                     # Accept this argument
                     accepted.add(arg_id)
                     changed = True
@@ -223,6 +335,15 @@ class Adjudicator:
                     for target in node.attacks:
                         if target not in rejected:
                             rejected.add(target)
+                            changed = True
+
+                    # Reject targets of any joint attacks that are now fully satisfied
+                    # (i.e., the entire attacker set is accepted).
+                    for tgt_id, tgt_node in nodes.items():
+                        if tgt_id in accepted or tgt_id in rejected:
+                            continue
+                        if any(attacker_set.issubset(accepted) for attacker_set in tgt_node.joint_attackers):
+                            rejected.add(tgt_id)
                             changed = True
         
         return accepted
@@ -336,11 +457,7 @@ class Adjudicator:
         when they conflict.
         """
         attacks = []
-        severity_order = kb['severity_order']
-        
-        # Get violation arguments
-        violation_args = [a for a in arguments if a.type == 'violation']
-        
+        # TODO: Implement actual conflict detection and priority-based attacks.
         # For conflicting rules, higher priority attacks lower
         # (This is simplified - real implementation would check for actual conflicts)
         
@@ -357,10 +474,12 @@ class Adjudicator:
             "step": 1,
             "phase": "framework_definition",
             "title": "Argumentation Framework Definition",
-            "description": "Constructing Dung's Abstract Argumentation Framework (AF = ⟨Args, Attacks⟩)",
+            "description": "Constructing an Abstract Argumentation Framework (Args, Attacks), with optional joint attacks",
             "details": {
                 "total_arguments": len(graph.arguments),
-                "total_attacks": len(graph.attacks),
+                "total_attacks": len(graph.attacks) + len(getattr(graph, "set_attacks", []) or []),
+                "binary_attacks": len(graph.attacks),
+                "joint_attacks": len(getattr(graph, "set_attacks", []) or []),
                 "argument_types": {
                     "compliance": len([a for a in graph.arguments if a.type == "compliance"]),
                     "violation": len([a for a in graph.arguments if a.type == "violation"]),
@@ -411,6 +530,23 @@ class Adjudicator:
                 "effective": attacker_accepted,
                 "reason": self._explain_attack(attacker_arg, target_arg, attacker_accepted)
             })
+
+        # Joint attacks: effective iff all attackers in the set are accepted
+        for set_attack in getattr(graph, "set_attacks", []) or []:
+            attackers = list(set_attack.attackers or [])
+            effective = all(a in accepted for a in attackers)
+            attack_list.append({
+                "attacker": attackers,
+                "target": set_attack.target,
+                "attacker_type": "joint",
+                "target_type": next((a.type for a in graph.arguments if a.id == set_attack.target), "unknown"),
+                "effective": effective,
+                "reason": (
+                    "Joint attack succeeds when all attackers are accepted"
+                    if effective else
+                    "Joint attack defeated because at least one attacker was rejected"
+                )
+            })
         
         trace.append({
             "step": 3,
@@ -420,6 +556,7 @@ class Adjudicator:
             "logic": [
                 "Violation V_P attacks Compliance C_P (evidence contradicts compliance claim)",
                 "Exception E attacks Violation V (exception condition defeats violation)",
+                "Joint attacks: a set of attackers jointly defeats a target (Nielsen & Parsons style)",
                 "Higher priority arguments attack lower priority ones"
             ],
             "attacks": attack_list
@@ -488,6 +625,21 @@ class Adjudicator:
                 "effective": attacker_accepted,
                 "explanation": f"{'Successful' if attacker_accepted else 'Defeated'} attack"
             })
+
+        for set_attack in getattr(graph, "set_attacks", []) or []:
+            attackers = list(set_attack.attackers or [])
+            effective = all(a in accepted for a in attackers)
+            trace.append({
+                "attack": f"{{{', '.join(attackers)}}} → {set_attack.target}",
+                "attackers": attackers,
+                "target": set_attack.target,
+                "effective": effective,
+                "explanation": (
+                    "Successful joint attack (all attackers accepted)"
+                    if effective else
+                    "Defeated joint attack (at least one attacker rejected)"
+                )
+            })
         
         if accepted_violations:
             trace.append({
@@ -542,4 +694,3 @@ def get_adjudicator() -> Adjudicator:
     if _adjudicator is None:
         _adjudicator = Adjudicator()
     return _adjudicator
-

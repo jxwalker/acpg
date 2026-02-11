@@ -47,6 +47,10 @@ htmlcov/
 # Logs
 *.log
 
+# Local scratch
+/tmp/
+/data/
+
 # Node
 node_modules/
 npm-debug.log*

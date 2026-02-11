@@ -1,5 +1,4 @@
 """LLM Management API routes."""
-import os
 import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -167,9 +166,8 @@ async def switch_llm_provider(request: SwitchProviderRequest):
         new_provider = config.switch_provider(request.provider_id)
         
         # Also reset the generator to use the new provider
-        from ..services.generator import _generator
-        global _generator
-        _generator = None
+        from ..services.generator import reset_generator
+        reset_generator()
         
         return {
             "success": True,
@@ -198,30 +196,39 @@ async def test_code_generation():
     provider = config.get_active_provider()
     
     try:
-        response = client.chat.completions.create(
-            model=provider.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a Python code generator. Generate only code, no explanations."
-                },
-                {
-                    "role": "user",
-                    "content": "Write a Python function called 'add_numbers' that takes two integers and returns their sum. Include a docstring."
-                }
-            ],
-            max_tokens=200,
-            temperature=0.3
-        )
-        
-        generated_code = response.choices[0].message.content.strip()
+        system_prompt = "You are a Python code generator. Generate only code, no explanations."
+        user_prompt = "Write a Python function called 'add_numbers' that takes two integers and returns their sum. Include a docstring."
+
+        if provider.type == "anthropic":
+            response = client.messages.create(
+                model=provider.model,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+                max_tokens=200,
+                temperature=0.3,
+            )
+            generated_code = response.content[0].text.strip() if response.content else ""
+            tokens_used = None
+        else:
+            from ..core.llm_text import openai_text
+
+            generated_code = openai_text(
+                client,
+                model=provider.model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.3,
+                max_output_tokens=200,
+                max_tokens_fallback=200,
+            )
+            tokens_used = None
         
         return {
             "success": True,
             "provider": provider.name,
             "model": provider.model,
             "generated_code": generated_code,
-            "tokens_used": response.usage.total_tokens if response.usage else None
+            "tokens_used": tokens_used
         }
     
     except Exception as e:
@@ -435,12 +442,10 @@ async def set_active_provider(request: SwitchProviderRequest):
     llm_config._client = None
     
     # Reset generator
-    from ..services.generator import _generator
-    global _generator
-    _generator = None
+    from ..services.generator import reset_generator
+    reset_generator()
     
     return {
         "success": True,
         "message": f"Active provider set to '{request.provider_id}' and saved to config"
     }
-

@@ -1,7 +1,5 @@
 """Policy CRUD API Routes - Create, Read, Update, Delete policies."""
 import json
-import os
-from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
@@ -9,8 +7,7 @@ from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel, Field
 
 from ..core.config import settings
-from ..services.policy_compiler import get_policy_compiler, PolicyCompiler
-from ..models.schemas import PolicyRule, PolicyCheck
+from ..services.policy_compiler import get_policy_compiler
 
 
 router = APIRouter(prefix="/policies", tags=["Policy Management"])
