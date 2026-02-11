@@ -83,7 +83,7 @@ echo "Backend PID: $BACKEND_PID"
 # Wait for backend to be ready
 echo "Waiting for backend to start..."
 for i in {1..30}; do
-    if curl -s --max-time 1 "http://localhost:$BACKEND_PORT/api/v1/health" > /dev/null 2>&1; then
+    if curl -s --fail --max-time 5 "http://localhost:$BACKEND_PORT/api/v1/health" > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Backend is ready${NC}"
         break
     fi
@@ -133,7 +133,7 @@ echo "Frontend PID: $FRONTEND_PID"
 # Wait for frontend to be ready
 echo "Waiting for frontend to start..."
 for i in {1..30}; do
-    if curl -s --max-time 1 "http://localhost:$FRONTEND_PORT" > /dev/null 2>&1; then
+    if curl -s --fail --max-time 5 "http://localhost:$FRONTEND_PORT" > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Frontend is ready${NC}"
         break
     fi
@@ -165,4 +165,3 @@ echo "  Frontend: $FRONTEND_PID"
 echo ""
 echo "To stop: ./scripts/stop.sh"
 echo "To restart: ./scripts/restart.sh"
-

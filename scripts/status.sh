@@ -24,7 +24,7 @@ if [ -f "$PID_DIR/backend.pid" ]; then
     BACKEND_PORT=$(cat "$PID_DIR/backend.port" 2>/dev/null || echo "unknown")
     
     if ps -p $BACKEND_PID > /dev/null 2>&1; then
-        if curl -s --max-time 1 "http://localhost:$BACKEND_PORT/api/v1/health" > /dev/null 2>&1; then
+        if curl -s --fail --max-time 5 "http://localhost:$BACKEND_PORT/api/v1/health" > /dev/null 2>&1; then
             echo -e "Backend:  ${GREEN}RUNNING${NC} (PID: $BACKEND_PID, Port: $BACKEND_PORT)"
         else
             echo -e "Backend:  ${YELLOW}STARTING${NC} (PID: $BACKEND_PID, Port: $BACKEND_PORT)"
@@ -42,7 +42,7 @@ if [ -f "$PID_DIR/frontend.pid" ]; then
     FRONTEND_PORT=$(cat "$PID_DIR/frontend.port" 2>/dev/null || echo "unknown")
     
     if ps -p $FRONTEND_PID > /dev/null 2>&1; then
-        if curl -s --max-time 1 "http://localhost:$FRONTEND_PORT" > /dev/null 2>&1; then
+        if curl -s --fail --max-time 5 "http://localhost:$FRONTEND_PORT" > /dev/null 2>&1; then
             echo -e "Frontend: ${GREEN}RUNNING${NC} (PID: $FRONTEND_PID, Port: $FRONTEND_PORT)"
         else
             echo -e "Frontend: ${YELLOW}STARTING${NC} (PID: $FRONTEND_PID, Port: $FRONTEND_PORT)"
@@ -64,4 +64,3 @@ if [ -f "$PID_DIR/frontend.port" ]; then
     FRONTEND_PORT=$(cat "$PID_DIR/frontend.port")
     echo "  Frontend: http://localhost:$FRONTEND_PORT"
 fi
-
