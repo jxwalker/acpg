@@ -51,22 +51,41 @@ def prosecutor_node(state: ComplianceState) -> Dict[str, Any]:
         content=f"Found {len(violations)} violation(s)",
         timestamp=datetime.now(timezone.utc).isoformat()
     )
+
+    runtime_events = [
+        _runtime_event(
+            state,
+            node="prosecutor",
+            kind="analysis",
+            details={
+                "artifact_hash": result.artifact_id,
+                "violations_count": len(violations),
+            },
+        )
+    ]
+
+    for tool_name, tool_info in (result.tool_execution or {}).items():
+        decision = getattr(tool_info, "policy_decision", None)
+        if decision and not decision.get("allowed", True):
+            runtime_events.append(
+                _runtime_event(
+                    state,
+                    node="prosecutor",
+                    kind="runtime_guard_violation",
+                    details={
+                        "tool": tool_name,
+                        "rule_id": decision.get("rule_id"),
+                        "severity": decision.get("severity"),
+                        "message": decision.get("message"),
+                    },
+                )
+            )
     
     return {
         "artifact_hash": result.artifact_id,
         "violations": violations,
         "messages": [message],
-        "runtime_events": [
-            _runtime_event(
-                state,
-                node="prosecutor",
-                kind="analysis",
-                details={
-                    "artifact_hash": result.artifact_id,
-                    "violations_count": len(violations),
-                },
-            )
-        ],
+        "runtime_events": runtime_events,
     }
 
 

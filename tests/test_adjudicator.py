@@ -66,6 +66,36 @@ def test_adjudicator_non_compliant():
     assert "SEC-001" in result.unsatisfied_rules
 
 
+def test_adjudicator_non_kb_runtime_violation_non_compliant():
+    """Runtime policy violations not in the static KB must still drive non-compliance."""
+    from backend.app.services.adjudicator import Adjudicator
+    from backend.app.services.policy_compiler import PolicyCompiler
+
+    compiler = PolicyCompiler()
+    compiler.load_policies()
+
+    adjudicator = Adjudicator()
+    adjudicator.policy_compiler = compiler
+
+    analysis = AnalysisResult(
+        artifact_id="runtime123",
+        violations=[
+            Violation(
+                rule_id="RUNTIME-TOOL-DENYLIST",
+                description="Runtime policy denied a tool invocation",
+                evidence="tool=bandit",
+                detector="runtime_guard",
+                severity="high",
+            )
+        ],
+    )
+
+    result = adjudicator.adjudicate(analysis)
+
+    assert result.compliant is False
+    assert "RUNTIME-TOOL-DENYLIST" in result.unsatisfied_rules
+
+
 def test_build_argumentation_graph():
     """Test building an argumentation graph."""
     from backend.app.services.adjudicator import Adjudicator

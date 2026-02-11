@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..core.static_analyzers import ToolConfig, get_analyzer_config
 from .tool_cache import get_tool_cache
+from .runtime_guard import get_runtime_guard
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ class ToolExecutionResult:
     
     def __init__(self, tool_name: str, success: bool, output: Optional[str] = None,
                  error: Optional[str] = None, execution_time: float = 0.0,
-                 exit_code: Optional[int] = None, tool_version: Optional[str] = None):
+                 exit_code: Optional[int] = None, tool_version: Optional[str] = None,
+                 policy_decision: Optional[Dict[str, Any]] = None):
         self.tool_name = tool_name
         self.success = success
         self.output = output
@@ -43,6 +45,7 @@ class ToolExecutionResult:
         self.execution_time = execution_time
         self.exit_code = exit_code
         self.tool_version = tool_version
+        self.policy_decision = policy_decision
         self.timestamp = datetime.now(timezone.utc)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -55,6 +58,7 @@ class ToolExecutionResult:
             "execution_time": self.execution_time,
             "exit_code": self.exit_code,
             "tool_version": self.tool_version,
+            "policy_decision": self.policy_decision,
             "timestamp": self.timestamp.isoformat()
         }
 
@@ -65,6 +69,7 @@ class ToolExecutor:
     def __init__(self):
         self.config = get_analyzer_config()
         self.cache = get_tool_cache()
+        self.runtime_guard = get_runtime_guard()
     
     def execute_tool(
         self,
@@ -87,6 +92,21 @@ class ToolExecutor:
         Returns:
             ToolExecutionResult
         """
+        language = tool_config.languages[0] if tool_config.languages else None
+        guard_decision = self.runtime_guard.evaluate_tool(
+            tool_name=tool_config.name,
+            command=tool_config.command,
+            language=language,
+        )
+        if not guard_decision.allowed:
+            return ToolExecutionResult(
+                tool_config.name,
+                False,
+                error=guard_decision.message,
+                execution_time=0.0,
+                policy_decision=guard_decision.to_dict(),
+            )
+
         # Check cache if using content
         if use_cache and content and not target_path:
             cached_result = self.cache.get(tool_config.name, content)
@@ -97,7 +117,8 @@ class ToolExecutor:
                     True,
                     output=cached_result.get('output'),
                     execution_time=0.0,  # Cached, no execution time
-                    exit_code=cached_result.get('exit_code')
+                    exit_code=cached_result.get('exit_code'),
+                    policy_decision=guard_decision.to_dict(),
                 )
         
         start_time = datetime.now(timezone.utc)
@@ -133,7 +154,14 @@ class ToolExecutor:
                             file_path = tmp_file.name
                         # Clean up temp file after execution
                         try:
-                            result = self._execute_with_file(tool_config, file_path, use_cache=use_cache, content=content, target_path=target_path)
+                            result = self._execute_with_file(
+                                tool_config,
+                                file_path,
+                                use_cache=use_cache,
+                                content=content,
+                                target_path=target_path,
+                                policy_decision=guard_decision.to_dict(),
+                            )
                         finally:
                             if not target_path:  # Only delete if we created it
                                 try:
@@ -149,7 +177,11 @@ class ToolExecutor:
                         )
                 else:
                     # Tool can read from stdin
-                    return self._execute_with_stdin(tool_config, content or "")
+                    return self._execute_with_stdin(
+                        tool_config,
+                        content or "",
+                        policy_decision=guard_decision.to_dict(),
+                    )
                 
             except subprocess.TimeoutExpired:
                 execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -247,7 +279,8 @@ class ToolExecutor:
         file_path: str,
         use_cache: bool = True,
         content: Optional[str] = None,
-        target_path: Optional[str] = None
+        target_path: Optional[str] = None,
+        policy_decision: Optional[Dict[str, Any]] = None,
     ) -> ToolExecutionResult:
         """Execute tool with file path."""
         start_time = datetime.now(timezone.utc)
@@ -327,7 +360,8 @@ class ToolExecutor:
                 error=result.stderr if result.returncode != 0 and not output else None,
                 execution_time=execution_time,
                 exit_code=result.returncode,
-                tool_version=tool_version
+                tool_version=tool_version,
+                policy_decision=policy_decision,
             )
             
             # Cache successful results
@@ -355,7 +389,8 @@ class ToolExecutor:
     def _execute_with_stdin(
         self,
         tool_config: ToolConfig,
-        content: str
+        content: str,
+        policy_decision: Optional[Dict[str, Any]] = None,
     ) -> ToolExecutionResult:
         """Execute tool with stdin input."""
         start_time = datetime.now(timezone.utc)
@@ -382,7 +417,8 @@ class ToolExecutor:
                 output=output,
                 error=result.stderr if result.returncode != 0 and not output else None,
                 execution_time=execution_time,
-                exit_code=result.returncode
+                exit_code=result.returncode,
+                policy_decision=policy_decision,
             )
             
         except subprocess.TimeoutExpired:
@@ -510,4 +546,3 @@ def get_tool_executor() -> ToolExecutor:
     if _tool_executor is None:
         _tool_executor = ToolExecutor()
     return _tool_executor
-

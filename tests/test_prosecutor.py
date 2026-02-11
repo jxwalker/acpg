@@ -139,3 +139,38 @@ def test_violation_summary():
     assert summary['by_rule']['SEC-001'] == 2
     assert summary['by_rule']['SEC-003'] == 1
 
+
+def test_prosecutor_records_runtime_guard_violation(monkeypatch):
+    """Prosecutor should convert denied runtime guard decisions into violations."""
+    from backend.app.services.prosecutor import Prosecutor
+    from backend.app.services.tool_executor import ToolExecutionResult
+
+    prosecutor = Prosecutor()
+
+    denied = ToolExecutionResult(
+        tool_name="bandit",
+        success=False,
+        error="blocked by runtime policy",
+        policy_decision={
+            "allowed": False,
+            "rule_id": "RUNTIME-TOOL-DENYLIST",
+            "severity": "high",
+            "message": "Runtime policy denied tool 'bandit'.",
+            "evidence": "tool=bandit",
+        },
+    )
+
+    monkeypatch.setattr(
+        prosecutor.tool_executor,
+        "execute_tools_for_language",
+        lambda **kwargs: [denied],
+    )
+
+    violations, tool_info = prosecutor.run_static_analysis_tools("print('x')", "python")
+
+    assert len(violations) == 1
+    assert violations[0].rule_id == "RUNTIME-TOOL-DENYLIST"
+    assert violations[0].detector == "runtime_guard"
+    assert "bandit" in tool_info
+    assert tool_info["bandit"].policy_decision is not None
+    assert tool_info["bandit"].policy_decision["allowed"] is False

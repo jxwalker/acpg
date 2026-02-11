@@ -49,6 +49,7 @@ class ToolExecutionInfo(BaseModel):
     execution_time: Optional[float] = None
     tool_version: Optional[str] = None  # Tool version (e.g., "1.7.5")
     error: Optional[str] = None
+    policy_decision: Optional[Dict[str, Any]] = None  # Runtime guard allow/deny decision
     findings: Optional[List[Dict[str, Any]]] = None  # Raw findings for debugging
 
 

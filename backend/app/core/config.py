@@ -1,6 +1,7 @@
 """Configuration management for ACPG."""
 import os
 from pathlib import Path
+from typing import List
 from pydantic_settings import BaseSettings
 
 
@@ -24,6 +25,9 @@ class Settings(BaseSettings):
     # Compliance Configuration
     MAX_FIX_ITERATIONS: int = 3
     ENABLE_DYNAMIC_TESTING: bool = False  # Hypothesis testing (optional)
+    ENABLE_RUNTIME_GUARDS: bool = True
+    RUNTIME_TOOL_ALLOWLIST: List[str] = []
+    RUNTIME_TOOL_DENYLIST: List[str] = []
     
     # Crypto Configuration
     SIGNATURE_ALGORITHM: str = "ECDSA-SHA256"

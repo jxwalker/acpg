@@ -205,19 +205,24 @@ class Adjudicator:
             if v.rule_id not in violation_map:
                 violation_map[v.rule_id] = []
             violation_map[v.rule_id].append(v)
+
+        # Runtime policy violations may introduce rule IDs that are not in the static KB.
+        # Include them so they still participate in compliance adjudication.
+        all_rule_ids = list(dict.fromkeys(list(policies_to_check) + list(violation_map.keys())))
         
         # Create arguments for each policy
-        for rule_id in policies_to_check:
+        for rule_id in all_rule_ids:
             policy = kb['policies'].get(rule_id)
-            if not policy:
-                continue
             
             # Create compliance argument
+            policy_description = (
+                policy.description if policy else f"Policy {rule_id} (runtime or external)"
+            )
             compliance_arg = Argument(
                 id=f"C_{rule_id}",
                 rule_id=rule_id,
                 type="compliance",
-                details=f"Artifact complies with {rule_id}: {policy.description}"
+                details=f"Artifact complies with {rule_id}: {policy_description}"
             )
             arguments.append(compliance_arg)
             
@@ -241,7 +246,7 @@ class Adjudicator:
                     
                     # Check for exception conditions (defeasible rules or tool reliability)
                     exception_arg = None
-                    if policy.type == 'defeasible':
+                    if policy and policy.type == 'defeasible':
                         exception_arg = self._check_exceptions(rule_id, v, len(arguments))
                     
                     # Check for tool reliability exceptions (applies to all violations from tools)
