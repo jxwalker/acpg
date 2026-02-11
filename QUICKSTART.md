@@ -9,55 +9,34 @@ This guide gets ACPG running locally in minutes.
 - `npm`
 - Optional: `bandit`, `safety` for richer analysis
 
-## 1) Install Backend
+## 1) Install (recommended)
 
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+./scripts/install.sh
 ```
 
-Optional tools:
+Optional flags:
 
 ```bash
-pip install bandit safety
+./scripts/install.sh --with-static-tools
+./scripts/install.sh --recreate-venv
+./scripts/install.sh --npm-ci
 ```
 
-Set API key if using OpenAI-hosted models:
+Set API key if using OpenAI-hosted models (in `backend/.env` or shell):
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
-## 2) Install Frontend
-
-```bash
-cd frontend
-npm install
-```
-
-## 3) Start Services
-
-Recommended:
+## 2) Start Services
 
 ```bash
 ./scripts/start.sh
 ./scripts/status.sh
 ```
 
-Manual alternative:
-
-```bash
-cd backend
-source venv/bin/activate
-uvicorn main:app --reload --port 6000
-
-cd frontend
-npm run dev
-```
-
-## 4) Verify Health
+## 3) Verify Health
 
 ```bash
 curl http://localhost:6000/api/v1/health
@@ -65,7 +44,7 @@ curl http://localhost:6000/api/v1/health
 
 Open UI at the frontend URL shown by `./scripts/status.sh`.
 
-## 5) Run a Compliance Check
+## 4) Run a Compliance Check
 
 ```bash
 curl -X POST http://localhost:6000/api/v1/analyze \
@@ -73,7 +52,7 @@ curl -X POST http://localhost:6000/api/v1/analyze \
   -d '{"code":"password = \"secret123\"","language":"python"}'
 ```
 
-## 6) Enforce + Proof
+## 5) Enforce + Proof
 
 ```bash
 curl -X POST http://localhost:6000/api/v1/enforce \
@@ -81,7 +60,7 @@ curl -X POST http://localhost:6000/api/v1/enforce \
   -d '{"code":"password = \"secret123\"","language":"python","max_iterations":2,"semantics":"auto"}'
 ```
 
-## 7) LangGraph Runtime Compliance Flow
+## 6) LangGraph Runtime Compliance Flow
 
 ```bash
 curl -X POST http://localhost:6000/api/v1/graph/enforce \
@@ -93,6 +72,33 @@ Response includes:
 - `messages` (agent trail)
 - `runtime_events` (runtime trace)
 - `proof_bundle` (if generated)
+
+## Manual Install / Run (alternative)
+
+Backend:
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install bandit safety
+export OPENAI_API_KEY="sk-..."
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+```
+
+Manual run:
+
+```bash
+cd backend && source venv/bin/activate && uvicorn main:app --reload --port 6000
+cd frontend && npm run dev
+```
 
 ## Notes
 

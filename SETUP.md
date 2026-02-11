@@ -8,9 +8,45 @@ This document covers full local setup for development.
 - `frontend/`: React + Vite UI
 - `policies/`: policy catalogs and tool mappings
 - `docs/`: detailed guides
-- `scripts/`: start/stop/status helpers
+- `scripts/`: install/start/stop/status helpers
 
-## Backend Setup
+## One-Shot Install (Recommended)
+
+```bash
+./scripts/install.sh
+```
+
+Useful options:
+
+```bash
+./scripts/install.sh --with-static-tools
+./scripts/install.sh --recreate-venv
+./scripts/install.sh --npm-ci
+./scripts/install.sh --skip-frontend
+./scripts/install.sh --skip-backend
+```
+
+The installer bootstraps `.env` files, creates `backend/venv`, installs backend requirements, and installs frontend dependencies.
+
+## Environment Configuration
+
+From repo root:
+
+```bash
+cp .env.example .env
+cp backend/.env.example backend/.env
+# then edit values as needed
+```
+
+Common variables:
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `ENABLE_STATIC_ANALYSIS`
+- `ENABLE_RUNTIME_GUARDS`
+- `RUNTIME_TOOL_ALLOWLIST`
+- `RUNTIME_TOOL_DENYLIST`
+
+## Manual Backend Setup (Alternative)
 
 ```bash
 cd backend
@@ -25,22 +61,7 @@ Recommended extra tools:
 pip install bandit safety
 ```
 
-Environment:
-
-```bash
-cp .env.example .env
-# then edit .env if needed
-```
-
-Common variables:
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `ENABLE_STATIC_ANALYSIS`
-- `ENABLE_RUNTIME_GUARDS`
-- `RUNTIME_TOOL_ALLOWLIST`
-- `RUNTIME_TOOL_DENYLIST`
-
-## Frontend Setup
+## Manual Frontend Setup (Alternative)
 
 ```bash
 cd frontend

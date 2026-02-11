@@ -9,8 +9,9 @@ Start here:
 1. `/Users/James/code/GAD/apcg/README.md`
 2. `/Users/James/code/GAD/apcg/QUICKSTART.md`
 3. `/Users/James/code/GAD/apcg/SETUP.md`
-4. `/Users/James/code/GAD/apcg/PROJECT_SUMMARY.md`
-5. `/Users/James/code/GAD/apcg/ROADMAP.md`
+4. `/Users/James/code/GAD/apcg/README_SCRIPTS.md`
+5. `/Users/James/code/GAD/apcg/PROJECT_SUMMARY.md`
+6. `/Users/James/code/GAD/apcg/ROADMAP.md`
 
 Operational and product docs:
 

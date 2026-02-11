@@ -40,7 +40,47 @@ Core components:
 
 ## Quick Start
 
-### 1. Backend
+### 1. Install (recommended)
+
+```bash
+./scripts/install.sh
+```
+
+Optional flags:
+
+```bash
+./scripts/install.sh --with-static-tools
+./scripts/install.sh --recreate-venv
+./scripts/install.sh --npm-ci
+```
+
+### 2. Configure environment
+
+Set environment variables in `backend/.env` (or export in shell):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### 3. Run
+
+Option A: service scripts (recommended)
+
+```bash
+./scripts/start.sh
+./scripts/status.sh
+```
+
+Option B: manual
+
+```bash
+cd backend && source venv/bin/activate && uvicorn main:app --reload --port 6000
+cd frontend && npm run dev
+```
+
+## Manual Installation (alternative)
+
+### Backend
 
 ```bash
 cd backend
@@ -61,27 +101,11 @@ Set environment variables (example):
 export OPENAI_API_KEY="sk-..."
 ```
 
-### 2. Frontend
+### Frontend
 
 ```bash
 cd frontend
 npm install
-```
-
-### 3. Run
-
-Option A: service scripts (recommended)
-
-```bash
-./scripts/start.sh
-./scripts/status.sh
-```
-
-Option B: manual
-
-```bash
-cd backend && source venv/bin/activate && uvicorn main:app --reload --port 6000
-cd frontend && npm run dev
 ```
 
 ## Primary API Endpoints
@@ -120,6 +144,7 @@ Authoritative docs:
 - `README.md` (this file)
 - `QUICKSTART.md`
 - `SETUP.md`
+- `README_SCRIPTS.md`
 - `PROJECT_SUMMARY.md`
 - `ROADMAP.md`
 - `docs/README.md`
