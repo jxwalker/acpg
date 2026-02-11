@@ -1,3 +1,7 @@
+> [!NOTE]
+> Documentation Refresh Note (February 11, 2026): this file is retained as specialized or historical context.
+> For current product behavior and authoritative guidance, start at /Users/James/code/GAD/apcg/README.md and /Users/James/code/GAD/apcg/docs/README.md.
+
 # Static Analysis Integration - Comprehensive Test Results
 
 ## Test Execution Summary
