@@ -210,12 +210,12 @@ main() {
 Installation complete.
 
 Next steps:
-1. Set API keys in /Users/James/code/GAD/apcg/backend/.env (or environment):
+1. Set API keys in $BACKEND_DIR/.env (or environment):
    - OPENAI_API_KEY
 2. Start services:
-   ./scripts/start.sh
+   $PROJECT_ROOT/scripts/start.sh
 3. Check status:
-   ./scripts/status.sh
+   $PROJECT_ROOT/scripts/status.sh
 DONE
 }
 

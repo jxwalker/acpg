@@ -20,6 +20,7 @@ langchain-openai>=0.2.0
 
 # Static Analysis
 bandit==1.7.5
+pbr>=6.0.0
 
 # Dynamic Testing (Optional)
 hypothesis==6.92.2
