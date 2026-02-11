@@ -193,7 +193,7 @@ class LLMConfigManager:
                     max_tokens=10,
                     temperature=0,
                 )
-                text = response.content[0].text.strip()
+                text = response.content[0].text.strip() if response.content else ""
             else:
                 text = openai_text(
                     client,

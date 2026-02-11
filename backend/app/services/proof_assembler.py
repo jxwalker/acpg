@@ -587,7 +587,7 @@ class ProofAssembler:
                     
             elif "attack" in item:
                 # Support both simple attacks ("A → B") and joint attacks ("{A, B} → C")
-                attackers_list = item.get("attackers")
+                attackers_list = item.get("attackers") or []
                 attack_entry = {
                     "relation": item["attack"],
                     "attacker": item["attack"].split(" → ")[0] if " → " in item["attack"] else "",

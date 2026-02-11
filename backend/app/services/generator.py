@@ -64,7 +64,7 @@ class Generator:
                 temperature=self.llm_config.get_temperature(),
                 max_tokens=max_out,
             )
-            return response.content[0].text.strip()
+            return response.content[0].text.strip() if response.content else ""
 
         # OpenAI / OpenAI-compatible
         return openai_text(

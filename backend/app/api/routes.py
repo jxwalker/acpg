@@ -4,7 +4,7 @@ import hashlib
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -1206,7 +1206,7 @@ async def fix_code(request: FixCodeRequest):
 @router.post("/adjudicate", response_model=AdjudicationResult)
 async def adjudicate_analysis(
     analysis: AnalysisResult,
-    semantics: str = Query(
+    semantics: Literal["grounded", "auto"] = Query(
         "grounded",
         description="Argumentation semantics: grounded, auto (planned: stable, preferred)",
     ),

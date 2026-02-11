@@ -207,7 +207,7 @@ async def test_code_generation():
                 max_tokens=200,
                 temperature=0.3,
             )
-            generated_code = response.content[0].text.strip()
+            generated_code = response.content[0].text.strip() if response.content else ""
             tokens_used = None
         else:
             from ..core.llm_text import openai_text

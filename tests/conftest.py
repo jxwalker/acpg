@@ -16,4 +16,4 @@ try:
     _test_db_path.unlink()
 except FileNotFoundError:
     pass
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{_test_db_path}")
+os.environ["DATABASE_URL"] = f"sqlite:///{_test_db_path}"

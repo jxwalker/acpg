@@ -7,6 +7,9 @@ It is intentionally optional: the core ACPG decision path remains grounded seman
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
@@ -101,7 +104,21 @@ out(X) :- in(Y), att(Y,X).
 
 def run_clingo(programs: Sequence[str], *, clingo_path: str = "clingo", timeout_s: int = 15) -> Dict:
     """Run clingo with JSON output and return parsed JSON."""
-    cmd = [clingo_path, "--outf=2", "-n", "0", "-"]
+    if any(ch in clingo_path for ch in [";", "|", "&", "$", "`", "\n", "\r"]):
+        raise ValueError("Invalid clingo_path: contains disallowed shell metacharacters")
+
+    resolved: str | None = None
+    if os.path.isabs(clingo_path):
+        candidate = Path(clingo_path).resolve()
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            raise ValueError(f"Invalid clingo_path: '{clingo_path}' is not an executable file")
+        resolved = str(candidate)
+    else:
+        resolved = shutil.which(clingo_path)
+        if not resolved:
+            raise ValueError(f"Invalid clingo_path: executable '{clingo_path}' not found in PATH")
+
+    cmd = [resolved, "--outf=2", "-n", "0", "-"]
     proc = subprocess.run(
         cmd,
         input="\n".join(programs),
