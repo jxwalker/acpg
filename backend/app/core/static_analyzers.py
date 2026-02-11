@@ -61,7 +61,7 @@ class StaticAnalyzerConfig:
                 name="safety",
                 command=["safety", "check", "--json", "--file", "{target}"],
                 parser="safety_parser",
-                enabled=True,
+                enabled=False,  # Optional; dependency scanning may not be installed in all envs
                 timeout=20,
                 requires_file=True,
                 output_format="json",
@@ -177,4 +177,3 @@ def get_analyzer_config() -> StaticAnalyzerConfig:
     if _analyzer_config is None:
         _analyzer_config = StaticAnalyzerConfig()
     return _analyzer_config
-

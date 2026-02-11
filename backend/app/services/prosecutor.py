@@ -162,6 +162,22 @@ class Prosecutor:
                 elif "retry" in error_msg.lower() or "transient" in error_msg.lower():
                     error_category = "transient"
                     enhanced_msg = f"Tool '{tool_name}' failed with a transient error. The system will retry automatically."
+
+                # Optional tools should not fail the overall tool execution status.
+                if error_category == "not_installed" and tool_name in {"safety", "pylint"}:
+                    tool_execution_info[tool_name] = ToolExecutionInfo(
+                        tool_name=tool_name,
+                        success=True,
+                        findings_count=0,
+                        mapped_findings=0,
+                        unmapped_findings=0,
+                        error=f"Skipped optional tool: {enhanced_msg}",
+                        execution_time=result.execution_time,
+                        tool_version=result.tool_version,
+                        policy_decision=policy_decision,
+                    )
+                    logger.info(f"Optional tool {tool_name} not installed; skipping.")
+                    continue
                 
                 tool_execution_info[tool_name] = ToolExecutionInfo(
                     tool_name=tool_name,
