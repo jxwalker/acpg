@@ -27,7 +27,7 @@ def test_test_connection_reports_auth_diagnostics(monkeypatch):
     def _raise_auth_error(*args, **kwargs):
         raise Exception("401 Unauthorized: invalid api key")
 
-    monkeypatch.setattr(llm_config_module, "openai_text", _raise_auth_error)
+    monkeypatch.setattr(llm_config_module, "openai_text_with_usage", _raise_auth_error)
 
     result = manager.test_connection()
 
@@ -46,7 +46,7 @@ def test_test_connection_reports_connection_diagnostics(monkeypatch):
     def _raise_connection_error(*args, **kwargs):
         raise Exception("Connection refused while calling upstream")
 
-    monkeypatch.setattr(llm_config_module, "openai_text", _raise_connection_error)
+    monkeypatch.setattr(llm_config_module, "openai_text_with_usage", _raise_connection_error)
 
     result = manager.test_connection()
 

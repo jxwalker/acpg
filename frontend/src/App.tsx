@@ -2596,6 +2596,26 @@ function ComplianceStatus({
                 <div className="text-2xl font-bold text-slate-300">{totalPolicies}</div>
                 <div className="text-xs text-slate-500">Total</div>
               </div>
+              {enforceResult.llm_usage && (
+                <>
+                  <div className="h-8 w-px bg-slate-700" />
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-cyan-300">
+                      {enforceResult.llm_usage.estimated_cost_usd != null
+                        ? `$${enforceResult.llm_usage.estimated_cost_usd.toFixed(6)}`
+                        : 'n/a'}
+                    </div>
+                    <div className="text-xs text-slate-500">Run Cost</div>
+                  </div>
+                  <div className="h-8 w-px bg-slate-700" />
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-slate-300">
+                      {enforceResult.llm_usage.total_tokens?.toLocaleString() ?? 0}
+                    </div>
+                    <div className="text-xs text-slate-500">LLM Tokens</div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -7137,6 +7157,41 @@ type ModelProviderDiagnostics = {
   raw_error?: string;
 };
 
+type OpenAIModelMetadata = {
+  model: string;
+  display_name: string;
+  family?: string;
+  preferred_endpoint?: string;
+  is_legacy?: boolean;
+  context_window?: number;
+  max_output_tokens?: number;
+  input_cost_per_1m?: number | null;
+  cached_input_cost_per_1m?: number | null;
+  output_cost_per_1m?: number | null;
+  knowledge_cutoff?: string | null;
+  docs_url?: string;
+};
+
+type ProviderFormState = {
+  id: string;
+  type: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+  max_tokens: number;
+  temperature: number;
+  context_window: number;
+  max_output_tokens?: number | null;
+  preferred_endpoint?: string;
+  input_cost_per_1m?: number | null;
+  cached_input_cost_per_1m?: number | null;
+  output_cost_per_1m?: number | null;
+  docs_url?: string | null;
+  is_active?: boolean;
+  api_key_set?: boolean;
+};
+
 function ModelsConfigurationView() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -7150,10 +7205,12 @@ function ModelsConfigurationView() {
   const [providerStatus, setProviderStatus] = useState<Record<string, 'unknown' | 'testing' | 'success' | 'error'>>({});
   const [providerDiagnostics, setProviderDiagnostics] = useState<Record<string, ModelProviderDiagnostics | null>>({});
   const [testingAll, setTestingAll] = useState(false);
+  const [openaiCatalog, setOpenaiCatalog] = useState<OpenAIModelMetadata[]>([]);
+  const [openaiCatalogLoading, setOpenaiCatalogLoading] = useState(false);
   const editFormRef = useRef<HTMLDivElement | null>(null);
   const initialActiveTestedRef = useRef<string | null>(null);
   
-  const [newProvider, setNewProvider] = useState({
+  const [newProvider, setNewProvider] = useState<ProviderFormState>({
     id: '',
     type: 'openai',
     name: '',
@@ -7162,7 +7219,13 @@ function ModelsConfigurationView() {
     model: 'gpt-4',
     max_tokens: 2000,
     temperature: 0.3,
-    context_window: 8192
+    context_window: 8192,
+    max_output_tokens: null,
+    preferred_endpoint: 'responses',
+    input_cost_per_1m: null,
+    cached_input_cost_per_1m: null,
+    output_cost_per_1m: null,
+    docs_url: null,
   });
 
   const loadProviders = useCallback(async () => {
@@ -7188,6 +7251,70 @@ function ModelsConfigurationView() {
     loadProviders();
   }, [loadProviders]);
 
+  const loadOpenAICatalog = useCallback(async () => {
+    setOpenaiCatalogLoading(true);
+    try {
+      const res = await fetch('/api/v1/llm/catalog/openai');
+      if (!res.ok) {
+        throw new Error('Failed to load OpenAI model catalog');
+      }
+      const data = await res.json();
+      setOpenaiCatalog(data.models || []);
+    } catch {
+      setOpenaiCatalog([]);
+    } finally {
+      setOpenaiCatalogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOpenAICatalog();
+  }, [loadOpenAICatalog]);
+
+  const resetNewProvider = useCallback(() => {
+    setNewProvider({
+      id: '',
+      type: 'openai',
+      name: '',
+      base_url: 'https://api.openai.com/v1',
+      api_key: '${OPENAI_API_KEY}',
+      model: 'gpt-4',
+      max_tokens: 2000,
+      temperature: 0.3,
+      context_window: 8192,
+      max_output_tokens: null,
+      preferred_endpoint: 'responses',
+      input_cost_per_1m: null,
+      cached_input_cost_per_1m: null,
+      output_cost_per_1m: null,
+      docs_url: null,
+    });
+  }, []);
+
+  const applyOpenAIModelMetadata = useCallback((target: ProviderFormState, modelName: string): ProviderFormState => {
+    const metadata = openaiCatalog.find(m => m.model === modelName);
+    if (!metadata) {
+      return { ...target, model: modelName };
+    }
+
+    const safeOutputMax = metadata.max_output_tokens ?? null;
+    const defaultMaxTokens = safeOutputMax ? Math.min(safeOutputMax, 8192) : target.max_tokens;
+
+    return {
+      ...target,
+      model: metadata.model,
+      name: target.name || metadata.display_name,
+      context_window: metadata.context_window ?? target.context_window,
+      max_output_tokens: metadata.max_output_tokens ?? target.max_output_tokens ?? null,
+      preferred_endpoint: metadata.preferred_endpoint ?? target.preferred_endpoint ?? 'responses',
+      input_cost_per_1m: metadata.input_cost_per_1m ?? null,
+      cached_input_cost_per_1m: metadata.cached_input_cost_per_1m ?? null,
+      output_cost_per_1m: metadata.output_cost_per_1m ?? null,
+      docs_url: metadata.docs_url ?? null,
+      max_tokens: target.max_tokens || defaultMaxTokens,
+    };
+  }, [openaiCatalog]);
+
   useEffect(() => {
     if (showAddForm || editingProvider) {
       requestAnimationFrame(() => {
@@ -7196,10 +7323,10 @@ function ModelsConfigurationView() {
     }
   }, [showAddForm, editingProvider]);
 
-  const handleSaveProvider = async () => {
+  const handleSaveProvider = useCallback(async () => {
     setSaving(true);
     try {
-      const providerData = editingProvider || newProvider;
+      const providerData: ProviderFormState = (editingProvider || newProvider) as ProviderFormState;
       const isNew = !editingProvider;
       
       // Build payload - exclude api_key if editing and it's hidden/empty (keep existing)
@@ -7228,17 +7355,13 @@ function ModelsConfigurationView() {
       setProviderDiagnostics(prev => ({ ...prev, [providerData.id]: null }));
       setShowAddForm(false);
       setEditingProvider(null);
-      setNewProvider({
-        id: '', type: 'openai', name: '', base_url: 'https://api.openai.com/v1',
-        api_key: '${OPENAI_API_KEY}', model: 'gpt-4', max_tokens: 2000,
-        temperature: 0.3, context_window: 8192
-      });
+      resetNewProvider();
     } catch (err: any) {
       setError(err.message);
     } finally {
       setSaving(false);
     }
-  };
+  }, [editingProvider, loadProviders, newProvider, resetNewProvider]);
 
   const handleDeleteProvider = async (id: string) => {
     if (!confirm(`Delete provider "${id}"?`)) return;
@@ -7276,13 +7399,16 @@ function ModelsConfigurationView() {
         const err = await res.json();
         throw new Error(err.detail || 'Failed to load provider details');
       }
-      const provider = await res.json();
+      let provider = await res.json();
+      if (provider.type === 'openai' && provider.model) {
+        provider = applyOpenAIModelMetadata(provider as ProviderFormState, provider.model);
+      }
       setShowAddForm(false);
       setEditingProvider(provider);
     } catch (err: any) {
       setError(err.message || 'Failed to load provider details');
     }
-  }, []);
+  }, [applyOpenAIModelMetadata]);
 
   const handleTestProvider = useCallback(async (id: string, showResult = true) => {
     setTesting(id);
@@ -7368,11 +7494,56 @@ function ModelsConfigurationView() {
     setTestingAll(false);
   };
 
+  const setFormProvider = useCallback((updater: (prev: ProviderFormState) => ProviderFormState) => {
+    if (editingProvider) {
+      setEditingProvider((prev: ProviderFormState | null) => updater((prev || editingProvider) as ProviderFormState));
+    } else {
+      setNewProvider(prev => updater(prev));
+    }
+  }, [editingProvider]);
+
+  const handleProviderTypeChange = useCallback((nextType: string) => {
+    setFormProvider(prev => {
+      let next: ProviderFormState = { ...prev, type: nextType };
+
+      if (nextType === 'openai') {
+        if (!next.base_url || !next.base_url.includes('openai.com')) {
+          next.base_url = 'https://api.openai.com/v1';
+        }
+        if (!next.api_key || next.api_key === 'not-needed' || next.api_key === 'ollama') {
+          next.api_key = '${OPENAI_API_KEY}';
+        }
+        if (!next.preferred_endpoint || next.preferred_endpoint === 'anthropic_messages') {
+          next.preferred_endpoint = 'responses';
+        }
+        if (next.model) {
+          next = applyOpenAIModelMetadata(next, next.model);
+        }
+      } else if (nextType === 'anthropic') {
+        next.preferred_endpoint = 'anthropic_messages';
+      } else if (nextType === 'openai_compatible') {
+        if (!next.preferred_endpoint || next.preferred_endpoint === 'anthropic_messages') {
+          next.preferred_endpoint = 'responses';
+        }
+      }
+
+      return next;
+    });
+  }, [applyOpenAIModelMetadata, setFormProvider]);
+
+  const handleOpenAIModelChange = useCallback((modelName: string) => {
+    setFormProvider(prev => applyOpenAIModelMetadata(prev, modelName));
+  }, [applyOpenAIModelMetadata, setFormProvider]);
+
   const providerTypes = [
     { value: 'openai', label: 'OpenAI API' },
     { value: 'openai_compatible', label: 'OpenAI Compatible (vLLM, Ollama)' },
     { value: 'anthropic', label: 'Anthropic API (Claude, Kimi)' }
   ];
+
+  const formProvider = (editingProvider || newProvider) as ProviderFormState;
+  const isOpenAIForm = formProvider.type === 'openai';
+  const selectedOpenAIModel = openaiCatalog.find(m => m.model === formProvider.model);
 
   if (loading) {
     return (
@@ -7416,7 +7587,7 @@ function ModelsConfigurationView() {
               )}
             </button>
             <button
-              onClick={() => setShowAddForm(true)}
+              onClick={() => { setEditingProvider(null); resetNewProvider(); setShowAddForm(true); }}
               className="px-4 py-2 bg-cyan-500/20 text-cyan-400 rounded-xl hover:bg-cyan-500/30 transition-colors flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
@@ -7452,11 +7623,8 @@ function ModelsConfigurationView() {
               <label className="block text-sm text-slate-400 mb-1">Provider ID</label>
               <input
                 type="text"
-                value={(editingProvider || newProvider).id}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, id: e.target.value})
-                  : setNewProvider({...newProvider, id: e.target.value})
-                }
+                value={formProvider.id}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, id: e.target.value }))}
                 disabled={!!editingProvider}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white disabled:opacity-50"
                 placeholder="my_provider"
@@ -7466,11 +7634,8 @@ function ModelsConfigurationView() {
               <label className="block text-sm text-slate-400 mb-1">Display Name</label>
               <input
                 type="text"
-                value={(editingProvider || newProvider).name}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, name: e.target.value})
-                  : setNewProvider({...newProvider, name: e.target.value})
-                }
+                value={formProvider.name}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, name: e.target.value }))}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
                 placeholder="My Custom Model"
               />
@@ -7478,11 +7643,8 @@ function ModelsConfigurationView() {
             <div>
               <label className="block text-sm text-slate-400 mb-1">Provider Type</label>
               <select
-                value={(editingProvider || newProvider).type}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, type: e.target.value})
-                  : setNewProvider({...newProvider, type: e.target.value})
-                }
+                value={formProvider.type}
+                onChange={(e) => handleProviderTypeChange(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               >
                 {providerTypes.map(t => (
@@ -7492,26 +7654,57 @@ function ModelsConfigurationView() {
             </div>
             <div>
               <label className="block text-sm text-slate-400 mb-1">Model Name</label>
-              <input
-                type="text"
-                value={(editingProvider || newProvider).model}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, model: e.target.value})
-                  : setNewProvider({...newProvider, model: e.target.value})
-                }
-                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
-                placeholder="gpt-4"
-              />
+              {isOpenAIForm ? (
+                <div className="space-y-2">
+                  <select
+                    value={formProvider.model}
+                    onChange={(e) => handleOpenAIModelChange(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  >
+                    {openaiCatalogLoading && <option value={formProvider.model}>Loading catalog...</option>}
+                    {!openaiCatalogLoading && openaiCatalog.length === 0 && (
+                      <option value={formProvider.model}>Catalog unavailable</option>
+                    )}
+                    {!openaiCatalogLoading && openaiCatalog.map((m) => (
+                      <option key={m.model} value={m.model}>
+                        {m.display_name} ({m.model})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={formProvider.model}
+                    onChange={(e) => setFormProvider(prev => ({ ...prev, model: e.target.value }))}
+                    className="w-full px-3 py-2 bg-slate-800/30 border border-slate-700 rounded-lg text-white font-mono text-sm"
+                    placeholder="Or enter custom model id"
+                  />
+                  {selectedOpenAIModel?.docs_url && (
+                    <a
+                      href={selectedOpenAIModel.docs_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex text-xs text-cyan-400 hover:text-cyan-300"
+                    >
+                      View model metadata
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={formProvider.model}
+                  onChange={(e) => setFormProvider(prev => ({ ...prev, model: e.target.value }))}
+                  className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                  placeholder="gpt-4"
+                />
+              )}
             </div>
             <div className="col-span-2">
               <label className="block text-sm text-slate-400 mb-1">Base URL</label>
               <input
                 type="text"
-                value={(editingProvider || newProvider).base_url}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, base_url: e.target.value})
-                  : setNewProvider({...newProvider, base_url: e.target.value})
-                }
+                value={formProvider.base_url}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, base_url: e.target.value }))}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white font-mono text-sm"
                 placeholder="https://api.openai.com/v1"
               />
@@ -7526,13 +7719,10 @@ function ModelsConfigurationView() {
               <div className="relative">
                 <input
                   type="text"
-                  value={(editingProvider || newProvider).api_key === '***HIDDEN***' 
+                  value={formProvider.api_key === '***HIDDEN***' 
                     ? '' 
-                    : (editingProvider || newProvider).api_key}
-                  onChange={(e) => editingProvider 
-                    ? setEditingProvider({...editingProvider, api_key: e.target.value})
-                    : setNewProvider({...newProvider, api_key: e.target.value})
-                  }
+                    : formProvider.api_key}
+                  onChange={(e) => setFormProvider(prev => ({ ...prev, api_key: e.target.value }))}
                   className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white font-mono text-sm"
                   placeholder={editingProvider?.api_key === '***HIDDEN***' 
                     ? "Enter new API key to change (current key is hidden)" 
@@ -7555,11 +7745,8 @@ function ModelsConfigurationView() {
               <label className="block text-sm text-slate-400 mb-1">Max Tokens</label>
               <input
                 type="number"
-                value={(editingProvider || newProvider).max_tokens}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, max_tokens: parseInt(e.target.value)})
-                  : setNewProvider({...newProvider, max_tokens: parseInt(e.target.value)})
-                }
+                value={formProvider.max_tokens}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, max_tokens: parseInt(e.target.value) }))}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               />
             </div>
@@ -7568,11 +7755,8 @@ function ModelsConfigurationView() {
               <input
                 type="number"
                 step="0.1"
-                value={(editingProvider || newProvider).temperature}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, temperature: parseFloat(e.target.value)})
-                  : setNewProvider({...newProvider, temperature: parseFloat(e.target.value)})
-                }
+                value={formProvider.temperature}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               />
             </div>
@@ -7580,11 +7764,62 @@ function ModelsConfigurationView() {
               <label className="block text-sm text-slate-400 mb-1">Context Window</label>
               <input
                 type="number"
-                value={(editingProvider || newProvider).context_window}
-                onChange={(e) => editingProvider 
-                  ? setEditingProvider({...editingProvider, context_window: parseInt(e.target.value)})
-                  : setNewProvider({...newProvider, context_window: parseInt(e.target.value)})
-                }
+                value={formProvider.context_window}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, context_window: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Max Output Tokens</label>
+              <input
+                type="number"
+                value={formProvider.max_output_tokens ?? ''}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, max_output_tokens: e.target.value ? parseInt(e.target.value) : null }))}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="Model capability"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Endpoint Preference</label>
+              <select
+                value={formProvider.preferred_endpoint || 'responses'}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, preferred_endpoint: e.target.value }))}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                disabled={formProvider.type === 'anthropic'}
+              >
+                <option value="responses">Responses (modern)</option>
+                <option value="chat_completions">Chat Completions</option>
+                <option value="completions_legacy">Legacy Completions</option>
+                {formProvider.type === 'anthropic' && <option value="anthropic_messages">Anthropic Messages</option>}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Input Cost ($ / 1M tokens)</label>
+              <input
+                type="number"
+                step="0.0001"
+                value={formProvider.input_cost_per_1m ?? ''}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, input_cost_per_1m: e.target.value ? parseFloat(e.target.value) : null }))}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Output Cost ($ / 1M tokens)</label>
+              <input
+                type="number"
+                step="0.0001"
+                value={formProvider.output_cost_per_1m ?? ''}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, output_cost_per_1m: e.target.value ? parseFloat(e.target.value) : null }))}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Cached Input Cost ($ / 1M tokens)</label>
+              <input
+                type="number"
+                step="0.0001"
+                value={formProvider.cached_input_cost_per_1m ?? ''}
+                onChange={(e) => setFormProvider(prev => ({ ...prev, cached_input_cost_per_1m: e.target.value ? parseFloat(e.target.value) : null }))}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               />
             </div>
@@ -7598,7 +7833,7 @@ function ModelsConfigurationView() {
               {saving ? 'Saving...' : 'Save Provider'}
             </button>
             <button
-              onClick={() => { setShowAddForm(false); setEditingProvider(null); }}
+              onClick={() => { setShowAddForm(false); setEditingProvider(null); resetNewProvider(); }}
               className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors"
             >
               Cancel
@@ -7624,6 +7859,14 @@ function ModelsConfigurationView() {
               </span>
               {testResult.response && (
                 <p className="text-sm text-slate-400 mt-1">Response: {testResult.response}</p>
+              )}
+              {testResult.endpoint && (
+                <p className="text-xs text-slate-400 mt-1">Endpoint: {testResult.endpoint}</p>
+              )}
+              {testResult.usage?.total_tokens != null && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Usage: {testResult.usage.total_tokens.toLocaleString()} tokens
+                </p>
               )}
               {testResult.error && (
                 <p className="text-sm text-red-400 mt-1">{testResult.error}</p>
@@ -7729,6 +7972,15 @@ function ModelsConfigurationView() {
                     <span>Max tokens: {provider.max_tokens}</span>
                     <span>Temp: {provider.temperature}</span>
                     <span>Context: {provider.context_window?.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center gap-4 mt-1 text-xs text-slate-500">
+                    {provider.max_output_tokens && <span>Max output: {provider.max_output_tokens?.toLocaleString()}</span>}
+                    {provider.preferred_endpoint && <span>Endpoint: {provider.preferred_endpoint}</span>}
+                    {(provider.input_cost_per_1m || provider.output_cost_per_1m) && (
+                      <span>
+                        Cost/1M in/out: ${provider.input_cost_per_1m ?? 'n/a'} / ${provider.output_cost_per_1m ?? 'n/a'}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-2 text-xs text-slate-500 font-mono truncate max-w-md">
                     {provider.base_url}

@@ -1278,6 +1278,7 @@ async def enforce_compliance(
     generator = get_generator()
     proof_assembler = get_proof_assembler()
     request_id = str(uuid.uuid4())
+    generator.reset_usage_tracking()
     
     # Use enabled policy groups if no specific policies requested
     policy_ids = request.policies
@@ -1315,6 +1316,7 @@ async def enforce_compliance(
                 iterations=iteration + 1,
                 compliant=True,
                 violations_fixed=violations_fixed,
+                llm_usage=generator.get_usage_summary(),
                 proof_bundle=proof
             )
         
@@ -1351,6 +1353,7 @@ async def enforce_compliance(
                 iterations=iteration + 1,
                 compliant=False,
                 violations_fixed=violations_fixed,
+                llm_usage=generator.get_usage_summary(),
                 proof_bundle=fail_proof
             )
     
@@ -1392,6 +1395,7 @@ async def enforce_compliance(
         iterations=request.max_iterations,
         compliant=False,
         violations_fixed=violations_fixed,
+        llm_usage=generator.get_usage_summary(),
         proof_bundle=proof
     )
 

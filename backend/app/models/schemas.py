@@ -182,4 +182,5 @@ class EnforceResponse(BaseModel):
     iterations: int
     compliant: bool
     violations_fixed: List[str]
+    llm_usage: Optional[Dict[str, Any]] = None
     proof_bundle: Optional[ProofBundle] = None

@@ -1,5 +1,5 @@
 """Generator Service - AI-powered code generation and fixing using configurable LLMs."""
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 
@@ -8,7 +8,7 @@ from ..models.schemas import (
 )
 from ..core.config import settings
 from ..core.llm_config import get_llm_config, get_llm_client
-from ..core.llm_text import openai_text
+from ..core.llm_text import openai_text_with_usage
 from .policy_compiler import get_policy_compiler
 
 
@@ -30,6 +30,7 @@ class Generator:
         self.provider = None
         self.model = None
         self.model_name = None  # Human-readable name for metadata
+        self._usage_events: List[Dict[str, Any]] = []
         self.policy_compiler = get_policy_compiler()
         
         # Log current provider (best-effort; may change later)
@@ -46,7 +47,88 @@ class Generator:
         self.model = self.provider.model
         self.model_name = self.provider.name
 
-    def _generate_text(self, *, system_prompt: str, user_prompt: str, max_output_tokens: Optional[int] = None) -> str:
+    def reset_usage_tracking(self) -> None:
+        """Reset accumulated usage for a single app run/enforcement cycle."""
+        self._usage_events = []
+
+    def _record_usage(self, *, endpoint: str, usage: Optional[Dict[str, int]], operation: str) -> None:
+        """Record a normalized usage event for cost accounting."""
+        usage = usage or {}
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
+        cached_input_tokens = int(usage.get("cached_input_tokens") or 0)
+        reasoning_tokens = int(usage.get("reasoning_tokens") or 0)
+
+        self._usage_events.append(
+            {
+                "operation": operation,
+                "provider": self.model_name,
+                "model": self.model,
+                "endpoint": endpoint,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "reasoning_tokens": reasoning_tokens,
+            }
+        )
+
+    def get_usage_summary(self) -> Dict[str, Any]:
+        """Aggregate usage and estimated costs across accumulated LLM calls."""
+        if self.provider is None:
+            try:
+                self._refresh_llm()
+            except Exception:
+                pass
+
+        endpoint_breakdown: Dict[str, int] = {}
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        cached_input_tokens = 0
+        reasoning_tokens = 0
+
+        for event in self._usage_events:
+            endpoint = str(event.get("endpoint") or "unknown")
+            endpoint_breakdown[endpoint] = endpoint_breakdown.get(endpoint, 0) + 1
+            input_tokens += int(event.get("input_tokens") or 0)
+            output_tokens += int(event.get("output_tokens") or 0)
+            total_tokens += int(event.get("total_tokens") or 0)
+            cached_input_tokens += int(event.get("cached_input_tokens") or 0)
+            reasoning_tokens += int(event.get("reasoning_tokens") or 0)
+
+        pricing = {
+            "input_cost_per_1m": self.provider.input_cost_per_1m if self.provider else None,
+            "cached_input_cost_per_1m": self.provider.cached_input_cost_per_1m if self.provider else None,
+            "output_cost_per_1m": self.provider.output_cost_per_1m if self.provider else None,
+        }
+
+        estimated_cost_usd = None
+        if self.provider and self.provider.input_cost_per_1m is not None and self.provider.output_cost_per_1m is not None:
+            billable_input_tokens = max(0, input_tokens - cached_input_tokens)
+            input_cost = (billable_input_tokens / 1_000_000) * self.provider.input_cost_per_1m
+            output_cost = (output_tokens / 1_000_000) * self.provider.output_cost_per_1m
+            cached_cost = 0.0
+            if self.provider.cached_input_cost_per_1m is not None and cached_input_tokens > 0:
+                cached_cost = (cached_input_tokens / 1_000_000) * self.provider.cached_input_cost_per_1m
+            estimated_cost_usd = round(input_cost + cached_cost + output_cost, 8)
+
+        return {
+            "provider": self.model_name,
+            "model": self.model,
+            "call_count": len(self._usage_events),
+            "endpoint_breakdown": endpoint_breakdown,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cached_input_tokens": cached_input_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "estimated_cost_usd": estimated_cost_usd,
+            "pricing": pricing,
+        }
+
+    def _generate_text(self, *, system_prompt: str, user_prompt: str, max_output_tokens: Optional[int] = None, operation: str = "unknown") -> str:
         """Generate text using the active provider.
 
         OpenAI providers: Responses API first, Chat Completions fallback.
@@ -64,10 +146,20 @@ class Generator:
                 temperature=self.llm_config.get_temperature(),
                 max_tokens=max_out,
             )
+            anthropic_usage = None
+            if hasattr(response, "usage") and response.usage is not None:
+                anthropic_usage = {
+                    "input_tokens": int(getattr(response.usage, "input_tokens", 0) or 0),
+                    "output_tokens": int(getattr(response.usage, "output_tokens", 0) or 0),
+                    "total_tokens": int((getattr(response.usage, "input_tokens", 0) or 0) + (getattr(response.usage, "output_tokens", 0) or 0)),
+                    "cached_input_tokens": 0,
+                    "reasoning_tokens": 0,
+                }
+            self._record_usage(endpoint="anthropic_messages", usage=anthropic_usage, operation=operation)
             return response.content[0].text.strip() if response.content else ""
 
         # OpenAI / OpenAI-compatible
-        return openai_text(
+        result = openai_text_with_usage(
             self.client,
             model=self.model,
             system_prompt=system_prompt,
@@ -75,7 +167,10 @@ class Generator:
             temperature=self.llm_config.get_temperature(),
             max_output_tokens=max_out,
             max_tokens_fallback=max_out,
+            preferred_endpoint=self.provider.preferred_endpoint,
         )
+        self._record_usage(endpoint=result.endpoint, usage=result.usage, operation=operation)
+        return result.text
     
     def generate_code(self, request: GeneratorRequest) -> GeneratorResponse:
         """
@@ -99,7 +194,7 @@ class Generator:
 Ensure the code follows all the security policies listed in your instructions.
 Return ONLY the code, no explanations."""
 
-        code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt)
+        code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt, operation="generate_code")
         
         # Clean up code (remove markdown fences if present)
         code = self._clean_code_response(code, request.language)
@@ -156,7 +251,7 @@ ORIGINAL CODE:
         Return ONLY the fixed code, no explanations or markdown."""
 
         try:
-            fixed_code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt)
+            fixed_code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt, operation="fix_violations")
             if not fixed_code:
                 raise ValueError("LLM returned empty response")
             
@@ -218,7 +313,7 @@ FIXED CODE:
 Provide a brief, clear explanation of each fix."""
 
         # Explanations don't need a system prompt.
-        return self._generate_text(system_prompt="", user_prompt=prompt, max_output_tokens=500)
+        return self._generate_text(system_prompt="", user_prompt=prompt, max_output_tokens=500, operation="explain_fix")
     
     def create_artifact_metadata(self, code: str, language: str, 
                                   name: Optional[str] = None) -> ArtifactMetadata:

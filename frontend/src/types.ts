@@ -198,6 +198,23 @@ export interface EnforceResponse {
   iterations: number;
   compliant: boolean;
   violations_fixed: string[];
+  llm_usage?: {
+    provider?: string;
+    model?: string;
+    call_count: number;
+    endpoint_breakdown: Record<string, number>;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    cached_input_tokens?: number;
+    reasoning_tokens?: number;
+    estimated_cost_usd?: number | null;
+    pricing?: {
+      input_cost_per_1m?: number | null;
+      cached_input_cost_per_1m?: number | null;
+      output_cost_per_1m?: number | null;
+    };
+  };
   proof_bundle?: ProofBundle;
 }
 

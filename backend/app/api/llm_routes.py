@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from ..core.model_catalog import get_openai_catalog, get_openai_model_metadata
 
 router = APIRouter(prefix="/llm", tags=["LLM Management"])
 
@@ -27,6 +28,8 @@ class LLMTestResult(BaseModel):
     response: Optional[str] = None
     error: Optional[str] = None
     diagnostics: Optional[Dict[str, Any]] = None
+    endpoint: Optional[str] = None
+    usage: Optional[Dict[str, Any]] = None
 
 
 class SwitchProviderRequest(BaseModel):
@@ -45,6 +48,12 @@ class ProviderConfig(BaseModel):
     max_tokens: int = 2000
     temperature: float = 0.3
     context_window: int = 8192
+    max_output_tokens: Optional[int] = None
+    preferred_endpoint: str = "responses"
+    input_cost_per_1m: Optional[float] = None
+    cached_input_cost_per_1m: Optional[float] = None
+    output_cost_per_1m: Optional[float] = None
+    docs_url: Optional[str] = None
 
 
 class UpdateProviderRequest(BaseModel):
@@ -57,6 +66,12 @@ class UpdateProviderRequest(BaseModel):
     max_tokens: Optional[int] = None
     temperature: Optional[float] = None
     context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    preferred_endpoint: Optional[str] = None
+    input_cost_per_1m: Optional[float] = None
+    cached_input_cost_per_1m: Optional[float] = None
+    output_cost_per_1m: Optional[float] = None
+    docs_url: Optional[str] = None
 
 
 class CreateProviderRequest(BaseModel):
@@ -67,9 +82,15 @@ class CreateProviderRequest(BaseModel):
     base_url: str
     api_key: str
     model: str
-    max_tokens: int = 2000
-    temperature: float = 0.3
-    context_window: int = 8192
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = 0.3
+    context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    preferred_endpoint: str = "responses"
+    input_cost_per_1m: Optional[float] = None
+    cached_input_cost_per_1m: Optional[float] = None
+    output_cost_per_1m: Optional[float] = None
+    docs_url: Optional[str] = None
 
 
 def _load_config() -> Dict[str, Any]:
@@ -91,6 +112,58 @@ def _save_config(config: Dict[str, Any]):
     with open(LLM_CONFIG_PATH, 'w') as f:
         f.write(header)
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+def _apply_openai_defaults(provider_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Backfill provider metadata from OpenAI catalog when possible."""
+    if provider_data.get("type") not in ("openai",):
+        return provider_data
+
+    model_name = provider_data.get("model")
+    if not model_name:
+        return provider_data
+
+    metadata = get_openai_model_metadata(model_name)
+    if metadata is None:
+        return provider_data
+
+    for field in (
+        "context_window",
+        "max_output_tokens",
+        "preferred_endpoint",
+        "input_cost_per_1m",
+        "cached_input_cost_per_1m",
+        "output_cost_per_1m",
+        "docs_url",
+    ):
+        if provider_data.get(field) is None:
+            provider_data[field] = metadata.get(field)
+
+    # Keep max_tokens practical by default if not set.
+    if provider_data.get("max_tokens") is None:
+        max_output = metadata.get("max_output_tokens") or 2000
+        provider_data["max_tokens"] = int(min(max_output, 8192))
+
+    # If user didn't provide a display name, use model display name.
+    if not provider_data.get("name"):
+        provider_data["name"] = metadata.get("display_name", model_name)
+
+    return provider_data
+
+
+@router.get("/catalog/openai")
+async def get_openai_model_catalog():
+    """Return curated OpenAI model metadata for form auto-population."""
+    return {"models": get_openai_catalog()}
+
+
+@router.get("/catalog/openai/{model_id}")
+async def get_openai_model(model_id: str):
+    """Return metadata for a single OpenAI model."""
+    metadata = get_openai_model_metadata(model_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail=f"OpenAI model '{model_id}' not found in catalog")
+    return metadata
 
 
 @router.get("/providers", response_model=List[LLMProvider])
@@ -132,7 +205,12 @@ async def get_active_provider():
         "base_url": provider.base_url,
         "max_tokens": provider.max_tokens,
         "temperature": provider.temperature,
-        "context_window": provider.context_window
+        "context_window": provider.context_window,
+        "max_output_tokens": provider.max_output_tokens,
+        "preferred_endpoint": provider.preferred_endpoint,
+        "input_cost_per_1m": provider.input_cost_per_1m,
+        "cached_input_cost_per_1m": provider.cached_input_cost_per_1m,
+        "output_cost_per_1m": provider.output_cost_per_1m,
     }
 
 
@@ -210,10 +288,11 @@ async def test_code_generation():
             )
             generated_code = response.content[0].text.strip() if response.content else ""
             tokens_used = None
+            endpoint_used = "anthropic_messages"
         else:
-            from ..core.llm_text import openai_text
+            from ..core.llm_text import openai_text_with_usage
 
-            generated_code = openai_text(
+            result = openai_text_with_usage(
                 client,
                 model=provider.model,
                 system_prompt=system_prompt,
@@ -221,15 +300,19 @@ async def test_code_generation():
                 temperature=0.3,
                 max_output_tokens=200,
                 max_tokens_fallback=200,
+                preferred_endpoint=provider.preferred_endpoint,
             )
-            tokens_used = None
+            generated_code = result.text
+            tokens_used = result.usage
+            endpoint_used = result.endpoint
         
         return {
             "success": True,
             "provider": provider.name,
             "model": provider.model,
             "generated_code": generated_code,
-            "tokens_used": tokens_used
+            "tokens_used": tokens_used,
+            "endpoint": endpoint_used,
         }
     
     except Exception as e:
@@ -315,7 +398,7 @@ async def create_provider(request: CreateProviderRequest):
         raise HTTPException(status_code=400, detail=f"Provider '{request.id}' already exists")
     
     # Create provider entry
-    providers[request.id] = {
+    provider_data = {
         "type": request.type,
         "name": request.name,
         "base_url": request.base_url,
@@ -323,8 +406,15 @@ async def create_provider(request: CreateProviderRequest):
         "model": request.model,
         "max_tokens": request.max_tokens,
         "temperature": request.temperature,
-        "context_window": request.context_window
+        "context_window": request.context_window,
+        "max_output_tokens": request.max_output_tokens,
+        "preferred_endpoint": request.preferred_endpoint,
+        "input_cost_per_1m": request.input_cost_per_1m,
+        "cached_input_cost_per_1m": request.cached_input_cost_per_1m,
+        "output_cost_per_1m": request.output_cost_per_1m,
+        "docs_url": request.docs_url,
     }
+    providers[request.id] = _apply_openai_defaults(provider_data)
     
     config['providers'] = providers
     _save_config(config)
@@ -352,7 +442,9 @@ async def update_provider(provider_id: str, request: UpdateProviderRequest):
     for key, value in update_dict.items():
         if value is not None:
             provider_data[key] = value
-    
+
+    provider_data = _apply_openai_defaults(provider_data)
+
     providers[provider_id] = provider_data
     config['providers'] = providers
     _save_config(config)

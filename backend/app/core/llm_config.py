@@ -17,7 +17,7 @@ try:
 except ImportError:
     Anthropic = None
 from dotenv import load_dotenv
-from .llm_text import openai_text
+from .llm_text import openai_text_with_usage, is_legacy_model
 
 # Load .env file if it exists
 _env_path = Path(__file__).parent.parent.parent.parent / ".env"
@@ -36,6 +36,12 @@ class LLMProviderConfig:
     max_tokens: int
     temperature: float
     context_window: int
+    max_output_tokens: Optional[int] = None
+    preferred_endpoint: str = "responses"
+    input_cost_per_1m: Optional[float] = None
+    cached_input_cost_per_1m: Optional[float] = None
+    output_cost_per_1m: Optional[float] = None
+    docs_url: Optional[str] = None
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'LLMProviderConfig':
@@ -47,15 +53,65 @@ class LLMProviderConfig:
             env_var = api_key[2:-1]
             api_key = os.environ.get(env_var, '')
         
+        provider_type = data.get('type', 'openai')
+        model = data.get('model', 'gpt-4')
+        preferred_endpoint = data.get('preferred_endpoint')
+        if not preferred_endpoint:
+            if provider_type == 'anthropic':
+                preferred_endpoint = "anthropic_messages"
+            elif is_legacy_model(model):
+                preferred_endpoint = "completions_legacy"
+            else:
+                preferred_endpoint = "responses"
+
+        def _as_float(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except Exception:
+                return None
+
+        max_output_tokens = data.get('max_output_tokens')
+        if max_output_tokens is not None:
+            try:
+                max_output_tokens = int(max_output_tokens)
+            except Exception:
+                max_output_tokens = None
+
+        max_tokens = data.get('max_tokens')
+        try:
+            max_tokens = int(max_tokens) if max_tokens is not None else 2000
+        except Exception:
+            max_tokens = 2000
+
+        temperature = data.get('temperature')
+        try:
+            temperature = float(temperature) if temperature is not None else 0.3
+        except Exception:
+            temperature = 0.3
+
+        context_window = data.get('context_window')
+        try:
+            context_window = int(context_window) if context_window is not None else 8192
+        except Exception:
+            context_window = 8192
+
         return cls(
             name=data.get('name', 'Unknown'),
-            type=data.get('type', 'openai'),
+            type=provider_type,
             base_url=data.get('base_url', 'https://api.openai.com/v1'),
             api_key=api_key,
-            model=data.get('model', 'gpt-4'),
-            max_tokens=data.get('max_tokens', 2000),
-            temperature=data.get('temperature', 0.3),
-            context_window=data.get('context_window', 8192)
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
+            preferred_endpoint=preferred_endpoint,
+            input_cost_per_1m=_as_float(data.get('input_cost_per_1m')),
+            cached_input_cost_per_1m=_as_float(data.get('cached_input_cost_per_1m')),
+            output_cost_per_1m=_as_float(data.get('output_cost_per_1m')),
+            docs_url=data.get('docs_url'),
         )
 
 
@@ -98,7 +154,9 @@ class LLMConfigManager:
                     'model': 'gpt-4',
                     'max_tokens': 2000,
                     'temperature': 0.3,
-                    'context_window': 8192
+                    'context_window': 8192,
+                    'max_output_tokens': 8192,
+                    'preferred_endpoint': 'chat_completions',
                 }
             }
         }
@@ -280,8 +338,10 @@ class LLMConfigManager:
                     temperature=0,
                 )
                 text = response.content[0].text.strip() if response.content else ""
+                endpoint_used = "anthropic_messages"
+                usage_data = None
             else:
-                text = openai_text(
+                result = openai_text_with_usage(
                     client,
                     model=provider.model,
                     system_prompt=None,
@@ -289,13 +349,19 @@ class LLMConfigManager:
                     temperature=0,
                     max_output_tokens=10,
                     max_tokens_fallback=10,
+                    preferred_endpoint=provider.preferred_endpoint,
                 )
+                text = result.text
+                endpoint_used = result.endpoint
+                usage_data = result.usage
 
             return {
                 "success": True,
                 "provider": provider.name,
                 "model": provider.model,
-                "response": text
+                "response": text,
+                "endpoint": endpoint_used,
+                "usage": usage_data,
             }
         
         except Exception as e:
