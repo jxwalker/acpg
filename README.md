@@ -1,402 +1,142 @@
 # ACPG: Agentic Compliance and Policy Governor
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React">
-  <img src="https://img.shields.io/badge/FastAPI-0.104-009688.svg" alt="FastAPI">
-  <img src="https://img.shields.io/badge/LangGraph-0.2-purple.svg" alt="LangGraph">
-  <img src="https://img.shields.io/badge/Tests-52%20passing-brightgreen.svg" alt="Tests">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
-</p>
+ACPG is a multi-agent compliance system for AI-generated code and agent workflows.
 
-<p align="center">
-  <strong>A multi-agent AI system that automatically analyzes, fixes, and certifies code for compliance with security policies.</strong>
-</p>
+It combines:
+- static analysis and policy checks,
+- formal adjudication using abstract argumentation,
+- cryptographically signed proof bundles,
+- and runtime trace evidence for LangGraph workflows.
 
----
+## Current Status
 
-## 🎯 What is ACPG?
+This repository is active and production-oriented for local and CI usage.
 
-ACPG implements a **"digital compliance courtroom"** with three specialized AI agents:
+Current baseline:
+- Policies loaded: **39** (default + OWASP + NIST + JS/TS)
+- Test status: **76 passed, 1 skipped**
+- LLM strategy: **Responses API first**, fallback to Chat Completions when needed
+- Decision semantics: **AUTO -> grounded** (with optional secondary solver evidence)
+- Runtime compliance: **LangGraph runtime events included in proof evidence**
 
-| Agent | Role | Technology |
-|-------|------|------------|
-| **🤖 Generator** | Writes and fixes code | GPT-4, Qwen2.5-Coder, Ollama |
-| **🔍 Prosecutor** | Detects policy violations | Bandit, 40+ regex patterns |
-| **⚖️ Adjudicator** | Makes compliance decisions | Dung's Argumentation Framework |
+## Architecture
 
-The system produces **cryptographically-signed proof bundles** that serve as tamper-evident compliance certificates.
+Core components:
+- `Generator`: code generation and auto-fix
+- `Prosecutor`: static analysis, mapping, runtime guard violations
+- `Adjudicator`: argumentation-based compliance decision
+- `Proof Assembler`: proof-carrying artifact generation and signing
 
-## ✨ Key Features
+## Key Capabilities
 
-- **🔄 Automated Compliance Loop** - Analyze → Fix → Verify → Certify
-- **🧠 Multi-LLM Support** - OpenAI, local vLLM, Ollama
-- **📜 38+ Security Policies** - OWASP, NIST, custom rules
-- **🔍 Static Analysis Integration** - Bandit, ESLint, Safety with tool-to-policy mapping
-- **🔐 Proof Bundles** - ECDSA-signed compliance certificates with code inclusion
-- **📤 Export Formats** - Export proof bundles as JSON, Markdown, HTML, or Summary
-- **⚡ LangGraph Orchestration** - Stateful agent workflows
-- **🌐 REST API + Web UI** - FastAPI backend, React frontend
-- **🛠️ Tool Management UI** - Configure tools, browse rules, manage mappings
-- **🐳 Docker Ready** - One-command deployment
+- Responses-first OpenAI integration with compatibility fallback
+- Multi-provider LLM management (`openai`, compatible APIs, `anthropic`)
+- Argumentation semantics support (`grounded`, `auto`)
+- Joint attacks (Nielsen-Parsons style) in grounded adjudication
+- Optional stable/preferred secondary semantics via ASP/clingo
+- Runtime guard decisions converted into formal violations
+- Signed proof bundles (with code + evidence + argumentation trace)
+- LangGraph orchestration with streaming events and runtime traces
 
-## 🏗️ Architecture
+## Quick Start
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         ACPG System                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│    ┌──────────┐      ┌────────────┐      ┌─────────────┐            │
-│    │GENERATOR │ ───▶ │ PROSECUTOR │ ───▶ │ ADJUDICATOR │            │
-│    │  (LLM)   │      │  (Bandit)  │      │  (Logic)    │            │
-│    └────┬─────┘      └────────────┘      └──────┬──────┘            │
-│         │                                        │                   │
-│         │            ◀── Feedback ──             │                   │
-│         │                                        │                   │
-│         └───────────▶ PROOF BUNDLE ◀─────────────┘                   │
-│                      (ECDSA Signed)                                  │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## 🚀 Quick Start
-
-### Option 1: Using Service Management Scripts (Recommended)
+### 1. Backend
 
 ```bash
-# Clone the repository
-git clone https://github.com/jxwalker/acpg.git
-cd acpg
-
-# Backend setup
 cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-
-# Install static analysis tools (optional but recommended)
-pip install bandit safety
-
-# Configure LLM (edit llm_config.yaml for local models)
-# Or set OpenAI API key:
-export OPENAI_API_KEY="sk-your-key"
-
-# Start all services (automatically finds free ports)
-./scripts/start.sh
-
-# Check status
-./scripts/status.sh
-
-# Stop services
-./scripts/stop.sh
 ```
 
-### Option 2: Manual Start
+Optional but recommended tools:
 
 ```bash
-# Backend
-cd backend
-source venv/bin/activate
-uvicorn main:app --reload --port 6000
+pip install bandit safety
+```
 
-# Frontend (new terminal)
+Set environment variables (example):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### 2. Frontend
+
+```bash
 cd frontend
 npm install
-npm run dev  # Runs on port 6001
 ```
 
-### Option 2: Docker
+### 3. Run
+
+Option A: service scripts (recommended)
 
 ```bash
-docker-compose up -d
-# Access at http://localhost:3000
+./scripts/start.sh
+./scripts/status.sh
 ```
 
-## 🔧 LLM Configuration
-
-ACPG supports multiple LLM providers. Configure in `backend/llm_config.yaml`:
-
-```yaml
-active_provider: local_vllm  # or: openai_gpt4, ollama_codellama
-
-providers:
-  local_vllm:
-    base_url: "http://localhost:8001/v1"
-    model: "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ"
-    max_tokens: 4096
-    
-  openai_gpt4:
-    base_url: "https://api.openai.com/v1"
-    api_key: "${OPENAI_API_KEY}"
-    model: "gpt-4"
-```
-
-Switch providers via API:
-```bash
-curl -X POST http://localhost:8000/api/v1/llm/switch \
-  -H "Content-Type: application/json" \
-  -d '{"provider_id": "openai_gpt4"}'
-```
-
-## 📖 Usage
-
-### Web UI
-
-1. Open http://localhost:6001 (or port shown by `./scripts/status.sh`)
-2. **Configure Tools** (Tools tab):
-   - Enable/disable static analysis tools (Bandit, ESLint, etc.)
-   - Browse available tool rules
-   - Create mappings from tool rules to ACPG policies
-3. **Analyze Code** (Editor tab):
-   - Paste code in the editor
-   - Click **"Analyze"** to detect violations
-   - View tool execution status and unmapped findings
-   - See violations with tool badges (e.g., [bandit])
-4. **Create Mappings** (if needed):
-   - Click "Map Rule" on unmapped findings
-   - Or browse rules in Tools → Browse Rules
-   - Map tool rules to policies for automatic violation detection
-5. **Auto-Fix & Certify**:
-   - Click **"Auto-Fix & Certify"** to fix violations and generate proof
-   - View tamper-proof proof bundle with included code
-
-### REST API
-
-```python
-import requests
-
-# Analyze code
-response = requests.post("http://localhost:8000/api/v1/analyze", json={
-    "code": "password = 'secret123'",
-    "language": "python"
-})
-print(response.json()["violations"])
-
-# Full compliance enforcement
-response = requests.post("http://localhost:8000/api/v1/enforce", json={
-    "code": "password = 'secret123'",
-    "language": "python",
-    "max_iterations": 3
-})
-result = response.json()
-print(f"Compliant: {result['compliant']}")
-print(f"Proof Bundle: {result['proof_bundle']}")
-```
-
-### Command Line
+Option B: manual
 
 ```bash
-# Check for violations
-python cli.py check --input vulnerable.py
-
-# Auto-fix and certify
-python cli.py enforce --input vulnerable.py --output fixed.py --proof proof.json
-
-# List all policies
-python cli.py list-policies
+cd backend && source venv/bin/activate && uvicorn main:app --reload --port 6000
+cd frontend && npm run dev
 ```
 
-### LangGraph API (Advanced)
+## Primary API Endpoints
 
-```python
-# Full agentic workflow with state management
-response = requests.post("http://localhost:8000/api/v1/langgraph/enforce", json={
-    "code": "password = 'secret'",
-    "language": "python",
-    "max_iterations": 3
-})
-# Returns detailed execution state with all agent outputs
-```
+Base prefix: `/api/v1`
 
-## 📋 Policy Categories
+Core:
+- `POST /analyze`
+- `POST /adjudicate`
+- `POST /enforce`
+- `POST /proof/generate`
+- `POST /proof/verify`
 
-| Category | Rules | Examples |
-|----------|-------|----------|
-| **Default Security** | 8 | Hardcoded secrets, SQL injection, eval() |
-| **OWASP Top 10** | 10 | XSS, CSRF, broken authentication |
-| **NIST 800-218** | 8 | Secure development practices |
-| **JavaScript/TS** | 12 | DOM XSS, prototype pollution |
-| **Total** | **38** | |
+LangGraph:
+- `POST /graph/enforce`
+- `POST /graph/enforce/stream`
+- `GET /graph/visualize`
 
-## 🔐 Proof Bundle Structure
+LLM management:
+- `GET /llm/providers`
+- `POST /llm/switch`
+- `POST /llm/test`
 
-Proof bundles are **tamper-proof** - the code is included and cryptographically signed:
+Policy CRUD/grouping:
+- `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`
 
-```json
-{
-  "artifact": {
-    "hash": "sha256:a1b2c3...",
-    "language": "python",
-    "generator": "ACPG-Qwen2.5-Coder",
-    "timestamp": "2024-11-28T10:30:00Z"
-  },
-  "code": "def secure_function():\n    ...",  // Actual code (tamper-proof)
-  "policies": [
-    {"id": "SEC-001", "result": "satisfied"},
-    {"id": "SQL-001", "result": "satisfied"}
-  ],
-  "evidence": [
-    {
-      "rule_id": "SQL-001",
-      "tool": "bandit",
-      "tool_rule_id": "B608",
-      "output": "Line 5: SQL injection detected"
-    }
-  ],
-  "argumentation": {
-    "tools_used": ["bandit", "safety"],
-    "tool_versions": {"bandit": "1.7.5"},
-    "framework": "Dung's Abstract Argumentation Framework"
-  },
-  "decision": "Compliant",
-  "signed": {
-    "signature": "MEUCIQDx...",
-    "algorithm": "ECDSA-SHA256",
-    "public_key_fingerprint": "516e29c929b926fb"
-  }
-}
-```
+## Semantics and Compliance Model
 
-**Tamper Detection**: Any modification to code, policies, or evidence invalidates the signature.
+- `grounded`: deterministic skeptical semantics for compliance decisions
+- `auto`: uses `grounded` for decisions, optionally computes stable/preferred as secondary evidence
+- Runtime guard violations (for denied tool actions) are first-class violations and participate in adjudication
 
-### Exporting Proof Bundles
+## Documentation Map
 
-Proof bundles can be exported in multiple formats for sharing and documentation:
+Authoritative docs:
+- `README.md` (this file)
+- `QUICKSTART.md`
+- `SETUP.md`
+- `PROJECT_SUMMARY.md`
+- `ROADMAP.md`
+- `docs/README.md`
+- `docs/USER_GUIDE.md`
+- `docs/runtime_policy_compliance.md`
 
-- **JSON**: Full structured data (default)
-- **Markdown**: Human-readable report with sections for policies, evidence, and argumentation
-- **HTML**: Styled report with color-coded sections, ready for web viewing
-- **Summary**: Plain text summary with key information
+Historical or specialized docs are listed in `docs/README.md` with status.
 
-Export options are available in both the proof bundle view and the proof verifier UI.
-
-## 🔌 API Reference
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/health` | GET | Health check |
-| `/api/v1/policies` | GET | List all policies |
-| `/api/v1/analyze` | POST | Analyze code for violations |
-| `/api/v1/adjudicate` | POST | Run argumentation engine |
-| `/api/v1/fix` | POST | AI-fix specific violations |
-| `/api/v1/enforce` | POST | Full compliance loop |
-| `/api/v1/proof/generate` | POST | Generate proof bundle |
-| `/api/v1/proof/verify` | POST | Verify proof signature |
-| `/api/v1/proof/export` | POST | Export proof bundle (JSON/Markdown/HTML/Summary) |
-| `/api/v1/llm/providers` | GET | List LLM providers |
-| `/api/v1/llm/switch` | POST | Switch active LLM |
-| `/api/v1/langgraph/enforce` | POST | LangGraph workflow |
-| `/api/v1/static-analysis/tools` | GET | List static analysis tools |
-| `/api/v1/static-analysis/tools/{lang}/{tool}` | PUT | Enable/disable tool |
-| `/api/v1/static-analysis/mappings` | GET/PUT | Get/update tool mappings |
-| `/api/v1/static-analysis/mappings/{tool}/{rule}` | POST/DELETE | Add/delete mapping |
-| `/api/v1/static-analysis/rules` | GET | Browse available tool rules |
-
-## 🧪 Testing
+## Development Checks
 
 ```bash
-cd backend
-pytest tests/ -v
-
-# Output:
-# 52 passed in 2.13s
+cd backend && ruff check app/ --ignore E501
+pytest -q
+npm -C frontend run lint
+npm -C frontend run build
 ```
 
-## 📁 Project Structure
+## License
 
-```
-acpg/
-├── backend/
-│   ├── app/
-│   │   ├── api/          # FastAPI routes
-│   │   ├── core/         # Config, crypto, auth
-│   │   ├── models/       # Pydantic schemas
-│   │   ├── orchestration/# LangGraph workflow
-│   │   └── services/     # Business logic
-│   ├── main.py           # FastAPI app
-│   ├── cli.py            # CLI tool
-│   └── llm_config.yaml   # LLM configuration
-├── frontend/             # React UI
-├── policies/             # JSON policy files
-├── tests/                # Test suite
-├── demo/                 # Demo files
-└── docker-compose.yml
-```
-
-## 🔬 The Three Agents
-
-### 1. Generator Agent
-- Uses configurable LLMs (GPT-4, Qwen, Ollama)
-- Generates policy-aware code from specifications
-- Fixes violations based on prosecutor feedback
-- Explains all changes made
-
-### 2. Prosecutor Agent
-- **Static Analysis Tools** - Bandit, ESLint, Safety, Pylint (configurable)
-- **Tool-to-Policy Mapping** - Map tool findings to ACPG policies
-- **40+ regex patterns** - Custom policy rules
-- **Unmapped Findings Discovery** - See what tools found but aren't mapped
-- **Tool Version Tracking** - Traceability for compliance audits
-- Generates detailed violation reports with evidence
-
-### 3. Adjudicator Engine
-- **Dung's Argumentation Framework** - Formal logic
-- **Grounded Semantics** - Minimal defensible extensions
-- Handles strict vs. defeasible rules
-- Produces formal compliance decisions
-
-## 🔒 Security Notes
-
-- **Tamper-Proof Proof Bundles**: Code is included and cryptographically signed
-  - Any modification to code, policies, or evidence invalidates signature
-  - Code hash verified against artifact hash
-  - Full integrity verification available via `/api/v1/proof/verify`
-- **API keys** are loaded from environment variables
-- **Proof signatures** use ECDSA-SHA256 with persistent keys
-- **Rate limiting** protects against abuse
-- **Audit logs** track all compliance decisions
-- **Tool version tracking** for compliance traceability
-
-## 🆕 Recent Features
-
-- ✅ **Static Analysis Integration** - Bandit, ESLint, Safety with automatic execution
-- ✅ **Tool Configuration UI** - Enable/disable tools, view execution status
-- ✅ **Tool Rules Browser** - Browse available rules, see mapping status
-- ✅ **Tool Mappings Management** - Map tool findings to ACPG policies
-- ✅ **Unmapped Findings Discovery** - Prominent display of unmapped findings
-- ✅ **Quick Mapping Creation** - One-click mapping from unmapped findings
-- ✅ **Tool Version Tracking** - Automatic version extraction and display
-- ✅ **Code in Proof Bundles** - Code included for tamper detection
-- ✅ **Service Management Scripts** - YAML config, graceful startup/shutdown
-
-## 🛣️ Roadmap
-
-See [ROADMAP.md](./ROADMAP.md) for planned features:
-- [ ] VS Code extension
-- [ ] GitHub PR integration
-- [ ] Team workspaces
-- [ ] Custom policy editor
-- [ ] Compliance dashboards
-- [ ] More static analysis tools (Semgrep, CodeQL)
-
-## 📄 License
-
-MIT License - See [LICENSE](./LICENSE) file for details.
-
-## 📚 References
-
-- [Dung's Abstract Argumentation Framework](https://en.wikipedia.org/wiki/Argumentation_framework)
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [NIST 800-218 SSDF](https://csrc.nist.gov/publications/detail/sp/800-218/final)
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [Proof-Carrying Code](https://en.wikipedia.org/wiki/Proof-carrying_code)
-
----
-
-<p align="center">
-  <strong>Built for secure, compliant software development</strong><br>
-  <a href="https://github.com/jxwalker/acpg">GitHub</a> •
-  <a href="./SETUP.md">Setup Guide</a> •
-  <a href="./demo/PATENT_DEMO.md">Demo</a>
-</p>
+MIT
