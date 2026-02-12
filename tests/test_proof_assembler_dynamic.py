@@ -68,3 +68,8 @@ def test_proof_includes_dynamic_replay_evidence():
     analysis_evidence = [e for e in proof.evidence if e.type == "dynamic_analysis"]
     assert replay_evidence
     assert analysis_evidence
+    assert proof.argumentation is not None
+    channels = proof.argumentation.get("evidence_channels", {})
+    dynamic_channel = channels.get("dynamic_analysis", {})
+    assert dynamic_channel.get("executed") is True
+    assert dynamic_channel.get("artifact_count") == 1

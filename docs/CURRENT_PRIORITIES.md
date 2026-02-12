@@ -34,9 +34,10 @@ Last refreshed: **February 12, 2026**
 
 ## Next Up
 
-1. [ ] Dynamic analysis coverage expansion
+1. [x] Dynamic analysis coverage expansion
 - Add deterministic dynamic policy suites beyond direct execution smoke checks. (MVP complete)
 - Expand replay artifact indexing and UX for audit workflows. (Index API + history badges complete)
+- Formal linkage of dynamic/runtime evidence into proof argumentation narratives. (MVP complete)
 
 2. [x] Policy lifecycle UX and test operations
 - Better versioning and policy diff/audit views. (MVP complete)
@@ -59,6 +60,7 @@ Last refreshed: **February 12, 2026**
 - Bulk test-case import/export API + UI tagging filters for regression workflows
 - Deterministic dynamic suite runner (direct/import/entrypoint)
 - Dynamic replay artifact index endpoint + history UI badges
+- Proof argumentation evidence-channel narratives for runtime + dynamic signals
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

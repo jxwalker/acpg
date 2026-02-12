@@ -45,6 +45,7 @@ Core components:
 - Sandboxed dynamic analysis (Python) with deterministic replay artifacts in proofs
 - Deterministic dynamic suites (`direct_execution`, `import_execution`, auto entrypoint invocation)
 - Dynamic replay artifact indexing endpoint for audit/CI workflows
+- Proof argumentation includes explicit runtime/dynamic evidence-channel narratives
 - Policy lifecycle audit support (version history and diff endpoints + UI)
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces

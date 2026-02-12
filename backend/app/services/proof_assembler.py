@@ -550,6 +550,44 @@ class ProofAssembler:
                 if violation.detector and violation.detector != "regex" and violation.detector != "ast":
                     tools_used.add(violation.detector)
         
+        runtime_events = []
+        dynamic_summary = {
+            "executed": False,
+            "runner": None,
+            "artifact_count": 0,
+            "violation_count": 0,
+            "suites": [],
+        }
+        if analysis and analysis.tool_execution:
+            for tool_name, tool_info in analysis.tool_execution.items():
+                decision = getattr(tool_info, "policy_decision", None) or {}
+                action = decision.get("action") or ("allow" if decision.get("allowed", True) else "deny")
+                if action == "allow":
+                    continue
+                runtime_events.append(
+                    {
+                        "tool": tool_name,
+                        "action": action,
+                        "rule_id": decision.get("rule_id"),
+                        "allowed": decision.get("allowed", True),
+                        "message": decision.get("message"),
+                    }
+                )
+        if analysis and analysis.dynamic_analysis and analysis.dynamic_analysis.executed:
+            dynamic_summary["executed"] = True
+            dynamic_summary["runner"] = analysis.dynamic_analysis.runner
+            dynamic_summary["artifact_count"] = len(analysis.dynamic_analysis.artifacts)
+            dynamic_summary["violation_count"] = len(analysis.dynamic_analysis.violations)
+            dynamic_summary["suites"] = [
+                {
+                    "suite_id": artifact.suite_id,
+                    "suite_name": artifact.suite_name,
+                    "timed_out": artifact.timed_out,
+                    "return_code": artifact.return_code,
+                }
+                for artifact in analysis.dynamic_analysis.artifacts
+            ]
+
         # Build the formal proof structure
         formal_proof = {
             "framework": "Dung's Abstract Argumentation Framework",
@@ -587,7 +625,10 @@ class ProofAssembler:
                 "total_attacks": 0,
                 "effective_attacks": 0,
                 "satisfied_rules": len(adjudication.satisfied_rules),
-                "unsatisfied_rules": len(adjudication.unsatisfied_rules)
+                "unsatisfied_rules": len(adjudication.unsatisfied_rules),
+                "runtime_policy_events": len(runtime_events),
+                "dynamic_artifacts": dynamic_summary["artifact_count"],
+                "dynamic_violations": dynamic_summary["violation_count"],
             },
             
             # Visual graph representation
@@ -608,7 +649,11 @@ class ProofAssembler:
                 },
                 "decision_logic": [],
                 "step_by_step": []
-            }
+            },
+            "evidence_channels": {
+                "runtime_policy_events": runtime_events,
+                "dynamic_analysis": dynamic_summary,
+            },
         }
         
         # Extract arguments and attacks from reasoning trace
@@ -674,7 +719,13 @@ class ProofAssembler:
             compliance_args, violation_args, exception_args, attack_list
         )
         formal_proof["explanation"] = self._generate_detailed_explanation(
-            adjudication, compliance_args, violation_args, exception_args, attack_list
+            adjudication,
+            compliance_args,
+            violation_args,
+            exception_args,
+            attack_list,
+            runtime_events,
+            dynamic_summary,
         )
         
         return formal_proof
@@ -750,7 +801,9 @@ class ProofAssembler:
     
     def _generate_detailed_explanation(self, adjudication: AdjudicationResult,
                                         compliance_args: List, violation_args: List,
-                                        exception_args: List, attacks: List) -> Dict[str, Any]:
+                                        exception_args: List, attacks: List,
+                                        runtime_events: List[Dict[str, Any]],
+                                        dynamic_summary: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a detailed plain-English explanation of the argumentation."""
         explanation = {
             "summary": "",
@@ -849,6 +902,43 @@ class ProofAssembler:
         if accepted_violations:
             explanation["decision_logic"].append(
                 f"Violated policies: {list(set(v.get('rule_id') for v in accepted_violations))}"
+            )
+
+        if runtime_events:
+            explanation["decision_logic"].append(
+                "Runtime policy channel contributed additional enforcement evidence."
+            )
+            explanation["what_happened"].append(
+                {
+                    "policy": "RUNTIME-POLICY",
+                    "result": "OBSERVED",
+                    "reason": f"{len(runtime_events)} runtime policy decision(s) captured from tool execution.",
+                    "evidence": runtime_events,
+                    "explanation": (
+                        "Runtime policy controls were evaluated during tool execution. "
+                        "These events are linked to the formal proof as enforcement evidence."
+                    ),
+                }
+            )
+
+        if dynamic_summary.get("executed"):
+            explanation["decision_logic"].append(
+                "Dynamic analysis channel executed deterministic suites with replay fingerprints."
+            )
+            explanation["what_happened"].append(
+                {
+                    "policy": "DYNAMIC-ANALYSIS",
+                    "result": "OBSERVED",
+                    "reason": (
+                        f"{dynamic_summary.get('artifact_count', 0)} suite artifact(s), "
+                        f"{dynamic_summary.get('violation_count', 0)} dynamic violation(s)."
+                    ),
+                    "evidence": dynamic_summary.get("suites", []),
+                    "explanation": (
+                        "Dynamic suites provide runtime evidence (direct execution, import execution, "
+                        "and selected entrypoint invocation) with deterministic replay metadata."
+                    ),
+                }
             )
         
         return explanation
