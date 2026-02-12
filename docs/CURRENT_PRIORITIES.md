@@ -40,7 +40,7 @@ Last refreshed: **February 12, 2026**
 
 2. [ ] Policy lifecycle UX and test operations
 - Better versioning and policy diff/audit views. (MVP complete)
-- Safer rollout controls for policy updates.
+- Safer rollout controls for policy updates. (Preview MVP complete)
 - Bulk test-case import/export and tagging workflows for regulated regression suites.
 
 ## Recently Completed
@@ -55,6 +55,7 @@ Last refreshed: **February 12, 2026**
 - Solver-backed joint-attack support for stable/preferred semantics
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff API/UI for audit workflows
+- Policy-group rollout preview impact analysis (API + UI)
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

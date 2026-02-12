@@ -23,6 +23,7 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff/audit support (API + UI)
+- Policy-group rollout preview simulation against stored test cases
 - Unified test code management: file samples + DB-backed CRUD test cases
 - Analysis/enforcement timing telemetry and UI performance visibility
 - CI pipeline covering lint/test/build/integration/docker

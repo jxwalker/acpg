@@ -295,3 +295,32 @@ def test_policy_history_and_diff(client):
 
     delete_response = client.delete(f"/api/v1/policies/{policy_id}")
     assert delete_response.status_code == 200
+
+
+def test_policy_group_rollout_preview(client):
+    """Rollout preview should evaluate proposed group states against test cases."""
+    create_case = client.post(
+        "/api/v1/test-cases",
+        json={
+            "name": "Rollout Preview Case",
+            "description": "policy rollout preview test",
+            "language": "python",
+            "code": "password = 'preview-secret'",
+            "tags": ["rollout", "preview"],
+        },
+    )
+    assert create_case.status_code == 200
+    case_id = create_case.json()["id"]
+
+    preview = client.post(
+        "/api/v1/policies/groups/rollout/preview",
+        json={"limit_cases": 5, "semantics": "auto", "solver_decision_mode": "auto"},
+    )
+    assert preview.status_code == 200
+    payload = preview.json()
+    assert "baseline" in payload and "proposed" in payload
+    assert "cases" in payload
+    assert "summary" in payload
+
+    delete_case = client.delete(f"/api/v1/test-cases/{case_id}")
+    assert delete_case.status_code == 200

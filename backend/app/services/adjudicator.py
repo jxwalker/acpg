@@ -108,7 +108,7 @@ class Adjudicator:
         
         # Get satisfied and unsatisfied rules
         kb = self.policy_compiler.get_knowledge_base()
-        all_policies = policy_ids if policy_ids else list(kb['policies'].keys())
+        all_policies = list(policy_ids) if policy_ids is not None else list(kb['policies'].keys())
         
         violated_rules = set(a.rule_id for a in accepted_violations)
         satisfied_rules = [r for r in all_policies if r not in violated_rules]
@@ -337,7 +337,7 @@ class Adjudicator:
         attacks: List[Attack] = []
         
         kb = self.policy_compiler.get_knowledge_base()
-        policies_to_check = policy_ids if policy_ids else list(kb['policies'].keys())
+        policies_to_check = list(policy_ids) if policy_ids is not None else list(kb['policies'].keys())
         
         # Track which rules have violations
         violation_map: Dict[str, List[Violation]] = {}

@@ -159,6 +159,7 @@ Policy CRUD/grouping:
 - `GET /policies/{policy_id}/audit/history`
 - `GET /policies/{policy_id}/audit/versions/{version}`
 - `GET /policies/{policy_id}/audit/diff?from_version=&to_version=`
+- `POST /policies/groups/rollout/preview` (simulate group state changes against test cases)
 
 ## Semantics and Compliance Model
 

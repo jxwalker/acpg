@@ -6341,6 +6341,32 @@ function PoliciesView({
     enabled: true,
     policies: [] as string[]
   });
+  const [showRolloutPreviewModal, setShowRolloutPreviewModal] = useState(false);
+  const [rolloutOverrides, setRolloutOverrides] = useState<Record<string, boolean>>({});
+  const [rolloutLimitCases, setRolloutLimitCases] = useState(20);
+  const [rolloutPreviewLoading, setRolloutPreviewLoading] = useState(false);
+  const [rolloutPreviewResult, setRolloutPreviewResult] = useState<{
+    baseline: { enabled_group_ids: string[]; policy_ids: string[]; policy_count: number };
+    proposed: { enabled_group_ids: string[]; policy_ids: string[]; policy_count: number };
+    evaluated_cases: number;
+    changed_cases_count: number;
+    summary: {
+      baseline_compliant: number;
+      baseline_non_compliant: number;
+      proposed_compliant: number;
+      proposed_non_compliant: number;
+    };
+    cases: Array<{
+      id: number;
+      name: string;
+      language: string;
+      baseline: { compliant: boolean; violations: number; unsatisfied_rules: string[] };
+      proposed: { compliant: boolean; violations: number; unsatisfied_rules: string[] };
+      newly_violated_rules: string[];
+      resolved_rules: string[];
+      changed: boolean;
+    }>;
+  } | null>(null);
   
   // Policy templates
   interface PolicyTemplate {
@@ -6476,6 +6502,49 @@ function PoliciesView({
         }
       })
       .catch(() => {});
+  };
+
+  const openRolloutPreview = () => {
+    const initial: Record<string, boolean> = {};
+    for (const group of policyGroups) {
+      initial[group.id] = group.enabled;
+    }
+    setRolloutOverrides(initial);
+    setRolloutPreviewResult(null);
+    setShowRolloutPreviewModal(true);
+  };
+
+  const toggleRolloutGroup = (groupId: string) => {
+    setRolloutOverrides(prev => {
+      const current = prev[groupId] ?? policyGroups.find(g => g.id === groupId)?.enabled ?? false;
+      return { ...prev, [groupId]: !current };
+    });
+  };
+
+  const runRolloutPreview = async () => {
+    setRolloutPreviewLoading(true);
+    try {
+      const response = await fetch('/api/v1/policies/groups/rollout/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proposed_group_states: rolloutOverrides,
+          limit_cases: rolloutLimitCases,
+          semantics: 'auto',
+          solver_decision_mode: 'auto',
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        alert(data.detail || 'Rollout preview failed');
+        return;
+      }
+      setRolloutPreviewResult(data);
+    } catch (e) {
+      alert('Rollout preview failed');
+    } finally {
+      setRolloutPreviewLoading(false);
+    }
   };
 
   const loadPolicyHistory = async (policyId: string) => {
@@ -6841,6 +6910,14 @@ function PoliciesView({
                   className="hidden"
                 />
                 <button
+                  onClick={openRolloutPreview}
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl font-medium transition-all"
+                  title="Preview rollout impact before changing groups"
+                >
+                  <Eye className="w-5 h-5" />
+                  Preview Rollout
+                </button>
+                <button
                   onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
                 >
@@ -7093,6 +7170,177 @@ function PoliciesView({
                   <p>No templates available</p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rollout Preview Modal */}
+      {showRolloutPreviewModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-semibold text-white">Policy Rollout Preview</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Simulate group state changes and evaluate impact on stored test cases before rollout.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowRolloutPreviewModal(false);
+                  setRolloutPreviewResult(null);
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-white uppercase tracking-wider">Proposed Group States</h4>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-400">Cases</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={200}
+                        value={rolloutLimitCases}
+                        onChange={(e) => setRolloutLimitCases(Math.max(1, Math.min(200, Number(e.target.value) || 20)))}
+                        className="w-20 px-2 py-1 bg-slate-800/50 border border-white/10 rounded text-white text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="max-h-72 overflow-auto space-y-2 pr-1">
+                    {policyGroups.map(group => {
+                      const proposedEnabled = rolloutOverrides[group.id] ?? group.enabled;
+                      return (
+                        <div
+                          key={`rollout-${group.id}`}
+                          className="flex items-center justify-between p-3 rounded-lg border border-white/10 bg-slate-800/40"
+                        >
+                          <div>
+                            <div className="font-medium text-white text-sm">{group.name}</div>
+                            <div className="text-xs text-slate-400 font-mono">{group.id}</div>
+                          </div>
+                          <button
+                            onClick={() => toggleRolloutGroup(group.id)}
+                            className={`w-12 h-7 rounded-full transition-all relative ${
+                              proposedEnabled ? 'bg-emerald-500' : 'bg-slate-700'
+                            }`}
+                            title={`Proposed: ${proposedEnabled ? 'enabled' : 'disabled'}`}
+                          >
+                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${
+                              proposedEnabled ? 'left-6' : 'left-1'
+                            }`} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={runRolloutPreview}
+                    disabled={rolloutPreviewLoading}
+                    className="w-full px-4 py-3 bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-medium transition-all"
+                  >
+                    {rolloutPreviewLoading ? 'Evaluating...' : 'Run Preview'}
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {!rolloutPreviewResult ? (
+                    <div className="h-full min-h-[220px] rounded-xl border border-white/10 bg-slate-800/30 p-4 text-sm text-slate-500">
+                      Preview results will appear here.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                          <div className="text-xs text-emerald-300 uppercase tracking-wider">Baseline Compliant</div>
+                          <div className="text-2xl font-semibold text-emerald-200">
+                            {rolloutPreviewResult.summary.baseline_compliant}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                          <div className="text-xs text-cyan-300 uppercase tracking-wider">Proposed Compliant</div>
+                          <div className="text-2xl font-semibold text-cyan-200">
+                            {rolloutPreviewResult.summary.proposed_compliant}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                          <div className="text-xs text-amber-300 uppercase tracking-wider">Cases Evaluated</div>
+                          <div className="text-2xl font-semibold text-amber-200">
+                            {rolloutPreviewResult.evaluated_cases}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/20">
+                          <div className="text-xs text-violet-300 uppercase tracking-wider">Cases Changed</div>
+                          <div className="text-2xl font-semibold text-violet-200">
+                            {rolloutPreviewResult.changed_cases_count}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Baseline policies: <span className="font-mono">{rolloutPreviewResult.baseline.policy_count}</span>
+                        {' • '}
+                        Proposed policies: <span className="font-mono">{rolloutPreviewResult.proposed.policy_count}</span>
+                      </div>
+                      <div className="max-h-72 overflow-auto border border-white/10 rounded-lg">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-900/50 text-slate-400 uppercase tracking-wider">
+                            <tr>
+                              <th className="text-left px-3 py-2">Case</th>
+                              <th className="text-left px-3 py-2">Baseline</th>
+                              <th className="text-left px-3 py-2">Proposed</th>
+                              <th className="text-left px-3 py-2">Delta</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rolloutPreviewResult.cases.map(item => (
+                              <tr key={`rollout-case-${item.id}`} className="border-t border-white/5">
+                                <td className="px-3 py-2">
+                                  <div className="text-slate-200 font-medium">{item.name}</div>
+                                  <div className="text-slate-500 font-mono">{item.language}</div>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className={item.baseline.compliant ? 'text-emerald-300' : 'text-red-300'}>
+                                    {item.baseline.compliant ? 'Compliant' : 'Non-compliant'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className={item.proposed.compliant ? 'text-emerald-300' : 'text-red-300'}>
+                                    {item.proposed.compliant ? 'Compliant' : 'Non-compliant'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2">
+                                  {item.changed ? (
+                                    <div className="space-y-1">
+                                      {item.newly_violated_rules.length > 0 && (
+                                        <div className="text-red-300">
+                                          + {item.newly_violated_rules.join(', ')}
+                                        </div>
+                                      )}
+                                      {item.resolved_rules.length > 0 && (
+                                        <div className="text-emerald-300">
+                                          - {item.resolved_rules.join(', ')}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-500">No change</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

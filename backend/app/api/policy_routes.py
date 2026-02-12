@@ -1,6 +1,6 @@
 """Policy CRUD API Routes - Create, Read, Update, Delete policies."""
 import json
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Body, Depends, Request, Query
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..core.database import get_db, PolicyHistoryStore
+from ..core.database import get_db, PolicyHistoryStore, TestCaseStore
 from ..services.policy_compiler import get_policy_compiler
 
 
@@ -686,6 +686,23 @@ class PolicyGroupInput(BaseModel):
     policies: List[str] = []
 
 
+class RolloutPreviewRequest(BaseModel):
+    """Request model for policy group rollout preview."""
+
+    proposed_group_states: Optional[Dict[str, bool]] = Field(
+        default=None,
+        description="Proposed enabled/disabled state per group id",
+    )
+    test_case_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Optional explicit DB test case ids to evaluate",
+    )
+    include_inactive_cases: bool = Field(False, description="Include inactive test cases")
+    limit_cases: int = Field(20, ge=1, le=200, description="Max number of test cases to evaluate")
+    semantics: str = Field("auto", description="Adjudication semantics")
+    solver_decision_mode: str = Field("auto", description="Solver decision mode")
+
+
 def load_policy_groups() -> dict:
     """Load policy groups from file."""
     if POLICY_GROUPS_FILE.exists():
@@ -710,6 +727,27 @@ def get_enabled_policy_ids() -> List[str]:
             enabled_policies.update(group.get('policies', []))
     
     return list(enabled_policies)
+
+
+def _enabled_policy_ids_from_groups(
+    groups_data: dict,
+    overrides: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
+    """Resolve enabled groups and policy IDs, optionally with state overrides."""
+    overrides = overrides or {}
+    enabled_group_ids: List[str] = []
+    enabled_policies = set()
+    for group in groups_data.get("groups", []):
+        group_id = group.get("id")
+        current = bool(group.get("enabled", True))
+        proposed = overrides.get(group_id, current)
+        if proposed:
+            enabled_group_ids.append(group_id)
+            enabled_policies.update(group.get("policies", []))
+    return {
+        "enabled_group_ids": enabled_group_ids,
+        "policy_ids": sorted(enabled_policies),
+    }
 
 
 @groups_router.get("/", response_model=dict)
@@ -946,6 +984,155 @@ async def get_enabled_policies():
         "enabled_policy_ids": enabled_ids,
         "policies": enabled_policies,
         "count": len(enabled_policies)
+    }
+
+
+@groups_router.post("/rollout/preview", response_model=dict)
+async def preview_policy_group_rollout(
+    request: RolloutPreviewRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Preview impact of proposed policy-group states against stored test cases.
+
+    This endpoint does not persist any group changes. It is intended for safe rollout
+    planning in regulated regression workflows.
+    """
+    from ..services import get_prosecutor, get_adjudicator
+
+    groups_data = load_policy_groups()
+    baseline = _enabled_policy_ids_from_groups(groups_data)
+    proposed = _enabled_policy_ids_from_groups(groups_data, request.proposed_group_states)
+
+    store = TestCaseStore(db)
+    if request.test_case_ids:
+        selected = []
+        for case_id in request.test_case_ids:
+            case = store.get_case(case_id)
+            if case is not None and (request.include_inactive_cases or case.is_active):
+                selected.append(case)
+    else:
+        selected = store.list_cases(include_inactive=request.include_inactive_cases)[: request.limit_cases]
+
+    prosecutor = get_prosecutor()
+    adjudicator = get_adjudicator()
+
+    case_results = []
+    baseline_compliant = 0
+    proposed_compliant = 0
+    changed_cases_count = 0
+
+    for case in selected:
+        # Baseline evaluation
+        if baseline["policy_ids"]:
+            baseline_analysis = prosecutor.analyze(
+                code=case.code,
+                language=case.language,
+                policy_ids=baseline["policy_ids"],
+            )
+            baseline_adj = adjudicator.adjudicate(
+                baseline_analysis,
+                baseline["policy_ids"],
+                semantics=request.semantics,
+                solver_decision_mode=request.solver_decision_mode,
+            )
+        else:
+            baseline_analysis = prosecutor.analyze(
+                code=case.code,
+                language=case.language,
+                policy_ids=[],
+            )
+            baseline_adj = adjudicator.adjudicate(
+                baseline_analysis,
+                [],
+                semantics=request.semantics,
+                solver_decision_mode=request.solver_decision_mode,
+            )
+
+        # Proposed evaluation
+        if proposed["policy_ids"]:
+            proposed_analysis = prosecutor.analyze(
+                code=case.code,
+                language=case.language,
+                policy_ids=proposed["policy_ids"],
+            )
+            proposed_adj = adjudicator.adjudicate(
+                proposed_analysis,
+                proposed["policy_ids"],
+                semantics=request.semantics,
+                solver_decision_mode=request.solver_decision_mode,
+            )
+        else:
+            proposed_analysis = prosecutor.analyze(
+                code=case.code,
+                language=case.language,
+                policy_ids=[],
+            )
+            proposed_adj = adjudicator.adjudicate(
+                proposed_analysis,
+                [],
+                semantics=request.semantics,
+                solver_decision_mode=request.solver_decision_mode,
+            )
+
+        baseline_unsat = sorted(set(baseline_adj.unsatisfied_rules))
+        proposed_unsat = sorted(set(proposed_adj.unsatisfied_rules))
+        newly_violated = sorted(set(proposed_unsat) - set(baseline_unsat))
+        resolved = sorted(set(baseline_unsat) - set(proposed_unsat))
+        changed = (
+            baseline_adj.compliant != proposed_adj.compliant
+            or baseline_unsat != proposed_unsat
+        )
+
+        if baseline_adj.compliant:
+            baseline_compliant += 1
+        if proposed_adj.compliant:
+            proposed_compliant += 1
+        if changed:
+            changed_cases_count += 1
+
+        case_results.append(
+            {
+                "id": case.id,
+                "name": case.name,
+                "language": case.language,
+                "baseline": {
+                    "compliant": baseline_adj.compliant,
+                    "violations": len(baseline_analysis.violations),
+                    "unsatisfied_rules": baseline_unsat,
+                },
+                "proposed": {
+                    "compliant": proposed_adj.compliant,
+                    "violations": len(proposed_analysis.violations),
+                    "unsatisfied_rules": proposed_unsat,
+                },
+                "newly_violated_rules": newly_violated,
+                "resolved_rules": resolved,
+                "changed": changed,
+            }
+        )
+
+    evaluated = len(case_results)
+    return {
+        "baseline": {
+            "enabled_group_ids": baseline["enabled_group_ids"],
+            "policy_ids": baseline["policy_ids"],
+            "policy_count": len(baseline["policy_ids"]),
+        },
+        "proposed": {
+            "enabled_group_ids": proposed["enabled_group_ids"],
+            "policy_ids": proposed["policy_ids"],
+            "policy_count": len(proposed["policy_ids"]),
+        },
+        "evaluated_cases": evaluated,
+        "changed_cases_count": changed_cases_count,
+        "summary": {
+            "baseline_compliant": baseline_compliant,
+            "baseline_non_compliant": evaluated - baseline_compliant,
+            "proposed_compliant": proposed_compliant,
+            "proposed_non_compliant": evaluated - proposed_compliant,
+        },
+        "cases": case_results,
     }
 
 
