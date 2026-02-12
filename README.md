@@ -47,6 +47,7 @@ Core components:
 - Dynamic replay artifact indexing endpoint for audit/CI workflows
 - Proof argumentation includes explicit runtime/dynamic evidence-channel narratives
 - Compliance history trend analytics for audit dashboards
+- CI integration publishes compliance snapshots (analysis/adjudication/trends) as artifacts
 - Policy lifecycle audit support (version history and diff endpoints + UI)
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
