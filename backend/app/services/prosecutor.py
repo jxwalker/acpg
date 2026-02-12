@@ -8,6 +8,7 @@ from .policy_compiler import get_policy_compiler
 from .language_detector import get_language_detector
 from .tool_executor import get_tool_executor
 from .tool_mapper import get_tool_mapper
+from .dynamic_analyzer import get_dynamic_analyzer
 from .parsers import BanditParser, ESLintParser, SarifParser
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class Prosecutor:
         self.language_detector = get_language_detector()
         self.tool_executor = get_tool_executor()
         self.tool_mapper = get_tool_mapper()
+        self.dynamic_analyzer = get_dynamic_analyzer()
         
         # Parser registry
         self.parsers = {
@@ -61,8 +63,10 @@ class Prosecutor:
         
         all_violations = []
         tool_execution_info = {}
+        dynamic_analysis_result = None
         static_tools_seconds = 0.0
         policy_checks_seconds = 0.0
+        dynamic_analysis_seconds = 0.0
         dedupe_seconds = 0.0
         
         # Run static analysis tools if enabled
@@ -77,6 +81,13 @@ class Prosecutor:
         policy_violations = self.run_policy_checks(code, language, policy_ids)
         policy_checks_seconds = time.perf_counter() - policy_started
         all_violations.extend(policy_violations)
+
+        # Run sandboxed dynamic analysis (optional, Python only)
+        dynamic_started = time.perf_counter()
+        dynamic_analysis_result = self.run_dynamic_analysis(code, language, artifact_id)
+        dynamic_analysis_seconds = time.perf_counter() - dynamic_started
+        if dynamic_analysis_result and dynamic_analysis_result.violations:
+            all_violations.extend(dynamic_analysis_result.violations)
         
         # Deduplicate violations (same rule + same line + same detector)
         dedupe_started = time.perf_counter()
@@ -94,10 +105,12 @@ class Prosecutor:
             artifact_id=artifact_id,
             violations=unique_violations,
             tool_execution=tool_execution_info if tool_execution_info else None,
+            dynamic_analysis=dynamic_analysis_result,
             performance={
                 "total_seconds": round(total_seconds, 6),
                 "static_tools_seconds": round(static_tools_seconds, 6),
                 "policy_checks_seconds": round(policy_checks_seconds, 6),
+                "dynamic_analysis_seconds": round(dynamic_analysis_seconds, 6),
                 "dedupe_seconds": round(dedupe_seconds, 6),
                 "tool_count": len(tool_execution_info),
             },
@@ -320,23 +333,11 @@ class Prosecutor:
         """
         return self.policy_compiler.run_all_checks(code, language, policy_ids)
     
-    def run_hypothesis_tests(self, code: str, function_name: str) -> List[Violation]:
-        """
-        Run Hypothesis property-based tests (optional dynamic testing).
-        
-        This is a placeholder for future implementation of fuzzing/property testing.
-        """
+    def run_dynamic_analysis(self, code: str, language: str, artifact_id: str):
+        """Run constrained dynamic analysis and return detailed artifacts."""
         if not settings.ENABLE_DYNAMIC_TESTING:
-            return []
-        
-        # TODO: Implement Hypothesis-based dynamic testing
-        # This would:
-        # 1. Parse the code to find function signatures
-        # 2. Generate Hypothesis strategies for input types
-        # 3. Run property tests to find counterexamples
-        # 4. Report any failures as violations
-        
-        return []
+            return None
+        return self.dynamic_analyzer.analyze(code=code, language=language, artifact_id=artifact_id)
     
     def synthesize_counterexamples(self, code: str, 
                                     violations: List[Violation]) -> Dict[str, Any]:

@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4"
     OPENAI_TEMPERATURE: float = 0.3
     OPENAI_MAX_TOKENS: int = 2000
-    
+    SOLVER_DECISION_MODE: str = "auto"  # auto|skeptical|credulous; auto defaults to skeptical for compliance
+
     # Policy Configuration
     POLICIES_DIR: Path = Path(os.environ.get("POLICIES_DIR", Path(__file__).parent.parent.parent.parent / "policies"))
     DEFAULT_POLICIES_FILE: str = "default_policies.json"
@@ -25,9 +26,18 @@ class Settings(BaseSettings):
     # Compliance Configuration
     MAX_FIX_ITERATIONS: int = 3
     ENABLE_DYNAMIC_TESTING: bool = False  # Hypothesis testing (optional)
+    DYNAMIC_SANDBOX_TIMEOUT_SECONDS: int = 3
+    DYNAMIC_SANDBOX_MAX_OUTPUT_BYTES: int = 8192
+    DYNAMIC_SANDBOX_MEMORY_MB: int = 256
     ENABLE_RUNTIME_GUARDS: bool = True
     RUNTIME_TOOL_ALLOWLIST: List[str] = []
     RUNTIME_TOOL_DENYLIST: List[str] = []
+    RUNTIME_POLICIES_FILE: Path = Path(
+        os.environ.get(
+            "RUNTIME_POLICIES_FILE",
+            Path(__file__).parent.parent.parent.parent / "policies" / "runtime_policies.json",
+        )
+    )
     
     # Crypto Configuration
     SIGNATURE_ALGORITHM: str = "ECDSA-SHA256"

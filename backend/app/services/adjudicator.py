@@ -13,6 +13,7 @@ from ..models.schemas import (
     Argument, Attack, ArgumentationGraph, AdjudicationResult,
     Violation, AnalysisResult
 )
+from ..core.config import settings
 from .policy_compiler import get_policy_compiler
 from .tool_reliability import get_reliability_checker
 from .argumentation_asp import compute_stable_extensions, compute_preferred_extensions
@@ -57,6 +58,7 @@ class Adjudicator:
         analysis: AnalysisResult,
         policy_ids: Optional[List[str]] = None,
         semantics: str = "grounded",
+        solver_decision_mode: Optional[str] = None,
     ) -> AdjudicationResult:
         """
         Make a compliance decision based on analysis results.
@@ -76,6 +78,7 @@ class Adjudicator:
                 f"Unsupported semantics '{requested_semantics}'. "
                 "Supported: grounded, auto, stable, preferred."
             )
+        normalized_solver_mode = self._normalize_solver_decision_mode(solver_decision_mode)
 
         # Build argumentation graph
         graph = self.build_argumentation_graph(analysis.violations, policy_ids)
@@ -95,6 +98,7 @@ class Adjudicator:
             accepted, extension_details, effective_semantics = self._compute_solver_semantics_decision(
                 graph=graph,
                 semantics=requested_semantics,
+                solver_decision_mode=normalized_solver_mode,
             )
             secondary_semantics = extension_details
 
@@ -155,6 +159,7 @@ class Adjudicator:
         return AdjudicationResult(
             semantics=effective_semantics,
             requested_semantics=requested_semantics,
+            solver_decision_mode=normalized_solver_mode if requested_semantics in {"stable", "preferred"} else None,
             secondary_semantics=secondary_semantics,
             timing_seconds=adjudication_elapsed,
             compliant=len(accepted_violations) == 0,
@@ -163,11 +168,21 @@ class Adjudicator:
             reasoning=reasoning
         )
 
+    def _normalize_solver_decision_mode(self, mode: Optional[str]) -> str:
+        requested = (mode or settings.SOLVER_DECISION_MODE or "auto").strip().lower()
+        if requested not in {"auto", "skeptical", "credulous"}:
+            return "skeptical"
+        # In regulated compliance workflows, AUTO is intentionally conservative.
+        if requested == "auto":
+            return "skeptical"
+        return requested
+
     def _compute_solver_semantics_decision(
         self,
         *,
         graph: ArgumentationGraph,
         semantics: str,
+        solver_decision_mode: str = "skeptical",
     ) -> Tuple[Set[str], Dict[str, Any], str]:
         """Compute solver-backed semantics with conservative fallback behavior."""
         clingo_path = shutil.which("clingo")
@@ -177,20 +192,9 @@ class Adjudicator:
                 {
                     "enabled": False,
                     "requested_semantics": semantics,
+                    "decision_mode": solver_decision_mode,
                     "effective_semantics": "grounded",
                     "fallback_reason": "clingo not available",
-                },
-                "grounded",
-            )
-
-        if getattr(graph, "set_attacks", None):
-            return (
-                self.compute_grounded_extension(graph),
-                {
-                    "enabled": False,
-                    "requested_semantics": semantics,
-                    "effective_semantics": "grounded",
-                    "fallback_reason": "solver semantics for joint attacks are not implemented",
                 },
                 "grounded",
             )
@@ -207,16 +211,16 @@ class Adjudicator:
             if not extensions:
                 accepted: Set[str] = set()
             else:
-                # Conservative for regulated use: skeptical acceptance (in all extensions).
-                accepted = set(extensions[0])
-                for ext in extensions[1:]:
-                    accepted.intersection_update(set(ext))
+                accepted = self._select_arguments_by_solver_mode(
+                    extensions=extensions,
+                    decision_mode=solver_decision_mode,
+                )
 
             details: Dict[str, Any] = {
                 "enabled": True,
                 "requested_semantics": semantics,
                 "effective_semantics": semantics,
-                "decision_mode": "skeptical",
+                "decision_mode": solver_decision_mode,
                 "clingo_path": clingo_path,
                 "extension_count": len(extensions),
                 "extensions": extensions,
@@ -235,12 +239,35 @@ class Adjudicator:
                 {
                     "enabled": False,
                     "requested_semantics": semantics,
+                    "decision_mode": solver_decision_mode,
                     "effective_semantics": "grounded",
                     "fallback_reason": "solver execution failed",
                     "error": str(e),
                 },
                 "grounded",
             )
+
+    def _select_arguments_by_solver_mode(
+        self,
+        *,
+        extensions: List[List[str]],
+        decision_mode: str,
+    ) -> Set[str]:
+        """Select accepted arguments from extensions using deterministic mode."""
+        if not extensions:
+            return set()
+
+        if decision_mode == "credulous":
+            union: Set[str] = set()
+            for ext in extensions:
+                union.update(ext)
+            return union
+
+        # skeptical default: intersection across extensions
+        intersection = set(extensions[0])
+        for ext in extensions[1:]:
+            intersection.intersection_update(set(ext))
+        return intersection
 
     def _auto_secondary_semantics(self, graph: ArgumentationGraph) -> Dict[str, Any]:
         """Optional cross-checks under other semantics (preferred/stable).
@@ -703,13 +730,18 @@ class Adjudicator:
                 }
             })
         else:
+            mode_used = (
+                (extension_details or {}).get("decision_mode")
+                if isinstance(extension_details, dict)
+                else None
+            ) or "skeptical"
             trace.append({
                 "step": 4,
                 "phase": "solver_extension",
                 "title": f"{semantics.title()} Semantics Computation",
                 "description": (
                     f"Computed {semantics} extensions using ASP/clingo; "
-                    "decision uses skeptical acceptance for conservative compliance."
+                    f"decision uses {mode_used} acceptance mode."
                 ),
                 "result": {
                     "accepted": list(accepted),

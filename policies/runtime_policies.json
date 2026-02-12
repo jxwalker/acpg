@@ -1,0 +1,38 @@
+{
+  "policies": [
+    {
+      "id": "RUNTIME-TOOL-REQUIRE-APPROVAL-INSTALL-CMDS",
+      "description": "Require explicit human approval before running package installation commands.",
+      "event_type": "tool",
+      "action": "require_approval",
+      "severity": "high",
+      "priority": 500,
+      "enabled": true,
+      "conditions": {
+        "command_contains": [
+          "pip install",
+          "uv pip install",
+          "npm install",
+          "pnpm add",
+          "poetry add"
+        ]
+      },
+      "message": "Runtime policy requires approval for package installation commands."
+    },
+    {
+      "id": "RUNTIME-TOOL-MONITOR-SAFETY",
+      "description": "Allow Safety scans but keep them explicitly monitored in runtime evidence.",
+      "event_type": "tool",
+      "action": "allow_with_monitoring",
+      "severity": "medium",
+      "priority": 100,
+      "enabled": true,
+      "conditions": {
+        "tool_names": [
+          "safety"
+        ]
+      },
+      "message": "Runtime policy enabled monitoring for safety tool executions."
+    }
+  ]
+}

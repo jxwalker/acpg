@@ -14,7 +14,7 @@ This repository is active and production-oriented for local and CI usage.
 
 Current baseline:
 - Policies loaded: **39** (default + OWASP + NIST + JS/TS)
-- Test status: **76 passed, 1 skipped**
+- Test status: **96 passed, 1 skipped**
 - LLM strategy: **Responses API first**, fallback to Chat Completions when needed
 - Decision semantics: **AUTO -> grounded** (with optional secondary solver evidence)
 - Runtime compliance: **LangGraph runtime events included in proof evidence**
@@ -33,10 +33,15 @@ Core components:
 - Multi-provider LLM management (`openai`, compatible APIs, `anthropic`)
 - Argumentation semantics support (`grounded`, `auto`)
 - Solver-backed semantics options (`stable`, `preferred`) with grounded fallback when unavailable
+- Deterministic solver decision mode (`auto` -> skeptical, `skeptical`, `credulous`)
 - Joint attacks (Nielsen-Parsons style) in grounded adjudication
+- Joint attacks supported in solver-backed stable/preferred semantics
 - Optional stable/preferred secondary semantics via ASP/clingo
 - Unified test-code library (file samples + DB-backed CRUD test cases)
 - Runtime guard decisions converted into formal violations
+- Runtime policy compiler (tool/network/filesystem) with graded actions
+- Runtime policy evidence in proof bundles (`runtime_policy_enforcement`, `runtime_policy_monitoring`)
+- Sandboxed dynamic analysis (Python) with deterministic replay artifacts in proofs
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
 - Analysis/enforcement performance telemetry in API responses and UI status cards
@@ -110,9 +115,9 @@ Base prefix: `/api/v1`
 
 Core:
 - `POST /analyze`
-- `POST /adjudicate`
+- `POST /adjudicate` (`solver_mode=auto|skeptical|credulous`)
 - `POST /enforce`
-- `POST /proof/generate`
+- `POST /proof/generate` (`solver_mode=auto|skeptical|credulous`)
 - `POST /proof/verify`
 
 LangGraph:
@@ -125,6 +130,11 @@ LLM management:
 - `POST /llm/switch`
 - `POST /llm/test`
 
+Runtime policy compiler:
+- `GET /runtime/policies`
+- `POST /runtime/policies/reload`
+- `POST /runtime/policies/evaluate`
+
 Test case management:
 - `GET /test-cases` (unified file + DB list)
 - `GET /test-cases/{id}` (`db:<id>` or `file:<filename>`)
@@ -134,6 +144,13 @@ Test case management:
 
 `POST /enforce` accepts:
 - `stop_on_stagnation` (default `true`) to stop early when iterations do not reduce violations
+- `solver_decision_mode` (`auto`, `skeptical`, `credulous`) for stable/preferred semantics
+
+Dynamic analysis:
+- Controlled by `ENABLE_DYNAMIC_TESTING=true`
+- Uses sandboxed subprocess execution with timeout/resource limits
+- Emits dynamic violations (`DYN-EXEC-TIMEOUT`, `DYN-EXEC-EXCEPTION`, `DYN-EXEC-CRASH`)
+- Includes deterministic replay evidence (`dynamic_replay_artifact`) in proof bundles
 
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`
@@ -142,9 +159,11 @@ Policy CRUD/grouping:
 
 - `grounded`: deterministic skeptical semantics for compliance decisions
 - `auto`: uses `grounded` for decisions, optionally computes stable/preferred as secondary evidence
-- `stable`: solver-backed (clingo) skeptical decision across stable extensions; falls back to grounded if unavailable
-- `preferred`: solver-backed (clingo) skeptical decision across preferred extensions; falls back to grounded if unavailable
+- `stable`: solver-backed (clingo) stable-extension decision with configurable skeptical/credulous mode; falls back to grounded if unavailable
+- `preferred`: solver-backed (clingo) preferred-extension decision with configurable skeptical/credulous mode; falls back to grounded if unavailable
+- solver decision mode is configurable via `solver_mode` / `solver_decision_mode`; `auto` defaults to skeptical for regulated compliance
 - Runtime guard violations (for denied tool actions) are first-class violations and participate in adjudication
+- `require_approval` is treated as non-compliant until approval is supplied; `allow_with_monitoring` is allowed and captured as runtime evidence
 
 ## Documentation Map
 

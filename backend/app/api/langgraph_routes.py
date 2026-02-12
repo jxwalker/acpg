@@ -14,6 +14,7 @@ class GraphEnforceRequest(BaseModel):
     max_iterations: int = 3
     policies: Optional[List[str]] = None
     semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    solver_decision_mode: Optional[str] = None  # auto, skeptical, credulous
 
 
 class AgentMessageResponse(BaseModel):
@@ -34,6 +35,7 @@ class GraphEnforceResponse(BaseModel):
     satisfied_rules: List[str]
     unsatisfied_rules: List[str]
     semantics: Optional[str] = None
+    solver_decision_mode: Optional[str] = None
     secondary_semantics: Optional[dict] = None
     messages: List[AgentMessageResponse]
     runtime_events: Optional[List[dict]] = None
@@ -67,6 +69,7 @@ async def graph_enforce(request: GraphEnforceRequest):
             policy_ids=request.policies,
             max_iterations=request.max_iterations,
             semantics=request.semantics or "auto",
+            solver_decision_mode=request.solver_decision_mode or "auto",
         )
         
         end_time = datetime.utcnow()
@@ -81,6 +84,7 @@ async def graph_enforce(request: GraphEnforceRequest):
             satisfied_rules=final_state["satisfied_rules"],
             unsatisfied_rules=final_state["unsatisfied_rules"],
             semantics=final_state.get("semantics"),
+            solver_decision_mode=final_state.get("solver_decision_mode"),
             secondary_semantics=final_state.get("secondary_semantics"),
             messages=[
                 AgentMessageResponse(**msg) 
@@ -136,6 +140,7 @@ class StreamingEnforceRequest(BaseModel):
     max_iterations: int = 3
     policies: Optional[List[str]] = None
     semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    solver_decision_mode: Optional[str] = None  # auto, skeptical, credulous
 
 
 @router.post("/enforce/stream")
@@ -166,6 +171,7 @@ async def graph_enforce_stream(request: StreamingEnforceRequest):
                 policy_ids=request.policies,
                 max_iterations=request.max_iterations,
                 semantics=request.semantics or "auto",
+                solver_decision_mode=request.solver_decision_mode or "auto",
             )
             
             # Stream state updates
@@ -184,6 +190,7 @@ async def graph_enforce_stream(request: StreamingEnforceRequest):
                         "compliant": node_output.get("compliant"),
                         "iteration": node_output.get("iteration"),
                         "semantics": node_output.get("semantics"),
+                        "solver_decision_mode": node_output.get("solver_decision_mode"),
                     }
                     yield f"event: state_update\ndata: {json.dumps(update)}\n\n"
                     

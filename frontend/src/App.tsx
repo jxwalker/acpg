@@ -2869,6 +2869,9 @@ function ComplianceStatus({
             <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-400 flex flex-wrap gap-3">
               <span>Tools: {analysis.performance.static_tools_seconds.toFixed(2)}s</span>
               <span>Policies: {analysis.performance.policy_checks_seconds.toFixed(2)}s</span>
+              {analysis.performance.dynamic_analysis_seconds != null && (
+                <span>Dynamic: {analysis.performance.dynamic_analysis_seconds.toFixed(2)}s</span>
+              )}
               {adjudication.timing_seconds != null && (
                 <span>Adjudication: {adjudication.timing_seconds.toFixed(2)}s</span>
               )}

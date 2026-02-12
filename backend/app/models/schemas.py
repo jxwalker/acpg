@@ -58,9 +58,42 @@ class AnalysisPerformance(BaseModel):
     total_seconds: float
     static_tools_seconds: float = 0.0
     policy_checks_seconds: float = 0.0
+    dynamic_analysis_seconds: float = 0.0
     dedupe_seconds: float = 0.0
     adjudication_seconds: Optional[float] = None
     tool_count: int = 0
+
+
+class DynamicReplayArtifact(BaseModel):
+    """Deterministic replay metadata for dynamic analysis execution."""
+
+    runner: str
+    command: List[str]
+    timeout_seconds: int
+    deterministic_fingerprint: str
+    language: str
+
+
+class DynamicExecutionArtifact(BaseModel):
+    """Output from one sandboxed dynamic analysis execution."""
+
+    artifact_id: str
+    duration_seconds: float
+    return_code: Optional[int] = None
+    timed_out: bool = False
+    stdout: str = ""
+    stderr: str = ""
+    replay: DynamicReplayArtifact
+
+
+class DynamicAnalysisResult(BaseModel):
+    """Dynamic analysis summary and replay artifacts."""
+
+    executed: bool
+    runner: str
+    timeout_seconds: int
+    artifacts: List[DynamicExecutionArtifact] = Field(default_factory=list)
+    violations: List[Violation] = Field(default_factory=list)
 
 
 class AnalysisResult(BaseModel):
@@ -68,6 +101,7 @@ class AnalysisResult(BaseModel):
     artifact_id: str
     violations: List[Violation]
     tool_execution: Optional[Dict[str, ToolExecutionInfo]] = None  # Tool execution metadata
+    dynamic_analysis: Optional[DynamicAnalysisResult] = None
     performance: Optional[AnalysisPerformance] = None
 
 
@@ -123,6 +157,7 @@ class AdjudicationResult(BaseModel):
     """Result of adjudication."""
     semantics: Optional[str] = None  # grounded, stable, preferred, auto
     requested_semantics: Optional[str] = None
+    solver_decision_mode: Optional[str] = None  # skeptical|credulous
     secondary_semantics: Optional[Dict[str, Any]] = None  # Optional solver-backed cross-checks
     timing_seconds: Optional[float] = None
     compliant: bool
@@ -186,6 +221,7 @@ class EnforceRequest(BaseModel):
     max_iterations: int = 3
     policies: Optional[List[str]] = None
     semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    solver_decision_mode: Optional[str] = None  # auto, skeptical, credulous
     stop_on_stagnation: bool = True
 
 

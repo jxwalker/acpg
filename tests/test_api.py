@@ -38,6 +38,33 @@ def test_health_endpoint(client):
     assert data["status"] == "healthy"
 
 
+def test_runtime_policies_list_and_evaluate(client):
+    """Runtime policy endpoints should list and evaluate deterministic decisions."""
+    list_response = client.get("/api/v1/runtime/policies")
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert "rules" in listed
+    assert "count" in listed
+
+    eval_response = client.post(
+        "/api/v1/runtime/policies/evaluate",
+        json={
+            "event_type": "tool",
+            "tool_name": "pip",
+            "command": ["pip", "install", "requests"],
+            "language": "python",
+        },
+    )
+    assert eval_response.status_code == 200
+    evaluated = eval_response.json()
+    assert evaluated["decision"]["action"] in {
+        "allow",
+        "deny",
+        "require_approval",
+        "allow_with_monitoring",
+    }
+
+
 def test_list_policies(client):
     """Test listing all policies."""
     response = client.get("/api/v1/policies")
@@ -111,7 +138,7 @@ def test_adjudicate(client):
     analysis = analyze_response.json()
     
     # Then adjudicate
-    response = client.post("/api/v1/adjudicate", json=analysis)
+    response = client.post("/api/v1/adjudicate?solver_mode=skeptical", json=analysis)
     assert response.status_code == 200
     data = response.json()
     assert "compliant" in data

@@ -18,7 +18,7 @@ from ..models.schemas import (
 )
 from ..services import (
     get_policy_compiler, get_prosecutor, get_generator,
-    get_adjudicator, get_proof_assembler
+    get_adjudicator, get_proof_assembler, get_runtime_policy_compiler
 )
 from ..core.static_analyzers import get_analyzer_config
 from ..core.tool_rules_registry import get_tool_rules, get_all_tool_rules, get_tool_rule
@@ -176,6 +176,103 @@ async def get_info():
         "version": "1.0.0",
         "model": settings.OPENAI_MODEL,
         "max_fix_iterations": settings.MAX_FIX_ITERATIONS
+    }
+
+
+class RuntimePolicyEvaluateRequest(BaseModel):
+    """Ad-hoc runtime policy evaluation request."""
+
+    event_type: Literal["tool", "network", "filesystem"]
+    tool_name: Optional[str] = None
+    command: Optional[List[str]] = None
+    language: Optional[str] = None
+    host: Optional[str] = None
+    method: Optional[str] = "GET"
+    protocol: Optional[str] = "https"
+    path: Optional[str] = None
+    operation: Optional[str] = None
+
+
+@router.get("/runtime/policies")
+async def list_runtime_policies():
+    """List compiled runtime policies in evaluation order."""
+    compiler = get_runtime_policy_compiler()
+    compiler.reload()
+    rules = [
+        {
+            "id": rule.id,
+            "description": rule.description,
+            "event_type": rule.event_type,
+            "action": rule.action,
+            "severity": rule.severity,
+            "priority": rule.priority,
+            "enabled": rule.enabled,
+            "conditions": rule.conditions,
+            "message": rule.message,
+            "metadata": rule.metadata,
+        }
+        for rule in compiler.list_rules()
+    ]
+    return {
+        "policy_file": str(compiler.policy_path),
+        "count": len(rules),
+        "rules": rules,
+    }
+
+
+@router.post("/runtime/policies/reload")
+async def reload_runtime_policies():
+    """Reload runtime policy compiler from disk."""
+    compiler = get_runtime_policy_compiler()
+    compiler.reload()
+    return {"ok": True, "count": len(compiler.list_rules())}
+
+
+@router.post("/runtime/policies/evaluate")
+async def evaluate_runtime_policy(request: RuntimePolicyEvaluateRequest):
+    """Evaluate a runtime policy decision for a synthetic event."""
+    compiler = get_runtime_policy_compiler()
+    compiler.reload()
+
+    if request.event_type == "tool":
+        decision = compiler.evaluate_tool(
+            tool_name=request.tool_name or "",
+            command=request.command,
+            language=request.language,
+        )
+    elif request.event_type == "network":
+        if not request.host:
+            raise HTTPException(status_code=400, detail="host is required for network events")
+        decision = compiler.evaluate_network(
+            host=request.host,
+            method=request.method or "GET",
+            protocol=request.protocol or "https",
+        )
+    elif request.event_type == "filesystem":
+        if not request.path or not request.operation:
+            raise HTTPException(
+                status_code=400,
+                detail="path and operation are required for filesystem events",
+            )
+        decision = compiler.evaluate_filesystem(
+            path=request.path,
+            operation=request.operation,
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported event type: {request.event_type}")
+
+    return {
+        "event_type": request.event_type,
+        "decision": {
+            "allowed": decision.allowed,
+            "action": decision.action,
+            "rule_id": decision.rule_id,
+            "severity": decision.severity,
+            "message": decision.message,
+            "evidence": decision.evidence,
+            "matched_policies": decision.matched_policies,
+            "metadata": decision.metadata,
+        },
     }
 
 
@@ -1405,6 +1502,10 @@ async def adjudicate_analysis(
         "grounded",
         description="Argumentation semantics: grounded, auto, stable, preferred",
     ),
+    solver_mode: Literal["auto", "skeptical", "credulous"] = Query(
+        "auto",
+        description="Solver decision mode for stable/preferred semantics: auto, skeptical, credulous",
+    ),
 ):
     """
     Run adjudication on analysis results.
@@ -1412,7 +1513,11 @@ async def adjudicate_analysis(
     Uses formal argumentation to determine compliance status.
     """
     adjudicator = get_adjudicator()
-    return adjudicator.adjudicate(analysis, semantics=semantics)
+    return adjudicator.adjudicate(
+        analysis,
+        semantics=semantics,
+        solver_decision_mode=solver_mode,
+    )
 
 
 class GuidanceResponse(BaseModel):
@@ -1532,7 +1637,12 @@ async def enforce_compliance(
         
         # Adjudicate
         adjudication_started = time.perf_counter()
-        adjudication = adjudicator.adjudicate(analysis, policy_ids, semantics=semantics)
+        adjudication = adjudicator.adjudicate(
+            analysis,
+            policy_ids,
+            semantics=semantics,
+            solver_decision_mode=request.solver_decision_mode,
+        )
         adjudication_seconds = time.perf_counter() - adjudication_started
         adjudication_total_seconds += adjudication_seconds
         iter_metrics["adjudication_seconds"] = round(adjudication_seconds, 6)
@@ -1615,7 +1725,12 @@ async def enforce_compliance(
             )
             analysis_total_seconds += time.perf_counter() - fail_analysis_started
             fail_adjudication_started = time.perf_counter()
-            fail_adjudication = adjudicator.adjudicate(fail_analysis, policy_ids, semantics=semantics)
+            fail_adjudication = adjudicator.adjudicate(
+                fail_analysis,
+                policy_ids,
+                semantics=semantics,
+                solver_decision_mode=request.solver_decision_mode,
+            )
             adjudication_total_seconds += time.perf_counter() - fail_adjudication_started
             fail_proof_started = time.perf_counter()
             fail_proof = proof_assembler.assemble_proof(
@@ -1651,7 +1766,12 @@ async def enforce_compliance(
     )
     analysis_total_seconds += time.perf_counter() - final_analysis_started
     final_adjudication_started = time.perf_counter()
-    final_adjudication = adjudicator.adjudicate(final_analysis, policy_ids, semantics=semantics)
+    final_adjudication = adjudicator.adjudicate(
+        final_analysis,
+        policy_ids,
+        semantics=semantics,
+        solver_decision_mode=request.solver_decision_mode,
+    )
     adjudication_total_seconds += time.perf_counter() - final_adjudication_started
     
     # Generate proof bundle even for non-compliant code (for formal logic visibility)
@@ -1704,6 +1824,10 @@ async def generate_proof(
         "grounded",
         description="Argumentation semantics: grounded, auto, stable, preferred",
     ),
+    solver_mode: Literal["auto", "skeptical", "credulous"] = Query(
+        "auto",
+        description="Solver decision mode for stable/preferred semantics: auto, skeptical, credulous",
+    ),
 ):
     """
     Generate a proof bundle for code (compliant or non-compliant).
@@ -1722,7 +1846,12 @@ async def generate_proof(
         policy_ids=request.policies
     )
     
-    adjudication = adjudicator.adjudicate(analysis, request.policies, semantics=semantics)
+    adjudication = adjudicator.adjudicate(
+        analysis,
+        request.policies,
+        semantics=semantics,
+        solver_decision_mode=solver_mode,
+    )
     
     # Generate proof bundle for both compliant and non-compliant code
     # This allows viewing the formal logic even when code fails

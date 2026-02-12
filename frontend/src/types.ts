@@ -50,10 +50,32 @@ export interface AnalysisResult {
   artifact_id: string;
   violations: Violation[];
   tool_execution?: Record<string, ToolExecutionInfo>;
+  dynamic_analysis?: {
+    executed: boolean;
+    runner: string;
+    timeout_seconds: number;
+    artifacts: Array<{
+      artifact_id: string;
+      duration_seconds: number;
+      return_code?: number | null;
+      timed_out: boolean;
+      stdout: string;
+      stderr: string;
+      replay: {
+        runner: string;
+        command: string[];
+        timeout_seconds: number;
+        deterministic_fingerprint: string;
+        language: string;
+      };
+    }>;
+    violations: Violation[];
+  };
   performance?: {
     total_seconds: number;
     static_tools_seconds: number;
     policy_checks_seconds: number;
+    dynamic_analysis_seconds?: number;
     dedupe_seconds: number;
     adjudication_seconds?: number;
     tool_count: number;
@@ -64,6 +86,7 @@ export interface AdjudicationResult {
   compliant: boolean;
   semantics?: string; // grounded, auto, stable, preferred
   requested_semantics?: string;
+  solver_decision_mode?: string;
   secondary_semantics?: Record<string, unknown>;
   timing_seconds?: number;
   unsatisfied_rules: string[];

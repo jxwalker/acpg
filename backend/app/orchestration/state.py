@@ -43,6 +43,7 @@ class ComplianceState(TypedDict):
     policy_ids: Optional[List[str]]
     max_iterations: int
     semantics: str  # grounded, stable, preferred, auto
+    solver_decision_mode: str  # auto, skeptical, credulous
     
     # Analysis state
     artifact_hash: str
@@ -78,6 +79,7 @@ def create_initial_state(
     policy_ids: Optional[List[str]] = None,
     max_iterations: int = 3,
     semantics: str = "auto",
+    solver_decision_mode: str = "auto",
 ) -> ComplianceState:
     """Create initial state for a compliance check."""
     return ComplianceState(
@@ -87,6 +89,7 @@ def create_initial_state(
         policy_ids=policy_ids,
         max_iterations=max_iterations,
         semantics=semantics,
+        solver_decision_mode=solver_decision_mode,
         artifact_hash="",
         violations=[],
         compliant=False,

@@ -476,6 +476,65 @@ class ProofAssembler:
                 tool="analysis",
                 output=f"No violations detected for {rule_id}"
             ))
+
+        # Runtime policy enforcement evidence from tool execution metadata.
+        if analysis.tool_execution:
+            for tool_name, tool_info in analysis.tool_execution.items():
+                decision = getattr(tool_info, "policy_decision", None) or {}
+                if not decision:
+                    continue
+                action = decision.get("action") or ("allow" if decision.get("allowed", True) else "deny")
+                if action == "allow":
+                    continue
+
+                rule_id = decision.get("rule_id") or "RUNTIME-POLICY"
+                evidence_type = (
+                    "runtime_policy_enforcement"
+                    if action in {"deny", "require_approval"}
+                    else "runtime_policy_monitoring"
+                )
+                output_parts = [
+                    f"tool={tool_name}",
+                    f"action={action}",
+                    f"allowed={decision.get('allowed', True)}",
+                    decision.get("message", ""),
+                    decision.get("evidence", ""),
+                ]
+                output = "; ".join(part for part in output_parts if part)
+                evidence_list.append(
+                    Evidence(
+                        rule_id=rule_id,
+                        type=evidence_type,
+                        tool=tool_name,
+                        tool_version=getattr(tool_info, "tool_version", None),
+                        output=output,
+                    )
+                )
+
+        # Dynamic analysis evidence and deterministic replay metadata.
+        dynamic_result = getattr(analysis, "dynamic_analysis", None)
+        if dynamic_result and getattr(dynamic_result, "executed", False):
+            for artifact in dynamic_result.artifacts:
+                evidence_list.append(
+                    Evidence(
+                        rule_id="DYNAMIC-ANALYSIS",
+                        type="dynamic_analysis",
+                        tool=dynamic_result.runner,
+                        output=(
+                            f"artifact_id={artifact.artifact_id}; return_code={artifact.return_code}; "
+                            f"timed_out={artifact.timed_out}; duration_seconds={artifact.duration_seconds}; "
+                            f"stderr={artifact.stderr[:300]}"
+                        ),
+                    )
+                )
+                evidence_list.append(
+                    Evidence(
+                        rule_id="DYNAMIC-REPLAY",
+                        type="dynamic_replay_artifact",
+                        tool=dynamic_result.runner,
+                        output=json.dumps(artifact.replay.model_dump(), sort_keys=True),
+                    )
+                )
         
         return evidence_list
     

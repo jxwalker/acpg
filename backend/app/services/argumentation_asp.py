@@ -26,19 +26,31 @@ class AspResult:
 
 
 def admissible_semantics_program() -> str:
-    """ASP encoding for admissible sets in a Dung AF."""
+    """ASP encoding for admissible sets with binary + joint attacks."""
     return """
 % Choose a candidate set
 {in(X)} :- arg(X).
 
-% Conflict-free
-:- in(X), in(Y), att(X,Y).
+% Joint attack activation: all members must be in
+missing_member(S) :- set_mem(S,A), not in(A).
+set_active(S) :- set_att(S,_), not missing_member(S).
 
-% An attacker is defeated if it is attacked by some in-argument
-defeated(Y) :- in(Z), att(Z,Y).
+% An argument is attacked by current in-set either by binary or active joint attack.
+attacked_by_in(X) :- in(Y), att(Y,X).
+attacked_by_in(X) :- set_att(S,X), set_active(S).
 
-% Admissible: each in-argument is defended against every attacker
-:- in(X), att(Y,X), not defeated(Y).
+% Conflict-free under binary and joint attacks
+:- in(X), attacked_by_in(X).
+
+% Binary attacker is defeated if attacked by in-set
+defeated_bin(Y) :- attacked_by_in(Y).
+
+% Joint attacker set S is defeated when at least one member is attacked.
+defeated_set(S) :- set_mem(S,M), attacked_by_in(M).
+
+% Admissible defense conditions
+:- in(X), att(Y,X), not defeated_bin(Y).
+:- in(X), set_att(S,X), not defeated_set(S).
 
 #show in/1.
 """.lstrip()
@@ -71,32 +83,39 @@ def filter_maximal_by_inclusion(sets: List[List[str]]) -> List[List[str]]:
 
 
 def export_dung_af_to_asp(graph: ArgumentationGraph) -> str:
-    """Export a (binary-attack) Dung AF to ASP facts."""
+    """Export AF with binary + joint attacks to ASP facts."""
     lines: List[str] = []
     for arg in graph.arguments:
         lines.append(f"arg({json.dumps(arg.id)}).")
     for att in graph.attacks:
         lines.append(f"att({json.dumps(att.attacker)}, {json.dumps(att.target)}).")
-    # Joint attacks exist in ACPG, but solver encodings are not implemented yet.
-    if getattr(graph, "set_attacks", None):
-        lines.append("% NOTE: joint attacks are present but are ignored by this encoding.")
+    for idx, set_att in enumerate(getattr(graph, "set_attacks", []) or []):
+        set_id = f"S{idx}"
+        lines.append(f"set_att({json.dumps(set_id)}, {json.dumps(set_att.target)}).")
+        for attacker in set_att.attackers:
+            lines.append(f"set_mem({json.dumps(set_id)}, {json.dumps(attacker)}).")
     return "\n".join(lines) + "\n"
 
 
 def stable_semantics_program() -> str:
-    """ASP encoding for stable extensions in Dung AF."""
+    """ASP encoding for stable extensions with binary + joint attacks."""
     return """
 % Choose an extension
 {in(X)} :- arg(X).
 
-% Conflict-free
-:- in(X), in(Y), att(X,Y).
+% Joint attack activation: all members must be in
+missing_member(S) :- set_mem(S,A), not in(A).
+set_active(S) :- set_att(S,_), not missing_member(S).
 
-% Attacked arguments are out
-out(X) :- in(Y), att(Y,X).
+% An argument is attacked by current in-set either by binary or active joint attack.
+attacked_by_in(X) :- in(Y), att(Y,X).
+attacked_by_in(X) :- set_att(S,X), set_active(S).
+
+% Conflict-free under binary and joint attacks
+:- in(X), attacked_by_in(X).
 
 % Stable: every argument is either in or out
-:- arg(X), not in(X), not out(X).
+:- arg(X), not in(X), not attacked_by_in(X).
 
 #show in/1.
 """.lstrip()
@@ -164,12 +183,7 @@ def compute_stable_extensions(
     timeout_s: int = 15,
 ) -> AspResult:
     """Compute stable extensions (if any) for a Dung AF.
-
-    Note: joint attacks are not supported yet for solver semantics.
     """
-    if getattr(graph, "set_attacks", None):
-        raise ValueError("Stable semantics via ASP is not implemented for joint attacks yet.")
-
     facts = export_dung_af_to_asp(graph)
     encoding = stable_semantics_program()
     raw = run_clingo([facts, encoding], clingo_path=clingo_path, timeout_s=timeout_s)
@@ -188,9 +202,6 @@ def compute_preferred_extensions(
     1. Enumerate all admissible sets with clingo.
     2. Filter to those maximal w.r.t. subset inclusion (preferred extensions).
     """
-    if getattr(graph, "set_attacks", None):
-        raise ValueError("Preferred semantics via ASP is not implemented for joint attacks yet.")
-
     facts = export_dung_af_to_asp(graph)
     encoding = admissible_semantics_program()
     raw = run_clingo([facts, encoding], clingo_path=clingo_path, timeout_s=timeout_s)

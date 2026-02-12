@@ -1,5 +1,4 @@
 """Tests for the Adjudicator service."""
-import pytest
 from pathlib import Path
 
 # Add backend to path for imports
@@ -331,8 +330,9 @@ def test_stable_semantics_path_uses_solver_result(monkeypatch):
         violations=[],
     )
 
-    def fake_solver(*, graph, semantics):
+    def fake_solver(*, graph, semantics, solver_decision_mode="skeptical"):
         assert semantics == "stable"
+        assert solver_decision_mode in {"skeptical", "credulous"}
         return set(), {"enabled": True, "requested_semantics": "stable"}, "stable"
 
     monkeypatch.setattr(adjudicator, "_compute_solver_semantics_decision", fake_solver)
@@ -359,8 +359,9 @@ def test_preferred_semantics_fallback_records_selection_trace(monkeypatch):
         violations=[],
     )
 
-    def fake_solver(*, graph, semantics):
+    def fake_solver(*, graph, semantics, solver_decision_mode="skeptical"):
         assert semantics == "preferred"
+        assert solver_decision_mode in {"skeptical", "credulous"}
         return set(), {"enabled": False, "fallback_reason": "no solver"}, "grounded"
 
     monkeypatch.setattr(adjudicator, "_compute_solver_semantics_decision", fake_solver)
@@ -369,3 +370,60 @@ def test_preferred_semantics_fallback_records_selection_trace(monkeypatch):
     assert result.requested_semantics == "preferred"
     assert result.semantics == "grounded"
     assert result.reasoning[0]["phase"] == "semantics_selection"
+
+
+def test_solver_mode_selection_is_deterministic():
+    """Solver decision mode should deterministically map extensions to accepted arguments."""
+    from backend.app.services.adjudicator import Adjudicator
+
+    adjudicator = Adjudicator()
+    exts = [["A", "B"], ["B", "C"]]
+
+    skeptical = adjudicator._select_arguments_by_solver_mode(
+        extensions=exts,
+        decision_mode="skeptical",
+    )
+    credulous = adjudicator._select_arguments_by_solver_mode(
+        extensions=exts,
+        decision_mode="credulous",
+    )
+
+    assert skeptical == {"B"}
+    assert credulous == {"A", "B", "C"}
+
+
+def test_solver_semantics_with_joint_attacks_supported(monkeypatch):
+    """Stable solver path should support graphs that include joint attacks."""
+    from backend.app.services.adjudicator import Adjudicator
+    from backend.app.services.argumentation_asp import AspResult
+
+    adjudicator = Adjudicator()
+    graph = ArgumentationGraph(
+        arguments=[
+            Argument(id="A", rule_id="R1", type="compliance"),
+            Argument(id="B", rule_id="R2", type="compliance"),
+            Argument(id="C", rule_id="R3", type="violation"),
+        ],
+        attacks=[],
+        set_attacks=[SetAttack(attackers=["A", "B"], target="C")],
+    )
+
+    monkeypatch.setattr("backend.app.services.adjudicator.shutil.which", lambda _: "/usr/bin/clingo")
+
+    def fake_stable(_graph, *, clingo_path, timeout_s=15):
+        assert _graph.set_attacks
+        assert clingo_path == "/usr/bin/clingo"
+        return AspResult(extensions=[["A", "B"]], raw={"Result": "SATISFIABLE"})
+
+    monkeypatch.setattr("backend.app.services.adjudicator.compute_stable_extensions", fake_stable)
+
+    accepted, details, effective = adjudicator._compute_solver_semantics_decision(
+        graph=graph,
+        semantics="stable",
+        solver_decision_mode="skeptical",
+    )
+
+    assert effective == "stable"
+    assert accepted == {"A", "B"}
+    assert details["enabled"] is True
+    assert details["decision_mode"] == "skeptical"

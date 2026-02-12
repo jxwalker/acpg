@@ -135,6 +135,7 @@ async def run_compliance_check(
     policy_ids: Optional[list] = None,
     max_iterations: int = 3,
     semantics: str = "auto",
+    solver_decision_mode: str = "auto",
     thread_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -165,6 +166,7 @@ async def run_compliance_check(
         policy_ids=policy_ids,
         max_iterations=max_iterations,
         semantics=semantics,
+        solver_decision_mode=solver_decision_mode,
     )
     
     # Configuration
@@ -182,6 +184,7 @@ def run_compliance_check_sync(
     policy_ids: Optional[list] = None,
     max_iterations: int = 3,
     semantics: str = "auto",
+    solver_decision_mode: str = "auto",
 ) -> Dict[str, Any]:
     """
     Synchronous version of run_compliance_check.
@@ -198,6 +201,7 @@ def run_compliance_check_sync(
         policy_ids=policy_ids,
         max_iterations=max_iterations,
         semantics=semantics,
+        solver_decision_mode=solver_decision_mode,
     )
     
     # Run the graph synchronously

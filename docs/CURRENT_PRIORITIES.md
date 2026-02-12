@@ -27,11 +27,33 @@ Last refreshed: **February 12, 2026**
 - Ensure provider test and run results expose token usage and estimated cost where pricing metadata is available.
 - Keep cost fields editable in model configuration.
 
+6. [x] Runtime policy compiler (MVP)
+- Add compiled runtime policy evaluation for `tool` / `network` / `filesystem` events.
+- Support graded actions: `deny`, `require_approval`, `allow_with_monitoring`.
+- Feed runtime policy outcomes into runtime trace and proof evidence.
+
+## Next Up
+
+1. [ ] Dynamic analysis coverage expansion
+- Add deterministic dynamic policy suites beyond direct execution smoke checks.
+- Expand replay artifact indexing and UX for audit workflows.
+
+2. [ ] Policy lifecycle UX and test operations
+- Better versioning and policy diff/audit views.
+- Safer rollout controls for policy updates.
+- Bulk test-case import/export and tagging workflows for regulated regression suites.
+
 ## Recently Completed
 
 - Responses-first LLM integration with fallback path
 - AUTO grounded semantics behavior
 - Joint attacks in grounded engine
+- Runtime policy compiler + graded runtime actions
+- Runtime policy API endpoints (`/runtime/policies`, reload/evaluate)
+- Sandboxed dynamic analyzer with timeout/resource limits
+- Deterministic dynamic replay artifacts included in proofs
+- Solver-backed joint-attack support for stable/preferred semantics
+- Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

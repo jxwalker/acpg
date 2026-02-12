@@ -66,18 +66,35 @@ def prosecutor_node(state: ComplianceState) -> Dict[str, Any]:
 
     for tool_name, tool_info in (result.tool_execution or {}).items():
         decision = getattr(tool_info, "policy_decision", None)
-        if decision and not decision.get("allowed", True):
+        if not decision:
+            continue
+
+        action = decision.get("action", "allow")
+        decision_details = {
+            "tool": tool_name,
+            "action": action,
+            "allowed": decision.get("allowed", True),
+            "rule_id": decision.get("rule_id"),
+            "severity": decision.get("severity"),
+            "message": decision.get("message"),
+            "matched_policies": decision.get("matched_policies") or [],
+        }
+        runtime_events.append(
+            _runtime_event(
+                state,
+                node="prosecutor",
+                kind="runtime_policy_decision",
+                details=decision_details,
+            )
+        )
+
+        if not decision.get("allowed", True):
             runtime_events.append(
                 _runtime_event(
                     state,
                     node="prosecutor",
                     kind="runtime_guard_violation",
-                    details={
-                        "tool": tool_name,
-                        "rule_id": decision.get("rule_id"),
-                        "severity": decision.get("severity"),
-                        "message": decision.get("message"),
-                    },
+                    details=decision_details,
                 )
             )
     
@@ -121,7 +138,13 @@ def adjudicator_node(state: ComplianceState) -> Dict[str, Any]:
     
     # Run adjudication
     requested_semantics = state.get("semantics", "auto")
-    result = adjudicator.adjudicate(analysis, state["policy_ids"], semantics=requested_semantics)
+    solver_mode = state.get("solver_decision_mode", "auto")
+    result = adjudicator.adjudicate(
+        analysis,
+        state["policy_ids"],
+        semantics=requested_semantics,
+        solver_decision_mode=solver_mode,
+    )
     
     decision = "COMPLIANT" if result.compliant else "NON-COMPLIANT"
     message = AgentMessage(
@@ -134,6 +157,7 @@ def adjudicator_node(state: ComplianceState) -> Dict[str, Any]:
     return {
         # Update semantics to the semantics actually used for the decision (AUTO -> grounded).
         "semantics": result.semantics or requested_semantics,
+        "solver_decision_mode": result.solver_decision_mode or solver_mode,
         "secondary_semantics": result.secondary_semantics,
         "compliant": result.compliant,
         "satisfied_rules": result.satisfied_rules,
@@ -148,6 +172,7 @@ def adjudicator_node(state: ComplianceState) -> Dict[str, Any]:
                 details={
                     "requested_semantics": requested_semantics,
                     "used_semantics": result.semantics or requested_semantics,
+                    "solver_decision_mode": result.solver_decision_mode,
                     "compliant": result.compliant,
                     "unsatisfied_rules": result.unsatisfied_rules,
                 },
@@ -260,6 +285,7 @@ def proof_assembler_node(state: ComplianceState) -> Dict[str, Any]:
     # Reconstruct adjudication result
     adjudication = AdjudicationResult(
         semantics=state.get("semantics"),
+        solver_decision_mode=state.get("solver_decision_mode"),
         secondary_semantics=state.get("secondary_semantics"),
         compliant=True,
         satisfied_rules=state["satisfied_rules"],

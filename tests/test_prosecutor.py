@@ -1,5 +1,4 @@
 """Tests for the Prosecutor service."""
-import pytest
 from pathlib import Path
 
 # Add backend to path for imports
@@ -62,7 +61,6 @@ def login(username, pwd):
     
     # Should have no policy violations from our checks
     # (Bandit might find other things, but policy checks should pass)
-    policy_violations = [v for v in result.violations if not v.rule_id.startswith("BANDIT-")]
     # Depending on policies, this might still have some
     # The main thing is no SEC-001
     sec001_violations = [v for v in result.violations if v.rule_id == "SEC-001"]
@@ -174,3 +172,30 @@ def test_prosecutor_records_runtime_guard_violation(monkeypatch):
     assert "bandit" in tool_info
     assert tool_info["bandit"].policy_decision is not None
     assert tool_info["bandit"].policy_decision["allowed"] is False
+
+
+def test_prosecutor_dynamic_analysis_violation(monkeypatch):
+    """Prosecutor should include dynamic sandbox violations when enabled."""
+    from backend.app.core.config import settings
+    from backend.app.services.dynamic_analyzer import DynamicAnalyzer
+    from backend.app.services.prosecutor import Prosecutor
+
+    original_dynamic = settings.ENABLE_DYNAMIC_TESTING
+    original_static = settings.ENABLE_STATIC_ANALYSIS
+    original_timeout = settings.DYNAMIC_SANDBOX_TIMEOUT_SECONDS
+    try:
+        settings.ENABLE_DYNAMIC_TESTING = True
+        settings.ENABLE_STATIC_ANALYSIS = False
+        settings.DYNAMIC_SANDBOX_TIMEOUT_SECONDS = 2
+
+        prosecutor = Prosecutor()
+        prosecutor.dynamic_analyzer = DynamicAnalyzer()
+        result = prosecutor.analyze("raise RuntimeError('x')", "python")
+
+        assert result.dynamic_analysis is not None
+        assert result.dynamic_analysis.executed is True
+        assert any(v.detector == "dynamic_sandbox" for v in result.violations)
+    finally:
+        settings.ENABLE_DYNAMIC_TESTING = original_dynamic
+        settings.ENABLE_STATIC_ANALYSIS = original_static
+        settings.DYNAMIC_SANDBOX_TIMEOUT_SECONDS = original_timeout

@@ -1,6 +1,6 @@
 # Runtime Policy Compliance for Agent Workflows
 
-Last refreshed: **February 11, 2026**
+Last refreshed: **February 12, 2026**
 
 ## Objective
 
@@ -14,6 +14,9 @@ Provide provable runtime compliance for agent behavior, not only static code art
 - Runtime tool guard evaluates tool actions against allow/deny policy.
 - Denied tool actions are emitted as formal violations and adjudicated.
 - AUTO semantics remains conservative: grounded decision, optional secondary solver evidence.
+- Runtime policy compiler supports graded actions (`deny`, `require_approval`, `allow_with_monitoring`).
+- Sandboxed dynamic analysis (Python) runs with timeout/resource limits.
+- Dynamic replay artifacts are attached to proof evidence for deterministic audit replay.
 
 ## Compliance Model
 
@@ -33,12 +36,12 @@ Runtime compliance evidence path:
 
 ## Current Limitations
 
-- Runtime policy language is still minimal (guard-centric)
-- Dynamic analysis execution sandbox is not fully implemented
+- Runtime policy language remains rule-file based (not yet full DSL with policy lifecycle UX)
+- Dynamic analysis currently focuses on direct execution checks (not yet full scenario test suites)
 - Solver-backed semantics do not yet fully represent joint attacks
 
 ## Next Targets
 
-1. Runtime policy compiler over general runtime event schemas
-2. Enforcement levels (`deny`, `require_approval`, `allow_with_monitoring`)
-3. Sandboxed dynamic analysis with deterministic evidence packaging
+1. Expand dynamic analysis from execution smoke checks to policy-driven scenario suites
+2. Add replay artifact indexing and retrieval for CI/audit workflows
+3. Complete solver maturity for stable/preferred with full joint attacks

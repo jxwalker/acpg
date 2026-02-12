@@ -15,37 +15,28 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Signed proof bundles with evidence and argumentation trace
 - LangGraph orchestration with runtime event trace
 - Runtime guard policy-to-violation flow for tool actions
+- Runtime policy compiler for tool/network/filesystem classes
+- Graded runtime controls: deny / require-approval / allow-with-monitoring
+- Runtime policy outcomes linked into trace + proof evidence
+- Sandboxed dynamic analysis (Python) with timeout/resource limits
+- Deterministic dynamic replay artifacts linked into proof evidence
+- Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
+- Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Unified test code management: file samples + DB-backed CRUD test cases
 - Analysis/enforcement timing telemetry and UI performance visibility
 - CI pipeline covering lint/test/build/integration/docker
 
 ## Active Near-Term Priorities
 
-1. Runtime policy compiler
-- Turn runtime events into first-class runtime policy checks beyond tool allow/deny
-- Support policy authoring for runtime controls (tool/network/filesystem classes)
-
-2. Enforcement controls
-- Introduce graded actions: deny / require-approval / allow-with-monitoring
-- Feed enforcement outcomes into proof evidence and adjudication
-
-3. Dynamic analysis hardening
-- Implement sandboxed dynamic tests (timeouts, resource limits, no untrusted escape)
-- Record deterministic dynamic-analysis evidence in proof bundles
-
-4. Solver integration maturity
-- Add full joint-attack semantics to solver-backed paths (stable/preferred)
-- Add deterministic solver policy for skeptical vs credulous acceptance mode selection
-
-5. Policy lifecycle UX and test operations
+1. Policy lifecycle UX and test operations
 - Better versioning and policy diff/audit views
 - Safer rollout controls for policy updates
 - Bulk test-case import/export and tagging workflows for regulated regression suites
 
-6. Runtime and dynamic compliance evidence
-- Runtime event policy compiler with deterministic rule evaluation
-- Sandboxed dynamic checks with reproducible replay artifacts
-- Formal linkage of dynamic/runtime evidence into proof argumentation
+2. Runtime and dynamic compliance evidence maturity
+- Expand dynamic compliance suites (beyond direct execution smoke checks)
+- Add richer replay artifact indexing/search for audit and CI review
+- Formal linkage of dynamic/runtime evidence into proof argumentation narratives
 
 ## Medium-Term Priorities
 

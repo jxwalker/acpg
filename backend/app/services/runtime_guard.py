@@ -1,19 +1,9 @@
 """Runtime policy guard for agent/tool actions."""
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Set
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 from ..core.config import settings
-
-
-def _normalize_tool_set(values: Optional[Iterable[str] | str]) -> Set[str]:
-    """Normalize tool names to a lowercase set."""
-    if not values:
-        return set()
-    if isinstance(values, str):
-        items = [part.strip() for part in values.split(",")]
-    else:
-        items = [str(part).strip() for part in values]
-    return {item.lower() for item in items if item}
+from .runtime_policy_compiler import get_runtime_policy_compiler
 
 
 @dataclass
@@ -22,22 +12,35 @@ class RuntimeGuardDecision:
 
     allowed: bool
     message: str
+    action: str = "allow"
     rule_id: Optional[str] = None
     severity: str = "high"
     evidence: Optional[str] = None
+    requires_approval: bool = False
+    monitoring: bool = False
+    matched_policies: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "allowed": self.allowed,
             "message": self.message,
+            "action": self.action,
             "rule_id": self.rule_id,
             "severity": self.severity,
             "evidence": self.evidence,
+            "requires_approval": self.requires_approval,
+            "monitoring": self.monitoring,
+            "matched_policies": self.matched_policies,
+            "metadata": self.metadata,
         }
 
 
 class RuntimeGuard:
     """Evaluate runtime policies for tool invocations."""
+
+    def __init__(self):
+        self.runtime_policy_compiler = get_runtime_policy_compiler()
 
     def evaluate_tool(
         self,
@@ -48,42 +51,43 @@ class RuntimeGuard:
         if not settings.ENABLE_RUNTIME_GUARDS:
             return RuntimeGuardDecision(allowed=True, message="Runtime guards disabled")
 
-        normalized_tool = (tool_name or "").strip().lower()
-        allowlist = _normalize_tool_set(settings.RUNTIME_TOOL_ALLOWLIST)
-        denylist = _normalize_tool_set(settings.RUNTIME_TOOL_DENYLIST)
-        command_str = " ".join(command or [])
-        evidence = (
-            f"tool={normalized_tool}; language={language or 'unknown'}; command={command_str}"
+        # Keep legacy env-based lists in sync with runtime compiler defaults.
+        # If callers mutate settings in tests/runtime, reload to pick it up.
+        self.runtime_policy_compiler.reload()
+        policy_decision = self.runtime_policy_compiler.evaluate_tool(
+            tool_name=tool_name,
+            command=command,
+            language=language,
         )
 
-        if allowlist and normalized_tool not in allowlist:
-            return RuntimeGuardDecision(
-                allowed=False,
-                rule_id="RUNTIME-TOOL-ALLOWLIST",
-                severity="high",
-                message=(
-                    f"Runtime policy denied tool '{tool_name}': "
-                    "tool is not in runtime allowlist."
-                ),
-                evidence=evidence,
-            )
+        action = policy_decision.action
+        monitoring = action == "allow_with_monitoring"
+        requires_approval = action == "require_approval"
 
-        if normalized_tool in denylist:
-            return RuntimeGuardDecision(
-                allowed=False,
-                rule_id="RUNTIME-TOOL-DENYLIST",
-                severity="high",
-                message=(
-                    f"Runtime policy denied tool '{tool_name}': "
-                    "tool is in runtime denylist."
-                ),
-                evidence=evidence,
-            )
+        # Ensure messages are explicit for auditors and operators.
+        if action == "deny":
+            message = f"Runtime policy denied tool '{tool_name}'."
+        elif action == "require_approval":
+            message = f"Runtime policy requires approval for tool '{tool_name}'."
+        elif action == "allow_with_monitoring":
+            message = f"Runtime policy allowed tool '{tool_name}' with monitoring."
+        else:
+            message = f"Runtime policy allowed tool '{tool_name}'."
+
+        if policy_decision.message:
+            message = f"{message} {policy_decision.message}".strip()
 
         return RuntimeGuardDecision(
-            allowed=True,
-            message=f"Runtime policy allowed tool '{tool_name}'.",
-            evidence=evidence,
+            allowed=policy_decision.allowed,
+            message=message,
+            action=action,
+            rule_id=policy_decision.rule_id,
+            severity=policy_decision.severity,
+            evidence=policy_decision.evidence,
+            requires_approval=requires_approval,
+            monitoring=monitoring,
+            matched_policies=policy_decision.matched_policies,
+            metadata=policy_decision.metadata,
         )
 
 
@@ -96,4 +100,3 @@ def get_runtime_guard() -> RuntimeGuard:
     if _runtime_guard is None:
         _runtime_guard = RuntimeGuard()
     return _runtime_guard
-
