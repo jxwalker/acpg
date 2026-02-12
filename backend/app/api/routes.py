@@ -3,7 +3,7 @@ import json
 import hashlib
 import uuid
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
@@ -1326,8 +1326,10 @@ async def analyze_code(
     # Save to analysis history
     try:
         severity_breakdown = {}
+        rule_breakdown = {}
         for v in result.violations:
             severity_breakdown[v.severity] = severity_breakdown.get(v.severity, 0) + 1
+            rule_breakdown[v.rule_id] = rule_breakdown.get(v.rule_id, 0) + 1
 
         dynamic_artifacts: List[Dict[str, Any]] = []
         if result.dynamic_analysis and result.dynamic_analysis.executed:
@@ -1360,6 +1362,7 @@ async def analyze_code(
             violations_count=len(result.violations),
             policies_passed=len(adjudication.satisfied_rules),
             severity_breakdown=severity_breakdown,
+            rule_breakdown=rule_breakdown,
             dynamic_executed=bool(result.dynamic_analysis and result.dynamic_analysis.executed),
             dynamic_runner=result.dynamic_analysis.runner if result.dynamic_analysis else None,
             dynamic_artifacts=dynamic_artifacts,
@@ -2466,6 +2469,7 @@ class HistoryEntry(BaseModel):
     violations_count: int
     policies_passed: int
     severity_breakdown: dict
+    rule_breakdown: dict = {}
     code_hash: str
     dynamic_executed: bool = False
     dynamic_runner: Optional[str] = None
@@ -2490,6 +2494,7 @@ async def add_to_history(
     violations_count: int = 0,
     policies_passed: int = 0,
     severity_breakdown: dict = None,
+    rule_breakdown: dict = None,
     dynamic_executed: bool = False,
     dynamic_runner: Optional[str] = None,
     dynamic_artifacts: Optional[List[Dict[str, Any]]] = None,
@@ -2514,6 +2519,7 @@ async def add_to_history(
         "violations_count": violations_count,
         "policies_passed": policies_passed,
         "severity_breakdown": severity_breakdown or {},
+        "rule_breakdown": rule_breakdown or {},
         "code_hash": code_hash,
         "dynamic_executed": dynamic_executed,
         "dynamic_runner": dynamic_runner,
@@ -2570,6 +2576,116 @@ async def get_dynamic_artifact_index(
                 return {"artifacts": indexed, "total": len(indexed)}
 
     return {"artifacts": indexed, "total": len(indexed)}
+
+
+def _parse_history_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        cleaned = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(cleaned)
+        if parsed.tzinfo is not None:
+            return parsed.replace(tzinfo=None)
+        return parsed
+    except Exception:
+        return None
+
+
+@router.get("/history/trends")
+async def get_history_trends(days: int = Query(30, ge=1, le=365)):
+    """Aggregate compliance trends from analysis history for audit dashboards."""
+    history = load_history()
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    selected = []
+    for entry in history:
+        ts = _parse_history_timestamp(entry.get("timestamp"))
+        if ts is None or ts < cutoff:
+            continue
+        selected.append((ts, entry))
+
+    total_runs = len(selected)
+    compliant_runs = 0
+    total_violations = 0
+    total_policies_passed = 0
+    dynamic_runs = 0
+    dynamic_issue_runs = 0
+    severity_totals: Dict[str, int] = {}
+    rule_totals: Dict[str, int] = {}
+    buckets: Dict[str, Dict[str, Any]] = {}
+
+    for ts, entry in selected:
+        compliant = bool(entry.get("compliant"))
+        compliant_runs += 1 if compliant else 0
+        violations_count = int(entry.get("violations_count") or 0)
+        total_violations += violations_count
+        total_policies_passed += int(entry.get("policies_passed") or 0)
+
+        if entry.get("dynamic_executed"):
+            dynamic_runs += 1
+            has_dynamic_issue = any(
+                artifact.get("violation_rule_id")
+                for artifact in (entry.get("dynamic_artifacts") or [])
+            )
+            if has_dynamic_issue:
+                dynamic_issue_runs += 1
+
+        for severity, count in (entry.get("severity_breakdown") or {}).items():
+            severity_totals[severity] = severity_totals.get(severity, 0) + int(count or 0)
+
+        for rule_id, count in (entry.get("rule_breakdown") or {}).items():
+            normalized_rule = str(rule_id).strip()
+            if not normalized_rule:
+                continue
+            rule_totals[normalized_rule] = rule_totals.get(normalized_rule, 0) + int(count or 0)
+
+        bucket_key = ts.date().isoformat()
+        bucket = buckets.setdefault(
+            bucket_key,
+            {"date": bucket_key, "runs": 0, "compliant": 0, "non_compliant": 0, "violations_total": 0},
+        )
+        bucket["runs"] += 1
+        bucket["compliant"] += 1 if compliant else 0
+        bucket["non_compliant"] += 0 if compliant else 1
+        bucket["violations_total"] += violations_count
+
+    series = []
+    for key in sorted(buckets.keys()):
+        bucket = buckets[key]
+        runs = bucket["runs"] or 1
+        series.append(
+            {
+                "date": bucket["date"],
+                "runs": bucket["runs"],
+                "compliant": bucket["compliant"],
+                "non_compliant": bucket["non_compliant"],
+                "avg_violations": round(bucket["violations_total"] / runs, 3),
+            }
+        )
+
+    compliance_rate = round((compliant_runs / total_runs) * 100, 2) if total_runs else 0.0
+    dynamic_issue_rate = round((dynamic_issue_runs / dynamic_runs) * 100, 2) if dynamic_runs else 0.0
+
+    top_violated_rules = [
+        {"rule_id": rule_id, "count": count}
+        for rule_id, count in sorted(rule_totals.items(), key=lambda item: item[1], reverse=True)[:10]
+    ]
+
+    return {
+        "window_days": days,
+        "total_runs": total_runs,
+        "compliant_runs": compliant_runs,
+        "non_compliant_runs": total_runs - compliant_runs,
+        "compliance_rate": compliance_rate,
+        "avg_violations": round((total_violations / total_runs), 3) if total_runs else 0.0,
+        "avg_policies_passed": round((total_policies_passed / total_runs), 3) if total_runs else 0.0,
+        "dynamic_runs": dynamic_runs,
+        "dynamic_issue_runs": dynamic_issue_runs,
+        "dynamic_issue_rate": dynamic_issue_rate,
+        "severity_totals": severity_totals,
+        "top_violated_rules": top_violated_rules,
+        "series": series,
+    }
 
 
 @router.delete("/history/{entry_id}")

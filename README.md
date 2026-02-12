@@ -46,6 +46,7 @@ Core components:
 - Deterministic dynamic suites (`direct_execution`, `import_execution`, auto entrypoint invocation)
 - Dynamic replay artifact indexing endpoint for audit/CI workflows
 - Proof argumentation includes explicit runtime/dynamic evidence-channel narratives
+- Compliance history trend analytics for audit dashboards
 - Policy lifecycle audit support (version history and diff endpoints + UI)
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
@@ -164,6 +165,7 @@ Dynamic analysis:
 History / audit index:
 - `GET /history`
 - `GET /history/dynamic-artifacts` (indexed dynamic replay artifacts; supports `violations_only`, `suite_id`, `violation_rule_id`, `language`, `compliant`)
+- `GET /history/trends` (windowed compliance and violation trends; `days=1..365`)
 
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`

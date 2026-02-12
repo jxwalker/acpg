@@ -23,6 +23,7 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Deterministic dynamic suite coverage (direct/import/entrypoint execution)
 - Dynamic replay artifact history index for audit/CI queries
 - Proof argumentation evidence-channel linkage for runtime + dynamic signals
+- Compliance history trend analytics (API + UI summary panels)
 - Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff/audit support (API + UI)

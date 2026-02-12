@@ -325,11 +325,28 @@ export default function App() {
     violations_count: number;
     policies_passed: number;
     severity_breakdown: Record<string, number>;
+    rule_breakdown?: Record<string, number>;
     dynamic_executed?: boolean;
     dynamic_runner?: string | null;
     dynamic_artifacts?: Array<{ suite_id?: string; violation_rule_id?: string | null }>;
   }
+  interface HistoryTrends {
+    window_days: number;
+    total_runs: number;
+    compliant_runs: number;
+    non_compliant_runs: number;
+    compliance_rate: number;
+    avg_violations: number;
+    avg_policies_passed: number;
+    dynamic_runs: number;
+    dynamic_issue_runs: number;
+    dynamic_issue_rate: number;
+    top_violated_rules: Array<{ rule_id: string; count: number }>;
+    series: Array<{ date: string; runs: number; compliant: number; non_compliant: number; avg_violations: number }>;
+  }
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyTrends, setHistoryTrends] = useState<HistoryTrends | null>(null);
+  const [historyTrendDays, setHistoryTrendDays] = useState<number>(30);
   const [showHistory, setShowHistory] = useState(false);
 
   // Load saved codes from localStorage
@@ -504,15 +521,39 @@ export default function App() {
     }
   }, []);
 
+  const loadHistory = useCallback(async () => {
+    try {
+      const response = await fetch('/api/v1/history?limit=20');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      setHistory(Array.isArray(data.history) ? data.history : []);
+    } catch (err) {
+      console.error('Failed to load analysis history:', err);
+      setHistory([]);
+    }
+  }, []);
+
+  const loadHistoryTrends = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/history/trends?days=${historyTrendDays}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      setHistoryTrends(data || null);
+    } catch (err) {
+      console.error('Failed to load history trends:', err);
+      setHistoryTrends(null);
+    }
+  }, [historyTrendDays]);
+
   useEffect(() => {
     void loadTestCases();
     void loadTestCaseTags();
-    
-    // Load analysis history
-    fetch('/api/v1/history?limit=20')
-      .then(res => res.json())
-      .then(data => setHistory(data.history || []))
-      .catch(() => {});
+    void loadHistory();
+    void loadHistoryTrends();
     
     // Load enabled policy groups count
     fetch('/api/v1/policies/groups/')
@@ -522,7 +563,7 @@ export default function App() {
         policies: data.enabled_policies || 0
       }))
       .catch(() => {});
-  }, [loadTestCases, loadTestCaseTags]);
+  }, [loadHistory, loadHistoryTrends, loadTestCases, loadTestCaseTags]);
 
   useEffect(() => {
     if (!showSampleMenu) {
@@ -558,11 +599,9 @@ export default function App() {
 
   // Refresh history after analysis
   const refreshHistory = useCallback(() => {
-    fetch('/api/v1/history?limit=20')
-      .then(res => res.json())
-      .then(data => setHistory(data.history || []))
-      .catch(() => {});
-  }, []);
+    void loadHistory();
+    void loadHistoryTrends();
+  }, [loadHistory, loadHistoryTrends]);
 
   const handleAnalyze = useCallback(async () => {
     setError(null);
@@ -1737,7 +1776,11 @@ export default function App() {
                 <button
                   onClick={() => {
                     fetch('/api/v1/history', { method: 'DELETE' })
-                      .then(() => setHistory([]))
+                      .then(() => {
+                        setHistory([]);
+                        setHistoryTrends(null);
+                        void loadHistoryTrends();
+                      })
                       .catch(() => {});
                   }}
                   className="text-xs text-slate-400 hover:text-red-400 px-2 py-1"
@@ -1752,6 +1795,57 @@ export default function App() {
                 <XCircle className="w-5 h-5" />
               </button>
             </div>
+          </div>
+
+          <div className="px-4 py-3 border-b border-white/10 bg-slate-900/30 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wider text-slate-500">Trend Window</span>
+              <select
+                value={historyTrendDays}
+                onChange={(e) => setHistoryTrendDays(Number(e.target.value))}
+                className="bg-slate-800/70 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300"
+              >
+                <option value={7}>7 days</option>
+                <option value={30}>30 days</option>
+                <option value={90}>90 days</option>
+              </select>
+            </div>
+            {historyTrends ? (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-2 py-2">
+                  <div className="text-slate-500">Compliance Rate</div>
+                  <div className="text-emerald-300 font-semibold">{historyTrends.compliance_rate.toFixed(1)}%</div>
+                </div>
+                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-2 py-2">
+                  <div className="text-slate-500">Runs</div>
+                  <div className="text-cyan-300 font-semibold">{historyTrends.total_runs}</div>
+                </div>
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-2 py-2">
+                  <div className="text-slate-500">Avg Violations</div>
+                  <div className="text-amber-300 font-semibold">{historyTrends.avg_violations.toFixed(2)}</div>
+                </div>
+                <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-2 py-2">
+                  <div className="text-slate-500">Dynamic Issue Runs</div>
+                  <div className="text-violet-300 font-semibold">
+                    {historyTrends.dynamic_issue_runs}/{historyTrends.dynamic_runs}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500">No trend data available for selected window.</div>
+            )}
+            {historyTrends && historyTrends.top_violated_rules.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {historyTrends.top_violated_rules.slice(0, 3).map((item) => (
+                  <span
+                    key={item.rule_id}
+                    className="px-1.5 py-0.5 text-[10px] rounded bg-red-500/15 text-red-300 border border-red-500/25"
+                  >
+                    {item.rule_id} ({item.count})
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           
           <div className="flex-1 overflow-y-auto p-4 space-y-3">

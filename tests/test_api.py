@@ -161,6 +161,39 @@ def test_dynamic_artifact_history_index(client):
         client.delete("/api/v1/history")
 
 
+def test_history_trends_endpoint(client):
+    """History trends should aggregate compliance and rule statistics."""
+    client.delete("/api/v1/history")
+    try:
+        response_bad = client.post(
+            "/api/v1/analyze",
+            json={"code": "password = 'trend-secret'", "language": "python"},
+        )
+        assert response_bad.status_code == 200
+
+        response_good = client.post(
+            "/api/v1/analyze",
+            json={"code": "import os\nvalue = os.environ.get('SECRET')", "language": "python"},
+        )
+        assert response_good.status_code == 200
+
+        trends_response = client.get("/api/v1/history/trends?days=30")
+        assert trends_response.status_code == 200
+        trends = trends_response.json()
+
+        assert trends["window_days"] == 30
+        assert trends["total_runs"] >= 2
+        assert 0 <= trends["compliance_rate"] <= 100
+        assert isinstance(trends["series"], list)
+        assert len(trends["series"]) >= 1
+        assert isinstance(trends["top_violated_rules"], list)
+        if trends["top_violated_rules"]:
+            assert "rule_id" in trends["top_violated_rules"][0]
+            assert "count" in trends["top_violated_rules"][0]
+    finally:
+        client.delete("/api/v1/history")
+
+
 def test_analyze_summary(client):
     """Test analyze summary endpoint."""
     response = client.post("/api/v1/analyze/summary", json={
