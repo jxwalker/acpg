@@ -325,6 +325,9 @@ export default function App() {
     violations_count: number;
     policies_passed: number;
     severity_breakdown: Record<string, number>;
+    dynamic_executed?: boolean;
+    dynamic_runner?: string | null;
+    dynamic_artifacts?: Array<{ suite_id?: string; violation_rule_id?: string | null }>;
   }
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -1799,6 +1802,19 @@ export default function App() {
                       </>
                     )}
                   </div>
+
+                  {entry.dynamic_executed && (
+                    <div className="flex items-center gap-1 mt-2">
+                      <span className="px-1.5 py-0.5 text-[10px] bg-cyan-500/20 text-cyan-300 rounded">
+                        dynamic {entry.dynamic_artifacts?.length || 0}
+                      </span>
+                      {entry.dynamic_artifacts?.some(item => !!item.violation_rule_id) && (
+                        <span className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 rounded">
+                          runtime issues
+                        </span>
+                      )}
+                    </div>
+                  )}
                   
                   {Object.keys(entry.severity_breakdown || {}).length > 0 && (
                     <div className="flex gap-1 mt-2">

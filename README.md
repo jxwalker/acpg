@@ -14,7 +14,7 @@ This repository is active and production-oriented for local and CI usage.
 
 Current baseline:
 - Policies loaded: **39** (default + OWASP + NIST + JS/TS)
-- Test status: **107 passed, 1 skipped**
+- Test status: **109 passed, 1 skipped**
 - LLM strategy: **Responses API first**, fallback to Chat Completions when needed
 - Decision semantics: **AUTO -> grounded** (with optional secondary solver evidence)
 - Runtime compliance: **LangGraph runtime events included in proof evidence**
@@ -43,6 +43,8 @@ Core components:
 - Runtime policy compiler (tool/network/filesystem) with graded actions
 - Runtime policy evidence in proof bundles (`runtime_policy_enforcement`, `runtime_policy_monitoring`)
 - Sandboxed dynamic analysis (Python) with deterministic replay artifacts in proofs
+- Deterministic dynamic suites (`direct_execution`, `import_execution`, auto entrypoint invocation)
+- Dynamic replay artifact indexing endpoint for audit/CI workflows
 - Policy lifecycle audit support (version history and diff endpoints + UI)
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
@@ -156,6 +158,11 @@ Dynamic analysis:
 - Uses sandboxed subprocess execution with timeout/resource limits
 - Emits dynamic violations (`DYN-EXEC-TIMEOUT`, `DYN-EXEC-EXCEPTION`, `DYN-EXEC-CRASH`)
 - Includes deterministic replay evidence (`dynamic_replay_artifact`) in proof bundles
+- Supports deterministic suite execution (direct, import, and selected zero-arg entrypoints)
+
+History / audit index:
+- `GET /history`
+- `GET /history/dynamic-artifacts` (indexed dynamic replay artifacts; supports `violations_only`)
 
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`

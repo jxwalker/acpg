@@ -194,7 +194,7 @@ def test_prosecutor_dynamic_analysis_violation(monkeypatch):
 
         assert result.dynamic_analysis is not None
         assert result.dynamic_analysis.executed is True
-        assert any(v.detector == "dynamic_sandbox" for v in result.violations)
+        assert any(v.detector.startswith("dynamic_sandbox") for v in result.violations)
     finally:
         settings.ENABLE_DYNAMIC_TESTING = original_dynamic
         settings.ENABLE_STATIC_ANALYSIS = original_static

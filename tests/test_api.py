@@ -115,6 +115,43 @@ def test_analyze_clean_code(client):
     assert len(sec001_violations) == 0
 
 
+def test_dynamic_artifact_history_index(client):
+    """Dynamic artifact index should expose replay metadata for audit flows."""
+    from app.core.config import settings
+
+    original_dynamic = settings.ENABLE_DYNAMIC_TESTING
+    original_static = settings.ENABLE_STATIC_ANALYSIS
+    original_timeout = settings.DYNAMIC_SANDBOX_TIMEOUT_SECONDS
+    try:
+        settings.ENABLE_DYNAMIC_TESTING = True
+        settings.ENABLE_STATIC_ANALYSIS = False
+        settings.DYNAMIC_SANDBOX_TIMEOUT_SECONDS = 2
+        client.delete("/api/v1/history")
+
+        response = client.post(
+            "/api/v1/analyze",
+            json={
+                "code": "def main():\n    raise RuntimeError('history-dynamic')\n\nmain()\n",
+                "language": "python",
+            },
+        )
+        assert response.status_code == 200
+        analysis = response.json()
+        assert analysis.get("dynamic_analysis", {}).get("executed") is True
+
+        index_response = client.get("/api/v1/history/dynamic-artifacts?violations_only=true")
+        assert index_response.status_code == 200
+        payload = index_response.json()
+        assert payload["total"] >= 1
+        assert any(item["suite_id"] == "direct_execution" for item in payload["artifacts"])
+        assert all(item.get("replay_fingerprint") for item in payload["artifacts"])
+    finally:
+        settings.ENABLE_DYNAMIC_TESTING = original_dynamic
+        settings.ENABLE_STATIC_ANALYSIS = original_static
+        settings.DYNAMIC_SANDBOX_TIMEOUT_SECONDS = original_timeout
+        client.delete("/api/v1/history")
+
+
 def test_analyze_summary(client):
     """Test analyze summary endpoint."""
     response = client.post("/api/v1/analyze/summary", json={

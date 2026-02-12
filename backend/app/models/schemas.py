@@ -68,6 +68,8 @@ class DynamicReplayArtifact(BaseModel):
     """Deterministic replay metadata for dynamic analysis execution."""
 
     runner: str
+    suite_id: str
+    suite_name: str
     command: List[str]
     timeout_seconds: int
     deterministic_fingerprint: str
@@ -78,6 +80,8 @@ class DynamicExecutionArtifact(BaseModel):
     """Output from one sandboxed dynamic analysis execution."""
 
     artifact_id: str
+    suite_id: str
+    suite_name: str
     duration_seconds: float
     return_code: Optional[int] = None
     timed_out: bool = False

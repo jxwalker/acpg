@@ -521,7 +521,8 @@ class ProofAssembler:
                         type="dynamic_analysis",
                         tool=dynamic_result.runner,
                         output=(
-                            f"artifact_id={artifact.artifact_id}; return_code={artifact.return_code}; "
+                            f"artifact_id={artifact.artifact_id}; suite_id={artifact.suite_id}; "
+                            f"suite_name={artifact.suite_name}; return_code={artifact.return_code}; "
                             f"timed_out={artifact.timed_out}; duration_seconds={artifact.duration_seconds}; "
                             f"stderr={artifact.stderr[:300]}"
                         ),

@@ -23,6 +23,8 @@ def test_proof_includes_dynamic_replay_evidence():
         artifacts=[
             DynamicExecutionArtifact(
                 artifact_id="DYN-abc123-1",
+                suite_id="direct_execution",
+                suite_name="Direct Script Execution",
                 duration_seconds=0.1,
                 return_code=0,
                 timed_out=False,
@@ -30,6 +32,8 @@ def test_proof_includes_dynamic_replay_evidence():
                 stderr="",
                 replay=DynamicReplayArtifact(
                     runner="python_subprocess_isolated",
+                    suite_id="direct_execution",
+                    suite_name="Direct Script Execution",
                     command=["python", "-I", "-B", "artifact.py"],
                     timeout_seconds=2,
                     deterministic_fingerprint="f" * 64,

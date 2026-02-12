@@ -1328,6 +1328,30 @@ async def analyze_code(
         severity_breakdown = {}
         for v in result.violations:
             severity_breakdown[v.severity] = severity_breakdown.get(v.severity, 0) + 1
+
+        dynamic_artifacts: List[Dict[str, Any]] = []
+        if result.dynamic_analysis and result.dynamic_analysis.executed:
+            for artifact in result.dynamic_analysis.artifacts:
+                first_rule = next(
+                    (
+                        violation.rule_id
+                        for violation in result.dynamic_analysis.violations
+                        if violation.detector.endswith(artifact.suite_id)
+                    ),
+                    None,
+                )
+                dynamic_artifacts.append(
+                    {
+                        "artifact_id": artifact.artifact_id,
+                        "suite_id": artifact.suite_id,
+                        "suite_name": artifact.suite_name,
+                        "return_code": artifact.return_code,
+                        "timed_out": artifact.timed_out,
+                        "duration_seconds": artifact.duration_seconds,
+                        "replay_fingerprint": artifact.replay.deterministic_fingerprint,
+                        "violation_rule_id": first_rule,
+                    }
+                )
         
         await add_to_history(
             code=request.code,
@@ -1335,7 +1359,10 @@ async def analyze_code(
             compliant=adjudication.compliant,
             violations_count=len(result.violations),
             policies_passed=len(adjudication.satisfied_rules),
-            severity_breakdown=severity_breakdown
+            severity_breakdown=severity_breakdown,
+            dynamic_executed=bool(result.dynamic_analysis and result.dynamic_analysis.executed),
+            dynamic_runner=result.dynamic_analysis.runner if result.dynamic_analysis else None,
+            dynamic_artifacts=dynamic_artifacts,
         )
     except Exception:
         pass  # Don't fail if history save fails
@@ -2440,6 +2467,9 @@ class HistoryEntry(BaseModel):
     policies_passed: int
     severity_breakdown: dict
     code_hash: str
+    dynamic_executed: bool = False
+    dynamic_runner: Optional[str] = None
+    dynamic_artifacts: List[Dict[str, Any]] = []
 
 
 @router.get("/history")
@@ -2459,7 +2489,10 @@ async def add_to_history(
     compliant: bool = False,
     violations_count: int = 0,
     policies_passed: int = 0,
-    severity_breakdown: dict = None
+    severity_breakdown: dict = None,
+    dynamic_executed: bool = False,
+    dynamic_runner: Optional[str] = None,
+    dynamic_artifacts: Optional[List[Dict[str, Any]]] = None,
 ):
     """Add an analysis result to history."""
     history = load_history()
@@ -2481,13 +2514,47 @@ async def add_to_history(
         "violations_count": violations_count,
         "policies_passed": policies_passed,
         "severity_breakdown": severity_breakdown or {},
-        "code_hash": code_hash
+        "code_hash": code_hash,
+        "dynamic_executed": dynamic_executed,
+        "dynamic_runner": dynamic_runner,
+        "dynamic_artifacts": dynamic_artifacts or [],
     }
     
     history.append(entry)
     save_history(history)
     
     return {"message": "Added to history", "id": entry['id']}
+
+
+@router.get("/history/dynamic-artifacts")
+async def get_dynamic_artifact_index(
+    limit: int = Query(50, ge=1, le=500),
+    violations_only: bool = Query(False),
+):
+    """List recent dynamic replay artifacts across analysis history entries."""
+    history = load_history()
+    indexed: List[Dict[str, Any]] = []
+
+    for entry in reversed(history):
+        artifacts = entry.get("dynamic_artifacts") or []
+        if not artifacts:
+            continue
+        for artifact in artifacts:
+            if violations_only and not artifact.get("violation_rule_id"):
+                continue
+            indexed.append(
+                {
+                    "history_id": entry.get("id"),
+                    "timestamp": entry.get("timestamp"),
+                    "language": entry.get("language"),
+                    "compliant": entry.get("compliant"),
+                    **artifact,
+                }
+            )
+            if len(indexed) >= limit:
+                return {"artifacts": indexed, "total": len(indexed)}
+
+    return {"artifacts": indexed, "total": len(indexed)}
 
 
 @router.delete("/history/{entry_id}")
