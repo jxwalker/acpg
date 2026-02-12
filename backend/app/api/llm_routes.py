@@ -30,6 +30,7 @@ class LLMTestResult(BaseModel):
     diagnostics: Optional[Dict[str, Any]] = None
     endpoint: Optional[str] = None
     usage: Optional[Dict[str, Any]] = None
+    estimated_cost_usd: Optional[float] = None
 
 
 class SwitchProviderRequest(BaseModel):

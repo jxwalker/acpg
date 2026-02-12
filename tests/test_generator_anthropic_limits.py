@@ -72,4 +72,4 @@ def test_generator_caps_anthropic_output_tokens_for_non_streaming_requests(monke
 
     assert text == "print('fixed')"
     assert client.messages.calls
-    assert client.messages.calls[-1]["max_tokens"] == 4096
+    assert client.messages.calls[-1]["max_tokens"] == 2048

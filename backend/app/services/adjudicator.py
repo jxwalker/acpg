@@ -3,6 +3,7 @@
 Implements Dung's Abstract Argumentation Framework with grounded semantics
 to make formal compliance decisions based on competing arguments.
 """
+import time
 import shutil
 import json
 from typing import List, Dict, Set, Optional, Any, Tuple
@@ -67,27 +68,36 @@ class Adjudicator:
         Returns:
             AdjudicationResult with compliance decision and reasoning
         """
+        started = time.perf_counter()
         requested_semantics = (semantics or "grounded").lower()
-        semantics = requested_semantics
-        if semantics == "auto":
-            # Auto: always decide with grounded (skeptical, deterministic),
-            # and optionally compute other semantics as additional evidence.
-            semantics = "grounded"
+        valid_semantics = {"grounded", "auto", "stable", "preferred"}
+        if requested_semantics not in valid_semantics:
+            raise ValueError(
+                f"Unsupported semantics '{requested_semantics}'. "
+                "Supported: grounded, auto, stable, preferred."
+            )
 
         # Build argumentation graph
         graph = self.build_argumentation_graph(analysis.violations, policy_ids)
-        
-        # Compute extension
-        if semantics != "grounded":
-            # Stable/preferred semantics are NP-hard in general; we treat them as optional
-            # and require an external solver integration (planned).
-            raise ValueError(
-                f"Unsupported semantics '{semantics}' in this build. "
-                "Supported: grounded, auto. Planned: stable, preferred (via ASP/clingo)."
-            )
 
-        accepted = self.compute_grounded_extension(graph)
-        
+        effective_semantics = "grounded"
+        secondary_semantics = None
+        extension_details: Optional[Dict[str, Any]] = None
+
+        if requested_semantics == "auto":
+            # Auto: always decide with grounded (skeptical, deterministic),
+            # and optionally compute other semantics as additional evidence.
+            accepted = self.compute_grounded_extension(graph)
+            secondary_semantics = self._auto_secondary_semantics(graph)
+        elif requested_semantics == "grounded":
+            accepted = self.compute_grounded_extension(graph)
+        else:
+            accepted, extension_details, effective_semantics = self._compute_solver_semantics_decision(
+                graph=graph,
+                semantics=requested_semantics,
+            )
+            secondary_semantics = extension_details
+
         # Determine compliance
         violation_args = [a for a in graph.arguments if a.type == 'violation']
         accepted_violations = [a for a in violation_args if a.id in accepted]
@@ -101,17 +111,21 @@ class Adjudicator:
         unsatisfied_rules = list(violated_rules)
         
         # Build reasoning trace
-        reasoning = self._build_reasoning_trace(graph, accepted, accepted_violations)
+        reasoning = self._build_reasoning_trace(
+            graph,
+            accepted,
+            accepted_violations,
+            semantics=effective_semantics,
+            extension_details=extension_details,
+        )
 
-        secondary_semantics = None
         if requested_semantics == "auto":
-            secondary_semantics = self._auto_secondary_semantics(graph)
             reasoning.insert(
                 0,
                 {
                     "phase": "semantics_selection",
                     "requested": requested_semantics,
-                    "decision_semantics": semantics,
+                    "decision_semantics": effective_semantics,
                     "secondary_semantics": secondary_semantics,
                     "description": (
                         "AUTO mode decides using grounded semantics for conservative compliance. "
@@ -119,15 +133,114 @@ class Adjudicator:
                     ),
                 },
             )
-        
+        elif requested_semantics != effective_semantics:
+            reasoning.insert(
+                0,
+                {
+                    "phase": "semantics_selection",
+                    "requested": requested_semantics,
+                    "decision_semantics": effective_semantics,
+                    "secondary_semantics": secondary_semantics,
+                    "description": (
+                        f"Requested semantics '{requested_semantics}' fell back to '{effective_semantics}'. "
+                        "See details for solver availability/limitations."
+                    ),
+                },
+            )
+
+        adjudication_elapsed = round(time.perf_counter() - started, 6)
+        if analysis.performance is not None:
+            analysis.performance.adjudication_seconds = adjudication_elapsed
+
         return AdjudicationResult(
-            semantics=semantics,
+            semantics=effective_semantics,
+            requested_semantics=requested_semantics,
             secondary_semantics=secondary_semantics,
+            timing_seconds=adjudication_elapsed,
             compliant=len(accepted_violations) == 0,
             unsatisfied_rules=unsatisfied_rules,
             satisfied_rules=satisfied_rules,
             reasoning=reasoning
         )
+
+    def _compute_solver_semantics_decision(
+        self,
+        *,
+        graph: ArgumentationGraph,
+        semantics: str,
+    ) -> Tuple[Set[str], Dict[str, Any], str]:
+        """Compute solver-backed semantics with conservative fallback behavior."""
+        clingo_path = shutil.which("clingo")
+        if not clingo_path:
+            return (
+                self.compute_grounded_extension(graph),
+                {
+                    "enabled": False,
+                    "requested_semantics": semantics,
+                    "effective_semantics": "grounded",
+                    "fallback_reason": "clingo not available",
+                },
+                "grounded",
+            )
+
+        if getattr(graph, "set_attacks", None):
+            return (
+                self.compute_grounded_extension(graph),
+                {
+                    "enabled": False,
+                    "requested_semantics": semantics,
+                    "effective_semantics": "grounded",
+                    "fallback_reason": "solver semantics for joint attacks are not implemented",
+                },
+                "grounded",
+            )
+
+        try:
+            if semantics == "stable":
+                asp_result = compute_stable_extensions(graph, clingo_path=clingo_path)
+            elif semantics == "preferred":
+                asp_result = compute_preferred_extensions(graph, clingo_path=clingo_path)
+            else:
+                raise ValueError(f"Unsupported solver semantics: {semantics}")
+
+            extensions = asp_result.extensions or []
+            if not extensions:
+                accepted: Set[str] = set()
+            else:
+                # Conservative for regulated use: skeptical acceptance (in all extensions).
+                accepted = set(extensions[0])
+                for ext in extensions[1:]:
+                    accepted.intersection_update(set(ext))
+
+            details: Dict[str, Any] = {
+                "enabled": True,
+                "requested_semantics": semantics,
+                "effective_semantics": semantics,
+                "decision_mode": "skeptical",
+                "clingo_path": clingo_path,
+                "extension_count": len(extensions),
+                "extensions": extensions,
+                "accepted_arguments": sorted(accepted),
+            }
+
+            raw_size = len(json.dumps(asp_result.raw))
+            details["raw_size_bytes"] = raw_size
+            if raw_size <= 250_000:
+                details["raw"] = asp_result.raw
+
+            return accepted, details, semantics
+        except Exception as e:
+            return (
+                self.compute_grounded_extension(graph),
+                {
+                    "enabled": False,
+                    "requested_semantics": semantics,
+                    "effective_semantics": "grounded",
+                    "fallback_reason": "solver execution failed",
+                    "error": str(e),
+                },
+                "grounded",
+            )
 
     def _auto_secondary_semantics(self, graph: ArgumentationGraph) -> Dict[str, Any]:
         """Optional cross-checks under other semantics (preferred/stable).
@@ -463,9 +576,15 @@ class Adjudicator:
         
         return attacks
     
-    def _build_reasoning_trace(self, graph: ArgumentationGraph,
-                                accepted: Set[str],
-                                accepted_violations: List[Argument]) -> List[Dict[str, Any]]:
+    def _build_reasoning_trace(
+        self,
+        graph: ArgumentationGraph,
+        accepted: Set[str],
+        accepted_violations: List[Argument],
+        *,
+        semantics: str = "grounded",
+        extension_details: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         """Build a human-readable reasoning trace with formal logic steps."""
         trace = []
         
@@ -562,26 +681,44 @@ class Adjudicator:
             "attacks": attack_list
         })
         
-        # Step 4: Grounded Extension Computation
-        trace.append({
-            "step": 4,
-            "phase": "grounded_extension",
-            "title": "Grounded Extension Computation",
-            "description": "Computing the grounded extension using fixpoint iteration:",
-            "algorithm": [
-                "1. Initialize: accepted = ∅, rejected = ∅",
-                "2. Find unattacked arguments → add to accepted",
-                "3. Arguments attacked by accepted → add to rejected",
-                "4. Repeat until fixpoint (no changes)",
-                "5. Result: minimal complete extension"
-            ],
-            "result": {
-                "accepted": list(accepted),
-                "rejected": [a.id for a in graph.arguments if a.id not in accepted],
-                "accepted_count": len(accepted),
-                "rejected_count": len(graph.arguments) - len(accepted)
-            }
-        })
+        # Step 4: Semantics extension computation
+        if semantics == "grounded":
+            trace.append({
+                "step": 4,
+                "phase": "grounded_extension",
+                "title": "Grounded Extension Computation",
+                "description": "Computing the grounded extension using fixpoint iteration:",
+                "algorithm": [
+                    "1. Initialize: accepted = ∅, rejected = ∅",
+                    "2. Find unattacked arguments → add to accepted",
+                    "3. Arguments attacked by accepted → add to rejected",
+                    "4. Repeat until fixpoint (no changes)",
+                    "5. Result: minimal complete extension"
+                ],
+                "result": {
+                    "accepted": list(accepted),
+                    "rejected": [a.id for a in graph.arguments if a.id not in accepted],
+                    "accepted_count": len(accepted),
+                    "rejected_count": len(graph.arguments) - len(accepted)
+                }
+            })
+        else:
+            trace.append({
+                "step": 4,
+                "phase": "solver_extension",
+                "title": f"{semantics.title()} Semantics Computation",
+                "description": (
+                    f"Computed {semantics} extensions using ASP/clingo; "
+                    "decision uses skeptical acceptance for conservative compliance."
+                ),
+                "result": {
+                    "accepted": list(accepted),
+                    "rejected": [a.id for a in graph.arguments if a.id not in accepted],
+                    "accepted_count": len(accepted),
+                    "rejected_count": len(graph.arguments) - len(accepted),
+                    "details": extension_details,
+                }
+            })
         
         # Step 5: Compliance Decision
         violated_rules = list(set(a.rule_id for a in accepted_violations))

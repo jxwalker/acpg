@@ -32,11 +32,14 @@ Core components:
 - Responses-first OpenAI integration with compatibility fallback
 - Multi-provider LLM management (`openai`, compatible APIs, `anthropic`)
 - Argumentation semantics support (`grounded`, `auto`)
+- Solver-backed semantics options (`stable`, `preferred`) with grounded fallback when unavailable
 - Joint attacks (Nielsen-Parsons style) in grounded adjudication
 - Optional stable/preferred secondary semantics via ASP/clingo
+- Unified test-code library (file samples + DB-backed CRUD test cases)
 - Runtime guard decisions converted into formal violations
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
+- Analysis/enforcement performance telemetry in API responses and UI status cards
 
 ## Quick Start
 
@@ -122,6 +125,16 @@ LLM management:
 - `POST /llm/switch`
 - `POST /llm/test`
 
+Test case management:
+- `GET /test-cases` (unified file + DB list)
+- `GET /test-cases/{id}` (`db:<id>` or `file:<filename>`)
+- `POST /test-cases`
+- `PUT /test-cases/{id}` (DB only)
+- `DELETE /test-cases/{id}` (DB only)
+
+`POST /enforce` accepts:
+- `stop_on_stagnation` (default `true`) to stop early when iterations do not reduce violations
+
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`
 
@@ -129,6 +142,8 @@ Policy CRUD/grouping:
 
 - `grounded`: deterministic skeptical semantics for compliance decisions
 - `auto`: uses `grounded` for decisions, optionally computes stable/preferred as secondary evidence
+- `stable`: solver-backed (clingo) skeptical decision across stable extensions; falls back to grounded if unavailable
+- `preferred`: solver-backed (clingo) skeptical decision across preferred extensions; falls back to grounded if unavailable
 - Runtime guard violations (for denied tool actions) are first-class violations and participate in adjudication
 
 ## Documentation Map

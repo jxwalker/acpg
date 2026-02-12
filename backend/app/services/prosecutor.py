@@ -51,7 +51,9 @@ class Prosecutor:
             AnalysisResult with all violations found
         """
         import hashlib
+        import time
         artifact_id = hashlib.sha256(code.encode()).hexdigest()[:16]
+        started_at = time.perf_counter()
         
         # Auto-detect language if not provided
         if language is None:
@@ -59,17 +61,25 @@ class Prosecutor:
         
         all_violations = []
         tool_execution_info = {}
+        static_tools_seconds = 0.0
+        policy_checks_seconds = 0.0
+        dedupe_seconds = 0.0
         
         # Run static analysis tools if enabled
         if settings.ENABLE_STATIC_ANALYSIS:
+            tool_started = time.perf_counter()
             tool_violations, tool_execution_info = self.run_static_analysis_tools(code, language)
+            static_tools_seconds = time.perf_counter() - tool_started
             all_violations.extend(tool_violations)
         
         # Run policy regex/AST checks
+        policy_started = time.perf_counter()
         policy_violations = self.run_policy_checks(code, language, policy_ids)
+        policy_checks_seconds = time.perf_counter() - policy_started
         all_violations.extend(policy_violations)
         
         # Deduplicate violations (same rule + same line + same detector)
+        dedupe_started = time.perf_counter()
         seen = set()
         unique_violations = []
         for v in all_violations:
@@ -77,11 +87,20 @@ class Prosecutor:
             if key not in seen:
                 seen.add(key)
                 unique_violations.append(v)
+        dedupe_seconds = time.perf_counter() - dedupe_started
+        total_seconds = time.perf_counter() - started_at
         
         return AnalysisResult(
             artifact_id=artifact_id,
             violations=unique_violations,
-            tool_execution=tool_execution_info if tool_execution_info else None
+            tool_execution=tool_execution_info if tool_execution_info else None,
+            performance={
+                "total_seconds": round(total_seconds, 6),
+                "static_tools_seconds": round(static_tools_seconds, 6),
+                "policy_checks_seconds": round(policy_checks_seconds, 6),
+                "dedupe_seconds": round(dedupe_seconds, 6),
+                "tool_count": len(tool_execution_info),
+            },
         )
     
     def run_static_analysis_tools(self, code: str, language: str) -> tuple[List[Violation], Dict[str, Any]]:

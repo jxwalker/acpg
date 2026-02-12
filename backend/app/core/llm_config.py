@@ -88,7 +88,7 @@ class LLMProviderConfig:
         # Anthropic-compatible providers can reject non-streaming requests with very large
         # output budgets. Set a safe default unless explicitly configured.
         if max_output_tokens is None and provider_type == 'anthropic':
-            max_output_tokens = min(max_tokens, 4096)
+            max_output_tokens = min(max_tokens, 2048)
 
         temperature = data.get('temperature')
         try:
@@ -345,6 +345,16 @@ class LLMConfigManager:
                 text = response.content[0].text.strip() if response.content else ""
                 endpoint_used = "anthropic_messages"
                 usage_data = None
+                if hasattr(response, "usage") and response.usage is not None:
+                    input_tokens = int(getattr(response.usage, "input_tokens", 0) or 0)
+                    output_tokens = int(getattr(response.usage, "output_tokens", 0) or 0)
+                    usage_data = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": input_tokens + output_tokens,
+                        "cached_input_tokens": 0,
+                        "reasoning_tokens": 0,
+                    }
             else:
                 result = openai_text_with_usage(
                     client,
@@ -360,6 +370,19 @@ class LLMConfigManager:
                 endpoint_used = result.endpoint
                 usage_data = result.usage
 
+            estimated_cost_usd = None
+            if usage_data and provider.input_cost_per_1m is not None and provider.output_cost_per_1m is not None:
+                input_tokens = int(usage_data.get("input_tokens") or 0)
+                output_tokens = int(usage_data.get("output_tokens") or 0)
+                cached_input_tokens = int(usage_data.get("cached_input_tokens") or 0)
+                billable_input_tokens = max(0, input_tokens - cached_input_tokens)
+                input_cost = (billable_input_tokens / 1_000_000) * provider.input_cost_per_1m
+                output_cost = (output_tokens / 1_000_000) * provider.output_cost_per_1m
+                cached_cost = 0.0
+                if provider.cached_input_cost_per_1m is not None and cached_input_tokens > 0:
+                    cached_cost = (cached_input_tokens / 1_000_000) * provider.cached_input_cost_per_1m
+                estimated_cost_usd = round(input_cost + cached_cost + output_cost, 8)
+
             return {
                 "success": True,
                 "provider": provider.name,
@@ -367,6 +390,7 @@ class LLMConfigManager:
                 "response": text,
                 "endpoint": endpoint_used,
                 "usage": usage_data,
+                "estimated_cost_usd": estimated_cost_usd,
             }
         
         except Exception as e:

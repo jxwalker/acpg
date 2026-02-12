@@ -55,9 +55,16 @@ class Generator:
 
         # Non-streaming Anthropic/Kimi requests can fail with very large budgets.
         if self.provider is not None and self.provider.type == "anthropic":
-            max_out = min(max_out, 4096)
+            max_out = min(max_out, 2048)
 
         return max(1, max_out)
+
+    def _estimate_fix_output_tokens(self, code: str) -> int:
+        """Estimate a practical output budget for remediation code responses."""
+        # Approximate token count from characters and add rewrite headroom.
+        estimated_tokens = int(len(code) / 3.5) + 256
+        # Avoid tiny budgets that truncate fixes; also avoid runaway generations.
+        return max(512, min(2048, estimated_tokens))
 
     def _refresh_llm(self):
         """Refresh LLM client/provider for the currently active config."""
@@ -270,7 +277,13 @@ ORIGINAL CODE:
         Return ONLY the fixed code, no explanations or markdown."""
 
         try:
-            fixed_code = self._generate_text(system_prompt=system_prompt, user_prompt=user_prompt, operation="fix_violations")
+            estimated_fix_budget = self._estimate_fix_output_tokens(code)
+            fixed_code = self._generate_text(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_output_tokens=estimated_fix_budget,
+                operation="fix_violations",
+            )
             if not fixed_code:
                 raise ValueError("LLM returned empty response")
             
@@ -300,7 +313,7 @@ ORIGINAL CODE:
             elif "streaming is required" in error_msg.lower():
                 raise ValueError(
                     f"LLM request exceeded non-streaming limits for {self.provider.name}. "
-                    "Set a smaller max_output_tokens (e.g., <= 4096) or use streaming-capable handling. "
+                    "Set a smaller max_output_tokens (e.g., <= 2048) or use streaming-capable handling. "
                     f"Error: {error_msg}"
                 )
             else:

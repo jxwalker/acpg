@@ -70,6 +70,7 @@ class ToolExecutor:
         self.config = get_analyzer_config()
         self.cache = get_tool_cache()
         self.runtime_guard = get_runtime_guard()
+        self._tool_version_cache: Dict[str, Optional[str]] = {}
     
     def execute_tool(
         self,
@@ -231,6 +232,9 @@ class ToolExecutor:
     
     def _get_tool_version(self, tool_name: str) -> Optional[str]:
         """Get tool version by running --version or similar."""
+        if tool_name in self._tool_version_cache:
+            return self._tool_version_cache[tool_name]
+
         try:
             # Try common version flags
             version_commands = [
@@ -255,10 +259,13 @@ class ToolExecutor:
                         import re
                         version_match = re.search(r'(\d+\.\d+\.\d+)', output)
                         if version_match:
-                            return version_match.group(1)
+                            version = version_match.group(1)
+                            self._tool_version_cache[tool_name] = version
+                            return version
                         # Fallback: return first line if it looks like a version
                         first_line = output.split('\n')[0].strip()
                         if re.search(r'\d+\.\d+', first_line):
+                            self._tool_version_cache[tool_name] = first_line
                             return first_line
                 except subprocess.TimeoutExpired:
                     logger.debug(f"Tool {tool_name} version check timed out")
@@ -271,6 +278,7 @@ class ToolExecutor:
                     continue
         except Exception as e:
             logger.warning(f"Failed to get version for {tool_name}: {e}")
+        self._tool_version_cache[tool_name] = None
         return None
     
     def _execute_with_file(

@@ -52,4 +52,4 @@ def test_anthropic_provider_defaults_max_output_tokens_to_safe_non_streaming_lim
     )
 
     assert cfg.preferred_endpoint == "anthropic_messages"
-    assert cfg.max_output_tokens == 4096
+    assert cfg.max_output_tokens == 2048

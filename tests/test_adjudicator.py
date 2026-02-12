@@ -313,3 +313,59 @@ def test_reasoning_trace():
     # Should have conclusion in reasoning
     conclusions = [r for r in result.reasoning if 'conclusion' in r]
     assert len(conclusions) > 0
+
+
+def test_stable_semantics_path_uses_solver_result(monkeypatch):
+    """Stable semantics should use solver-backed decision path when available."""
+    from backend.app.services.adjudicator import Adjudicator
+    from backend.app.services.policy_compiler import PolicyCompiler
+
+    compiler = PolicyCompiler()
+    compiler.load_policies()
+
+    adjudicator = Adjudicator()
+    adjudicator.policy_compiler = compiler
+
+    analysis = AnalysisResult(
+        artifact_id="stable123",
+        violations=[],
+    )
+
+    def fake_solver(*, graph, semantics):
+        assert semantics == "stable"
+        return set(), {"enabled": True, "requested_semantics": "stable"}, "stable"
+
+    monkeypatch.setattr(adjudicator, "_compute_solver_semantics_decision", fake_solver)
+
+    result = adjudicator.adjudicate(analysis, semantics="stable")
+    assert result.requested_semantics == "stable"
+    assert result.semantics == "stable"
+    assert result.secondary_semantics == {"enabled": True, "requested_semantics": "stable"}
+
+
+def test_preferred_semantics_fallback_records_selection_trace(monkeypatch):
+    """Preferred semantics fallback should be explicit in reasoning trace."""
+    from backend.app.services.adjudicator import Adjudicator
+    from backend.app.services.policy_compiler import PolicyCompiler
+
+    compiler = PolicyCompiler()
+    compiler.load_policies()
+
+    adjudicator = Adjudicator()
+    adjudicator.policy_compiler = compiler
+
+    analysis = AnalysisResult(
+        artifact_id="pref123",
+        violations=[],
+    )
+
+    def fake_solver(*, graph, semantics):
+        assert semantics == "preferred"
+        return set(), {"enabled": False, "fallback_reason": "no solver"}, "grounded"
+
+    monkeypatch.setattr(adjudicator, "_compute_solver_semantics_decision", fake_solver)
+
+    result = adjudicator.adjudicate(analysis, semantics="preferred")
+    assert result.requested_semantics == "preferred"
+    assert result.semantics == "grounded"
+    assert result.reasoning[0]["phase"] == "semantics_selection"

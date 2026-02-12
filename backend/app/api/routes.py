@@ -2,6 +2,7 @@
 import json
 import hashlib
 import uuid
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Literal
@@ -24,7 +25,7 @@ from ..core.tool_rules_registry import get_tool_rules, get_all_tool_rules, get_t
 from ..services.tool_cache import get_tool_cache
 from ..services.tool_mapper import get_tool_mapper
 from ..core.config import settings
-from ..core.database import get_db, AuditLogger, ProofStore
+from ..core.database import get_db, AuditLogger, ProofStore, TestCaseStore
 
 router = APIRouter()
 
@@ -380,41 +381,233 @@ async def get_metrics():
 # Sample Files Endpoints
 # ============================================================================
 
+
+class TestCaseItem(BaseModel):
+    """Unified test case item from DB or file source."""
+    id: str
+    source: Literal["db", "file"]
+    name: str
+    description: Optional[str] = None
+    language: str = "python"
+    tags: List[str] = []
+    violations: List[str] = []
+    read_only: bool = False
+    code: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class CreateTestCaseRequest(BaseModel):
+    """Create a DB-backed test case."""
+    name: str
+    description: Optional[str] = None
+    language: str = "python"
+    code: str
+    tags: List[str] = []
+
+
+class UpdateTestCaseRequest(BaseModel):
+    """Update a DB-backed test case."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    language: Optional[str] = None
+    code: Optional[str] = None
+    tags: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+
+def _get_samples_dir() -> Path:
+    import os
+    return Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
+
+
+def _parse_file_test_case(file_path: Path, include_code: bool = False) -> Dict[str, Any]:
+    content = file_path.read_text()
+    lines = content.split('\n')
+
+    description = ""
+    violations: List[str] = []
+    for line in lines[:20]:
+        stripped = line.strip()
+        if stripped.startswith('"""') or stripped.startswith("'''"):
+            continue
+        if "Sample" in line and ":" in line:
+            description = line.split(":", 1)[1].strip()
+        if "Violations:" in line:
+            violations = [v.strip() for v in line.split(":", 1)[1].strip().split(",")]
+
+    item: Dict[str, Any] = {
+        "id": f"file:{file_path.name}",
+        "source": "file",
+        "name": file_path.name,
+        "description": description or file_path.stem.replace("_", " ").title(),
+        "language": "python",
+        "tags": ["file-sample"],
+        "violations": violations,
+        "read_only": True,
+        "created_at": None,
+        "updated_at": None,
+    }
+    if include_code:
+        item["code"] = content
+    return item
+
+
+def _db_case_to_item(case: Any, include_code: bool = False) -> Dict[str, Any]:
+    item: Dict[str, Any] = {
+        "id": f"db:{case.id}",
+        "source": "db",
+        "name": case.name,
+        "description": case.description,
+        "language": case.language or "python",
+        "tags": case.tags or [],
+        "violations": [],
+        "read_only": False,
+        "created_at": case.created_at.isoformat() if case.created_at else None,
+        "updated_at": case.updated_at.isoformat() if case.updated_at else None,
+    }
+    if include_code:
+        item["code"] = case.code
+    return item
+
+
+@router.get("/test-cases", response_model=Dict[str, List[TestCaseItem]])
+async def list_test_cases(
+    source: Literal["all", "db", "file"] = Query("all"),
+    language: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """List test cases from DB and/or file samples."""
+    items: List[Dict[str, Any]] = []
+
+    if source in ("all", "db"):
+        store = TestCaseStore(db)
+        for case in store.list_cases(include_inactive=False, language=language):
+            items.append(_db_case_to_item(case, include_code=False))
+
+    if source in ("all", "file"):
+        samples_dir = _get_samples_dir()
+        if samples_dir.exists():
+            for file in sorted(samples_dir.glob("*.py")):
+                if language and language != "python":
+                    continue
+                items.append(_parse_file_test_case(file, include_code=False))
+
+    return {"cases": items}
+
+
+@router.get("/test-cases/{case_id}", response_model=TestCaseItem)
+async def get_test_case(case_id: str, db: Session = Depends(get_db)):
+    """Get full test case content by ID (db:<id> or file:<filename>)."""
+    if case_id.startswith("db:"):
+        try:
+            db_id = int(case_id.split(":", 1)[1])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid DB test case id")
+        store = TestCaseStore(db)
+        case = store.get_case(db_id)
+        if not case or not case.is_active:
+            raise HTTPException(status_code=404, detail=f"Test case not found: {case_id}")
+        return TestCaseItem(**_db_case_to_item(case, include_code=True))
+
+    if case_id.startswith("file:"):
+        filename = case_id.split(":", 1)[1]
+        samples_dir = _get_samples_dir()
+        samples_root = samples_dir.resolve()
+        file_path = (samples_dir / filename).resolve()
+        if (
+            not samples_dir.exists()
+            or not str(file_path).startswith(str(samples_root))
+            or not file_path.exists()
+            or file_path.suffix != ".py"
+        ):
+            raise HTTPException(status_code=404, detail=f"Test case not found: {case_id}")
+        return TestCaseItem(**_parse_file_test_case(file_path, include_code=True))
+
+    raise HTTPException(status_code=400, detail="Unsupported test case id format")
+
+
+@router.post("/test-cases", response_model=TestCaseItem)
+async def create_test_case(request: CreateTestCaseRequest, db: Session = Depends(get_db)):
+    """Create a DB-backed test case."""
+    if not request.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+    if not request.code.strip():
+        raise HTTPException(status_code=400, detail="code is required")
+
+    store = TestCaseStore(db)
+    case = store.create_case(
+        name=request.name.strip(),
+        description=request.description,
+        language=request.language,
+        code=request.code,
+        tags=request.tags,
+    )
+    return TestCaseItem(**_db_case_to_item(case, include_code=True))
+
+
+@router.put("/test-cases/{case_id}", response_model=TestCaseItem)
+async def update_test_case(case_id: str, request: UpdateTestCaseRequest, db: Session = Depends(get_db)):
+    """Update a DB-backed test case."""
+    if not case_id.startswith("db:"):
+        raise HTTPException(status_code=400, detail="Only DB-backed test cases are editable")
+    try:
+        db_id = int(case_id.split(":", 1)[1])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid DB test case id")
+
+    store = TestCaseStore(db)
+    case = store.get_case(db_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Test case not found: {case_id}")
+
+    updated = store.update_case(
+        case,
+        name=request.name,
+        description=request.description,
+        language=request.language,
+        code=request.code,
+        tags=request.tags,
+        is_active=request.is_active,
+    )
+    return TestCaseItem(**_db_case_to_item(updated, include_code=True))
+
+
+@router.delete("/test-cases/{case_id}")
+async def delete_test_case(case_id: str, db: Session = Depends(get_db)):
+    """Delete a DB-backed test case."""
+    if not case_id.startswith("db:"):
+        raise HTTPException(status_code=400, detail="Only DB-backed test cases are deletable")
+    try:
+        db_id = int(case_id.split(":", 1)[1])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid DB test case id")
+
+    store = TestCaseStore(db)
+    case = store.get_case(db_id)
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Test case not found: {case_id}")
+    store.delete_case(case)
+    return {"success": True, "message": f"Deleted {case_id}"}
+
 @router.get("/samples")
 async def list_sample_files():
     """List available sample code files for testing."""
-    import os
-    from pathlib import Path
-    
-    # Use environment variable or default path
-    samples_dir = Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
+    samples_dir = _get_samples_dir()
     
     if not samples_dir.exists():
         return {"samples": [], "error": f"Samples directory not found: {samples_dir}"}
     
     samples = []
     for file in sorted(samples_dir.glob("*.py")):
-        # Read first few lines for description
-        with open(file, 'r') as f:
-            content = f.read()
-            lines = content.split('\n')
-            
-            # Extract description from docstring
-            description = ""
-            violations = []
-            for line in lines[:20]:
-                if line.strip().startswith('"""') or line.strip().startswith("'''"):
-                    continue
-                if "Sample" in line and ":" in line:
-                    description = line.split(":", 1)[1].strip()
-                if "Violations:" in line:
-                    violations = [v.strip() for v in line.split(":", 1)[1].strip().split(",")]
-        
+        item = _parse_file_test_case(file, include_code=False)
+        content = file.read_text()
+        lines = content.split('\n')
         samples.append({
-            "name": file.name,
+            "name": item["name"],
             "path": str(file),
-            "description": description or file.stem.replace("_", " ").title(),
-            "violations": violations,
+            "description": item["description"],
+            "violations": item["violations"],
             "size": len(content),
             "lines": len(lines)
         })
@@ -425,13 +618,15 @@ async def list_sample_files():
 @router.get("/samples/{filename}")
 async def get_sample_file(filename: str):
     """Get contents of a sample file."""
-    import os
-    from pathlib import Path
+    samples_dir = _get_samples_dir()
+    samples_root = samples_dir.resolve()
+    file_path = (samples_dir / filename).resolve()
     
-    samples_dir = Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
-    file_path = samples_dir / filename
-    
-    if not file_path.exists() or not file_path.suffix == '.py':
+    if (
+        not str(file_path).startswith(str(samples_root))
+        or not file_path.exists()
+        or file_path.suffix != '.py'
+    ):
         raise HTTPException(status_code=404, detail=f"Sample file not found: {filename}")
     
     with open(file_path, 'r') as f:
@@ -1206,9 +1401,9 @@ async def fix_code(request: FixCodeRequest):
 @router.post("/adjudicate", response_model=AdjudicationResult)
 async def adjudicate_analysis(
     analysis: AnalysisResult,
-    semantics: Literal["grounded", "auto"] = Query(
+    semantics: Literal["grounded", "auto", "stable", "preferred"] = Query(
         "grounded",
-        description="Argumentation semantics: grounded, auto (planned: stable, preferred)",
+        description="Argumentation semantics: grounded, auto, stable, preferred",
     ),
 ):
     """
@@ -1289,90 +1484,185 @@ async def enforce_compliance(
     code = request.code
     original_code = request.code
     violations_fixed = []
+    run_started = time.perf_counter()
+    analysis_total_seconds = 0.0
+    adjudication_total_seconds = 0.0
+    fix_total_seconds = 0.0
+    proof_total_seconds = 0.0
+    iteration_metrics: List[Dict[str, Any]] = []
+    stopped_early_reason: Optional[str] = None
+    seen_code_hashes = {hashlib.sha256(code.encode()).hexdigest()}
+    prev_violation_fingerprint: Optional[tuple[str, ...]] = None
+    prev_violation_count: Optional[int] = None
+
+    def _build_performance() -> Dict[str, Any]:
+        return {
+            "total_seconds": round(time.perf_counter() - run_started, 6),
+            "analysis_seconds": round(analysis_total_seconds, 6),
+            "adjudication_seconds": round(adjudication_total_seconds, 6),
+            "fix_seconds": round(fix_total_seconds, 6),
+            "proof_seconds": round(proof_total_seconds, 6),
+            "stopped_early_reason": stopped_early_reason,
+            "iterations": iteration_metrics,
+        }
     
     for iteration in range(request.max_iterations):
+        iter_num = iteration + 1
+        iter_metrics: Dict[str, Any] = {
+            "iteration": iter_num,
+            "violation_count": 0,
+            "compliant": False,
+            "analysis_seconds": 0.0,
+            "adjudication_seconds": 0.0,
+            "fix_attempted": False,
+            "semantics_used": None,
+        }
+
         # Analyze
+        analysis_started = time.perf_counter()
         analysis = prosecutor.analyze(
             code=code,
             language=request.language,
             policy_ids=policy_ids if policy_ids else None
         )
+        analysis_seconds = time.perf_counter() - analysis_started
+        analysis_total_seconds += analysis_seconds
+        iter_metrics["analysis_seconds"] = round(analysis_seconds, 6)
+        iter_metrics["violation_count"] = len(analysis.violations)
         
         # Adjudicate
+        adjudication_started = time.perf_counter()
         adjudication = adjudicator.adjudicate(analysis, policy_ids, semantics=semantics)
+        adjudication_seconds = time.perf_counter() - adjudication_started
+        adjudication_total_seconds += adjudication_seconds
+        iter_metrics["adjudication_seconds"] = round(adjudication_seconds, 6)
+        iter_metrics["compliant"] = adjudication.compliant
+        iter_metrics["semantics_used"] = adjudication.semantics
+        iteration_metrics.append(iter_metrics)
         
         if adjudication.compliant:
             # Success! Generate proof bundle
+            proof_started = time.perf_counter()
             proof = proof_assembler.assemble_proof(
                 code=code,
                 analysis=analysis,
                 adjudication=adjudication,
                 language=request.language
             )
+            proof_total_seconds += time.perf_counter() - proof_started
             
             return EnforceResponse(
                 original_code=original_code,
                 final_code=code,
-                iterations=iteration + 1,
+                iterations=iter_num,
                 compliant=True,
                 violations_fixed=violations_fixed,
                 llm_usage=generator.get_usage_summary(),
+                performance=_build_performance(),
                 proof_bundle=proof
             )
+
+        current_fingerprint = tuple(sorted(v.rule_id for v in analysis.violations))
+        if (
+            request.stop_on_stagnation
+            and prev_violation_fingerprint is not None
+            and current_fingerprint == prev_violation_fingerprint
+            and prev_violation_count is not None
+            and len(analysis.violations) >= prev_violation_count
+        ):
+            stopped_early_reason = "stagnation_no_violation_reduction"
+            break
         
         # Not compliant - attempt fix
         try:
+            iter_metrics["fix_attempted"] = True
+            fix_started = time.perf_counter()
             fixed_code = generator.fix_violations(
                 code=code,
                 violations=analysis.violations,
                 language=request.language
             )
+            fix_seconds = time.perf_counter() - fix_started
+            fix_total_seconds += fix_seconds
+            iter_metrics["fix_seconds"] = round(fix_seconds, 6)
             
             # Track what we're fixing
             violations_fixed.extend([v.rule_id for v in analysis.violations])
-            code = fixed_code
+            next_code = fixed_code
+            if next_code.strip() == code.strip():
+                stopped_early_reason = "fix_returned_unchanged_code"
+                break
+
+            next_hash = hashlib.sha256(next_code.encode()).hexdigest()
+            if request.stop_on_stagnation and next_hash in seen_code_hashes:
+                code = next_code
+                stopped_early_reason = "fix_cycle_detected"
+                break
+            seen_code_hashes.add(next_hash)
+            code = next_code
+            prev_violation_fingerprint = current_fingerprint
+            prev_violation_count = len(analysis.violations)
             
-        except Exception:
+        except Exception as e:
+            iter_metrics["fix_attempted"] = True
+            iter_metrics["fix_error"] = str(e)
             # Fix failed - still generate proof bundle for formal logic visibility
+            fail_analysis_started = time.perf_counter()
             fail_analysis = prosecutor.analyze(
                 code=code,
                 language=request.language,
                 policy_ids=policy_ids if policy_ids else None
             )
+            analysis_total_seconds += time.perf_counter() - fail_analysis_started
+            fail_adjudication_started = time.perf_counter()
             fail_adjudication = adjudicator.adjudicate(fail_analysis, policy_ids, semantics=semantics)
+            adjudication_total_seconds += time.perf_counter() - fail_adjudication_started
+            fail_proof_started = time.perf_counter()
             fail_proof = proof_assembler.assemble_proof(
                 code=code,
                 analysis=fail_analysis,
                 adjudication=fail_adjudication,
                 language=request.language
             )
+            proof_total_seconds += time.perf_counter() - fail_proof_started
+            stopped_early_reason = "fix_error"
             
             return EnforceResponse(
                 original_code=original_code,
                 final_code=code,
-                iterations=iteration + 1,
+                iterations=iter_num,
                 compliant=False,
                 violations_fixed=violations_fixed,
                 llm_usage=generator.get_usage_summary(),
+                performance=_build_performance(),
                 proof_bundle=fail_proof
             )
     
     # Max iterations reached without compliance
     # Still generate a proof bundle to show the formal logic of why it failed
+    if stopped_early_reason is None:
+        stopped_early_reason = "max_iterations_reached"
+
+    final_analysis_started = time.perf_counter()
     final_analysis = prosecutor.analyze(
         code=code,
         language=request.language,
         policy_ids=policy_ids if policy_ids else None
     )
+    analysis_total_seconds += time.perf_counter() - final_analysis_started
+    final_adjudication_started = time.perf_counter()
     final_adjudication = adjudicator.adjudicate(final_analysis, policy_ids, semantics=semantics)
+    adjudication_total_seconds += time.perf_counter() - final_adjudication_started
     
     # Generate proof bundle even for non-compliant code (for formal logic visibility)
+    proof_started = time.perf_counter()
     proof = proof_assembler.assemble_proof(
         code=code,
         analysis=final_analysis,
         adjudication=final_adjudication,
         language=request.language
     )
+    proof_total_seconds += time.perf_counter() - proof_started
     
     # Log enforcement attempt
     try:
@@ -1392,10 +1682,11 @@ async def enforce_compliance(
     return EnforceResponse(
         original_code=original_code,
         final_code=code,
-        iterations=request.max_iterations,
+        iterations=len(iteration_metrics) if iteration_metrics else request.max_iterations,
         compliant=False,
         violations_fixed=violations_fixed,
         llm_usage=generator.get_usage_summary(),
+        performance=_build_performance(),
         proof_bundle=proof
     )
 
@@ -1411,7 +1702,7 @@ async def generate_proof(
     db: Session = Depends(get_db),
     semantics: str = Query(
         "grounded",
-        description="Argumentation semantics: grounded, auto (planned: stable, preferred)",
+        description="Argumentation semantics: grounded, auto, stable, preferred",
     ),
 ):
     """

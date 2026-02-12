@@ -53,11 +53,22 @@ class ToolExecutionInfo(BaseModel):
     findings: Optional[List[Dict[str, Any]]] = None  # Raw findings for debugging
 
 
+class AnalysisPerformance(BaseModel):
+    """Performance timing breakdown for analysis/adjudication phases."""
+    total_seconds: float
+    static_tools_seconds: float = 0.0
+    policy_checks_seconds: float = 0.0
+    dedupe_seconds: float = 0.0
+    adjudication_seconds: Optional[float] = None
+    tool_count: int = 0
+
+
 class AnalysisResult(BaseModel):
     """Result of static/dynamic analysis."""
     artifact_id: str
     violations: List[Violation]
     tool_execution: Optional[Dict[str, ToolExecutionInfo]] = None  # Tool execution metadata
+    performance: Optional[AnalysisPerformance] = None
 
 
 class GeneratorRequest(BaseModel):
@@ -111,7 +122,9 @@ class ArgumentationGraph(BaseModel):
 class AdjudicationResult(BaseModel):
     """Result of adjudication."""
     semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    requested_semantics: Optional[str] = None
     secondary_semantics: Optional[Dict[str, Any]] = None  # Optional solver-backed cross-checks
+    timing_seconds: Optional[float] = None
     compliant: bool
     unsatisfied_rules: List[str]
     satisfied_rules: List[str]
@@ -173,6 +186,31 @@ class EnforceRequest(BaseModel):
     max_iterations: int = 3
     policies: Optional[List[str]] = None
     semantics: Optional[str] = None  # grounded, stable, preferred, auto
+    stop_on_stagnation: bool = True
+
+
+class EnforceIterationMetrics(BaseModel):
+    """Per-iteration performance and progress details."""
+    iteration: int
+    violation_count: int
+    compliant: bool
+    analysis_seconds: float
+    adjudication_seconds: float
+    fix_seconds: Optional[float] = None
+    fix_attempted: bool = False
+    fix_error: Optional[str] = None
+    semantics_used: Optional[str] = None
+
+
+class EnforcePerformance(BaseModel):
+    """Aggregated performance details for an enforce run."""
+    total_seconds: float
+    analysis_seconds: float
+    adjudication_seconds: float
+    fix_seconds: float
+    proof_seconds: float
+    stopped_early_reason: Optional[str] = None
+    iterations: List[EnforceIterationMetrics] = Field(default_factory=list)
 
 
 class EnforceResponse(BaseModel):
@@ -183,4 +221,5 @@ class EnforceResponse(BaseModel):
     compliant: bool
     violations_fixed: List[str]
     llm_usage: Optional[Dict[str, Any]] = None
+    performance: Optional[EnforcePerformance] = None
     proof_bundle: Optional[ProofBundle] = None

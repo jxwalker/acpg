@@ -1,27 +1,31 @@
 # Current Priorities
 
-Last refreshed: **February 11, 2026**
+Last refreshed: **February 12, 2026**
 
-## Immediate Priorities
+## Active Delivery Checklist
 
-1. Runtime policy compiler
-- Expand beyond tool allow/deny into policy checks over runtime events.
-- Define runtime policy schema and evaluator with deterministic outputs.
+1. [x] Performance diagnostics for slow analyses/enforcement (e.g., sample 9)
+- Add backend timing breakdowns for tool phase, policy phase, adjudication, and total.
+- Add UI visibility for timing and LLM latency/cost per run.
+- Reduce avoidable overhead in tool execution path.
 
-2. Runtime enforcement levels
-- Add `deny`, `require_approval`, and `allow_with_monitoring` outcomes.
-- Ensure each outcome is captured as evidence and adjudication input.
+2. [x] Semantics expansion in API + UI
+- Expose `stable` and `preferred` options in addition to `grounded` and `auto`.
+- Keep conservative compliance behavior explicit for regulated use (skeptical decisioning).
+- Surface fallback/solver availability details in reasoning output.
 
-3. Dynamic analysis safety
-- Implement sandboxed execution for dynamic tests.
-- Record deterministic dynamic-analysis evidence in proof bundles.
+3. [x] Test code management system (CRUD + DB)
+- Add DB-backed test case storage (create/read/update/delete).
+- Keep file-based sample loading as a first-class source.
+- Provide a unified API + UI loader for both DB and file test code.
 
-4. Solver-path maturity
-- Improve stable/preferred observability and failure reporting.
-- Plan support for joint attacks in solver-backed semantics.
+4. [x] UX correctness fixes
+- Fix status card so it does not show "Ready to Analyze" while analysis/enforcement is running.
+- Fix test-case dropdown so click-away always closes it.
 
-5. Policy lifecycle and governance
-- Better versioning, auditability, and controlled rollout for policy changes.
+5. [x] Cost testing in UI
+- Ensure provider test and run results expose token usage and estimated cost where pricing metadata is available.
+- Keep cost fields editable in model configuration.
 
 ## Recently Completed
 
@@ -30,7 +34,9 @@ Last refreshed: **February 11, 2026**
 - Joint attacks in grounded engine
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
-- CI stability fixes and passing checks
+- Kimi non-streaming remediation fix (safe output token caps)
+- Safety tool installed by default in backend requirements
+- Startup/status probe stability improvements
 
 ## Quality Gate
 

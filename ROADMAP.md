@@ -1,4 +1,4 @@
-# ACPG Roadmap (Refreshed February 11, 2026)
+# ACPG Roadmap (Refreshed February 12, 2026)
 
 ## Vision
 
@@ -10,11 +10,13 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Policy-as-code with default + OWASP + NIST + JS/TS coverage
 - Responses-first OpenAI integration with fallback behavior
 - Formal adjudication with grounded semantics
-- AUTO semantics mode (grounded decision, optional secondary solver evidence)
+- Semantics support: grounded, auto, stable, preferred (with explicit fallback behavior)
 - Joint attacks (Nielsen-Parsons style) in grounded computation
 - Signed proof bundles with evidence and argumentation trace
 - LangGraph orchestration with runtime event trace
 - Runtime guard policy-to-violation flow for tool actions
+- Unified test code management: file samples + DB-backed CRUD test cases
+- Analysis/enforcement timing telemetry and UI performance visibility
 - CI pipeline covering lint/test/build/integration/docker
 
 ## Active Near-Term Priorities
@@ -32,12 +34,18 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Record deterministic dynamic-analysis evidence in proof bundles
 
 4. Solver integration maturity
-- Expand stable/preferred support and improve observability when solver is unavailable
-- Explore joint-attack semantics support in solver-backed paths
+- Add full joint-attack semantics to solver-backed paths (stable/preferred)
+- Add deterministic solver policy for skeptical vs credulous acceptance mode selection
 
-5. Policy lifecycle UX
+5. Policy lifecycle UX and test operations
 - Better versioning and policy diff/audit views
 - Safer rollout controls for policy updates
+- Bulk test-case import/export and tagging workflows for regulated regression suites
+
+6. Runtime and dynamic compliance evidence
+- Runtime event policy compiler with deterministic rule evaluation
+- Sandboxed dynamic checks with reproducible replay artifacts
+- Formal linkage of dynamic/runtime evidence into proof argumentation
 
 ## Medium-Term Priorities
 

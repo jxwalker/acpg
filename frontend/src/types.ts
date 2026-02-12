@@ -50,12 +50,22 @@ export interface AnalysisResult {
   artifact_id: string;
   violations: Violation[];
   tool_execution?: Record<string, ToolExecutionInfo>;
+  performance?: {
+    total_seconds: number;
+    static_tools_seconds: number;
+    policy_checks_seconds: number;
+    dedupe_seconds: number;
+    adjudication_seconds?: number;
+    tool_count: number;
+  };
 }
 
 export interface AdjudicationResult {
   compliant: boolean;
-  semantics?: string; // grounded, auto (planned: stable, preferred)
+  semantics?: string; // grounded, auto, stable, preferred
+  requested_semantics?: string;
   secondary_semantics?: Record<string, unknown>;
+  timing_seconds?: number;
   unsatisfied_rules: string[];
   satisfied_rules: string[];
   reasoning: Record<string, unknown>[];
@@ -198,6 +208,25 @@ export interface EnforceResponse {
   iterations: number;
   compliant: boolean;
   violations_fixed: string[];
+  performance?: {
+    total_seconds: number;
+    analysis_seconds: number;
+    adjudication_seconds: number;
+    fix_seconds: number;
+    proof_seconds: number;
+    stopped_early_reason?: string | null;
+    iterations: Array<{
+      iteration: number;
+      violation_count: number;
+      compliant: boolean;
+      analysis_seconds: number;
+      adjudication_seconds: number;
+      fix_seconds?: number | null;
+      fix_attempted: boolean;
+      fix_error?: string | null;
+      semantics_used?: string | null;
+    }>;
+  };
   llm_usage?: {
     provider?: string;
     model?: string;

@@ -17,7 +17,8 @@ def client():
     os.environ.setdefault("OPENAI_API_KEY", "test-key-not-used-in-tests")
     
     from backend.main import app
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def test_root_endpoint(client):
@@ -162,3 +163,56 @@ def test_policies_invalid_severity(client):
     response = client.get("/api/v1/policies/severity/invalid")
     assert response.status_code == 400
 
+
+def test_list_test_cases(client):
+    """Test listing unified test cases (db + file sources)."""
+    response = client.get("/api/v1/test-cases")
+    assert response.status_code == 200
+    data = response.json()
+    assert "cases" in data
+    assert isinstance(data["cases"], list)
+    assert any(item["source"] == "file" for item in data["cases"])
+
+
+def test_test_case_crud(client):
+    """Test DB-backed test case CRUD lifecycle."""
+    create_response = client.post(
+        "/api/v1/test-cases",
+        json={
+            "name": "API CRUD Test Case",
+            "description": "created in test",
+            "language": "python",
+            "code": "print('hello')",
+            "tags": ["api", "crud"],
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["source"] == "db"
+    case_id = created["id"]
+
+    get_response = client.get(f"/api/v1/test-cases/{case_id}")
+    assert get_response.status_code == 200
+    fetched = get_response.json()
+    assert fetched["code"] == "print('hello')"
+
+    update_response = client.put(
+        f"/api/v1/test-cases/{case_id}",
+        json={
+            "name": "API CRUD Test Case Updated",
+            "description": "updated",
+            "code": "print('updated')",
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["name"] == "API CRUD Test Case Updated"
+    assert updated["code"] == "print('updated')"
+
+    delete_response = client.delete(f"/api/v1/test-cases/{case_id}")
+    assert delete_response.status_code == 200
+    deleted_data = delete_response.json()
+    assert deleted_data["success"] is True
+
+    get_deleted_response = client.get(f"/api/v1/test-cases/{case_id}")
+    assert get_deleted_response.status_code == 404

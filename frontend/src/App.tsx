@@ -105,6 +105,21 @@ def login(username: str, password_input: str) -> Optional[dict]:
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
 type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools' | 'metrics' | 'models';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
+type SemanticsMode = 'auto' | 'grounded' | 'stable' | 'preferred';
+
+interface ManagedTestCase {
+  id: string;
+  source: 'db' | 'file';
+  name: string;
+  description?: string;
+  language: string;
+  tags: string[];
+  violations: string[];
+  read_only: boolean;
+  code?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
 
 interface WorkflowState {
   step: WorkflowStep;
@@ -169,9 +184,12 @@ export default function App() {
   });
   const [originalCode, setOriginalCode] = useState(SAMPLE_CODE);
   const [language] = useState('python');
-  const [semantics, setSemantics] = useState<'auto' | 'grounded'>(() => {
+  const [semantics, setSemantics] = useState<SemanticsMode>(() => {
     const saved = localStorage.getItem('acpg-semantics');
-    return (saved as any) || 'auto';
+    if (saved === 'auto' || saved === 'grounded' || saved === 'stable' || saved === 'preferred') {
+      return saved;
+    }
+    return 'auto';
   });
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [workflow, setWorkflow] = useState<WorkflowState>({ 
@@ -208,9 +226,10 @@ export default function App() {
   const [complianceReport, setComplianceReport] = useState<any>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
-  const [sampleFiles, setSampleFiles] = useState<Array<{name: string; description: string; violations: string[]}>>([]);
-  const [sampleFilesLoading, setSampleFilesLoading] = useState(true);
+  const [testCases, setTestCases] = useState<ManagedTestCase[]>([]);
+  const [testCasesLoading, setTestCasesLoading] = useState(true);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
+  const sampleMenuRef = useRef<HTMLDivElement | null>(null);
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
   const [policyCreationData, setPolicyCreationData] = useState<{toolName?: string; toolRuleId?: string; description?: string; severity?: string} | null>(null);
   const [showMinimap, setShowMinimap] = useState(() => {
@@ -384,7 +403,7 @@ export default function App() {
     }
   };
 
-  // Load policies, LLM info, and sample files on mount
+  // Load policies and LLM info on mount
   useEffect(() => {
     api.listPolicies()
       .then(data => setPolicies(data.policies))
@@ -437,27 +456,25 @@ export default function App() {
     );
   };
 
+  const loadTestCases = useCallback(async () => {
+    setTestCasesLoading(true);
+    try {
+      const response = await fetch('/api/v1/test-cases');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      setTestCases(data.cases || []);
+    } catch (err) {
+      console.error('Failed to load test cases:', err);
+      setTestCases([]);
+    } finally {
+      setTestCasesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    
-    // Load sample files
-    setSampleFilesLoading(true);
-    fetch('/api/v1/samples')
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
-        return res.json();
-      })
-      .then(data => {
-        console.log('Loaded samples:', data.samples?.length || 0);
-        setSampleFiles(data.samples || []);
-        setSampleFilesLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to load samples:', err);
-        setSampleFiles([]);
-        setSampleFilesLoading(false);
-      });
+    void loadTestCases();
     
     // Load analysis history
     fetch('/api/v1/history?limit=20')
@@ -473,7 +490,24 @@ export default function App() {
         policies: data.enabled_policies || 0
       }))
       .catch(() => {});
-  }, []);
+  }, [loadTestCases]);
+
+  useEffect(() => {
+    if (!showSampleMenu) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      if (!sampleMenuRef.current) {
+        return;
+      }
+      const target = event.target as Node | null;
+      if (target && !sampleMenuRef.current.contains(target)) {
+        setShowSampleMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [showSampleMenu]);
 
   const [analysisProgress, setAnalysisProgress] = useState<{
     phase: string;
@@ -537,11 +571,7 @@ export default function App() {
       
       await new Promise(r => setTimeout(r, 200));
       setAnalysisProgress({ phase: 'complete', message: 'Analysis complete' });
-        setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
-        setWorkflow(w => ({ ...w, step: 'complete' }));
-        setTimeout(() => setAnalysisProgress(null), 2000);
-      
-      // Clear progress after a moment
+      setWorkflow(w => ({ ...w, step: 'complete' }));
       setTimeout(() => setAnalysisProgress(null), 2000);
       addToast('Analysis completed successfully', 'success');
     } catch (err) {
@@ -699,13 +729,13 @@ export default function App() {
     setCodeViewMode('current');
   };
 
-  const handleLoadSampleFile = async (filename: string) => {
+  const handleLoadTestCase = async (caseId: string) => {
     try {
-      const response = await fetch(`/api/v1/samples/${filename}`);
+      const response = await fetch(`/api/v1/test-cases/${encodeURIComponent(caseId)}`);
       if (!response.ok) throw new Error('Failed to load sample');
       const data = await response.json();
-      setCode(data.content);
-      setOriginalCode(data.content);
+      setOriginalCode(data.code);
+      setCode(data.code);
       setAnalysis(null);
       setAdjudication(null);
       setEnforceResult(null);
@@ -713,13 +743,111 @@ export default function App() {
       setViewMode('editor');
       setCodeViewMode('current');
       setShowSampleMenu(false);
-      addToast(`Loaded sample: ${filename}`, 'success');
+      addToast(`Loaded test case: ${data.name}`, 'success');
     } catch (err) {
-      const errorMsg = 'Failed to load sample file';
+      const errorMsg = 'Failed to load test case';
       setError(errorMsg);
       addToast(errorMsg, 'error');
     }
   };
+
+  const handleCreateTestCase = useCallback(async () => {
+    const name = window.prompt('Name for this test case?');
+    if (!name || !name.trim()) {
+      return;
+    }
+    const description = window.prompt('Optional description:', '') || '';
+    const tagsRaw = window.prompt('Optional tags (comma-separated):', '') || '';
+    const tags = tagsRaw
+      .split(',')
+      .map(t => t.trim())
+      .filter(Boolean);
+
+    try {
+      const response = await fetch('/api/v1/test-cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description.trim() || null,
+          language,
+          code,
+          tags,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to create test case');
+      }
+      await loadTestCases();
+      addToast(`Saved test case "${name.trim()}"`, 'success');
+    } catch (err) {
+      addToast('Failed to create test case', 'error');
+    }
+  }, [code, language, loadTestCases, addToast]);
+
+  const handleUpdateTestCase = useCallback(async (testCase: ManagedTestCase) => {
+    if (testCase.source !== 'db') {
+      addToast('File-based test cases are read-only', 'warning');
+      return;
+    }
+    const name = window.prompt('Update test case name:', testCase.name);
+    if (!name || !name.trim()) {
+      return;
+    }
+    const description = window.prompt('Update description:', testCase.description || '') || '';
+    const tagsRaw = window.prompt('Update tags (comma-separated):', (testCase.tags || []).join(', ')) || '';
+    const tags = tagsRaw
+      .split(',')
+      .map(t => t.trim())
+      .filter(Boolean);
+    const updateCode = window.confirm('Update stored code with current editor content?');
+
+    try {
+      const payload: Record<string, unknown> = {
+        name: name.trim(),
+        description: description.trim() || null,
+        tags,
+      };
+      if (updateCode) {
+        payload.code = code;
+        payload.language = language;
+      }
+      const response = await fetch(`/api/v1/test-cases/${encodeURIComponent(testCase.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to update test case');
+      }
+      await loadTestCases();
+      addToast(`Updated test case "${name.trim()}"`, 'success');
+    } catch (err) {
+      addToast('Failed to update test case', 'error');
+    }
+  }, [code, language, loadTestCases, addToast]);
+
+  const handleDeleteTestCase = useCallback(async (testCase: ManagedTestCase) => {
+    if (testCase.source !== 'db') {
+      addToast('File-based test cases are read-only', 'warning');
+      return;
+    }
+    if (!window.confirm(`Delete test case "${testCase.name}"?`)) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/v1/test-cases/${encodeURIComponent(testCase.id)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error('Failed to delete test case');
+      }
+      await loadTestCases();
+      addToast(`Deleted "${testCase.name}"`, 'success');
+    } catch (err) {
+      addToast('Failed to delete test case', 'error');
+    }
+  }, [loadTestCases, addToast]);
 
   const handleSaveCode = () => {
     if (!saveName.trim()) return;
@@ -868,6 +996,7 @@ export default function App() {
   }, [enforceResult]);
 
   const isProcessing = workflow.step !== 'idle' && workflow.step !== 'complete';
+  const isActivelyAnalyzing = isProcessing || (!!analysisProgress && analysisProgress.phase !== 'complete');
 
   return (
     <div className="min-h-screen bg-mesh grid-pattern">
@@ -1148,13 +1277,15 @@ export default function App() {
                     <div className="p-3 border-b border-white/10">
                       <div className="text-xs text-slate-500 uppercase tracking-wider">Semantics</div>
                       <div className="text-xs text-slate-400 mt-1">
-                        AUTO decides with grounded semantics and (optionally) records solver cross-checks.
+                        AUTO decides with grounded semantics; stable/preferred use solver-backed skeptical decisioning.
                       </div>
                     </div>
                     <div className="p-2">
                       {[
                         { id: 'auto' as const, label: 'Auto (Recommended)', desc: 'Conservative decision + optional cross-checks' },
                         { id: 'grounded' as const, label: 'Grounded', desc: 'Conservative, deterministic' },
+                        { id: 'stable' as const, label: 'Stable', desc: 'Solver-based; skeptical across stable extensions' },
+                        { id: 'preferred' as const, label: 'Preferred', desc: 'Solver-based; skeptical across preferred extensions' },
                       ].map(opt => (
                         <button
                           key={opt.id}
@@ -1179,7 +1310,7 @@ export default function App() {
 
                       <div className="mt-2 p-3 rounded-lg border border-white/10 bg-slate-900/40">
                         <div className="text-xs text-slate-400">
-                          Planned: preferred/stable (solver-backed) for additional evidence.
+                          If solver is unavailable or joint attacks are present, ACPG falls back to grounded and records why.
                         </div>
                       </div>
                     </div>
@@ -1259,27 +1390,19 @@ export default function App() {
                 </button>
               </div>
               
-              {/* Sample Files Dropdown */}
-              <div className="relative">
+              {/* Test Code Dropdown */}
+              <div className="relative" ref={sampleMenuRef}>
                 <button
                   onClick={() => setShowSampleMenu(!showSampleMenu)}
                   className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all flex items-center gap-2"
                 >
                   <FolderOpen className="w-4 h-4 text-amber-400" />
-                  Samples
+                  Test Code
                   <ChevronDown className={`w-4 h-4 transition-transform ${showSampleMenu ? 'rotate-180' : ''}`} />
                 </button>
-                
-                {/* Backdrop to close menu when clicking outside */}
+
                 {showSampleMenu && (
-                  <div 
-                    className="fixed inset-0 z-40" 
-                    onClick={() => setShowSampleMenu(false)}
-                  />
-                )}
-                
-                {showSampleMenu && (
-                  <div className="absolute top-full right-0 mt-2 w-80 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
+                  <div className="absolute top-full right-0 mt-2 w-96 glass rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden">
                     <div className="p-2 border-b border-white/10">
                       <span className="text-xs text-slate-500 uppercase tracking-wider px-2">Quick Samples</span>
                     </div>
@@ -1304,32 +1427,112 @@ export default function App() {
                           <div className="text-xs text-slate-500">Compliant code sample</div>
                         </div>
                       </button>
+                      <button
+                        onClick={() => void handleCreateTestCase()}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
+                      >
+                        <Plus className="w-4 h-4 text-cyan-400" />
+                        <div>
+                          <div className="font-medium">Save Current as Test Case</div>
+                          <div className="text-xs text-slate-500">Store current editor code in DB</div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
+                      >
+                        <Upload className="w-4 h-4 text-cyan-400" />
+                        <div>
+                          <div className="font-medium">Load Local File</div>
+                          <div className="text-xs text-slate-500">Open .py/.js/.ts from disk</div>
+                        </div>
+                      </button>
                     </div>
-                    
-                    {sampleFilesLoading ? (
+
+                    {testCasesLoading ? (
                       <div className="p-4 text-center text-slate-400 text-sm">
-                        Loading samples...
+                        Loading test cases...
                       </div>
-                    ) : sampleFiles.length > 0 ? (
+                    ) : testCases.length > 0 ? (
                       <>
                         <div className="p-2 border-t border-white/10">
-                          <span className="text-xs text-slate-500 uppercase tracking-wider px-2">Sample Files ({sampleFiles.length})</span>
+                          <span className="text-xs text-slate-500 uppercase tracking-wider px-2">
+                            Stored Test Cases ({testCases.filter(tc => tc.source === 'db').length})
+                          </span>
                         </div>
-                        <div className="p-1 max-h-64 overflow-y-auto">
-                          {sampleFiles.map(sample => (
+                        <div className="p-1 max-h-56 overflow-y-auto">
+                          {testCases.filter(tc => tc.source === 'db').length === 0 && (
+                            <div className="px-3 py-2 text-xs text-slate-500">No DB test cases yet.</div>
+                          )}
+                          {testCases
+                            .filter(tc => tc.source === 'db')
+                            .map(testCase => (
+                              <button
+                                key={testCase.id}
+                                onClick={() => handleLoadTestCase(testCase.id)}
+                                className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg"
+                              >
+                                <div className="flex items-start gap-3">
+                                  <FileText className="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-medium text-xs truncate">{testCase.name}</div>
+                                    <div className="text-xs text-slate-500 truncate">{testCase.description || 'No description'}</div>
+                                    {testCase.tags?.length > 0 && (
+                                      <div className="flex gap-1 mt-1 flex-wrap">
+                                        {testCase.tags.slice(0, 3).map(tag => (
+                                          <span key={tag} className="px-1.5 py-0.5 text-[10px] bg-cyan-500/20 text-cyan-300 rounded">
+                                            {tag}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleUpdateTestCase(testCase);
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-cyan-300"
+                                      title="Edit test case"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void handleDeleteTestCase(testCase);
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-red-300"
+                                      title="Delete test case"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                        </div>
+                        <div className="p-2 border-t border-white/10">
+                          <span className="text-xs text-slate-500 uppercase tracking-wider px-2">
+                            File Samples ({testCases.filter(tc => tc.source === 'file').length})
+                          </span>
+                        </div>
+                        <div className="p-1 max-h-56 overflow-y-auto">
+                          {testCases.filter(tc => tc.source === 'file').map(testCase => (
                             <button
-                              key={sample.name}
-                              onClick={() => handleLoadSampleFile(sample.name)}
+                              key={testCase.id}
+                              onClick={() => handleLoadTestCase(testCase.id)}
                               className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg"
                             >
                               <div className="flex items-center gap-3">
                                 <FileCode className="w-4 h-4 text-violet-400 flex-shrink-0" />
                                 <div className="flex-1 min-w-0">
-                                  <div className="font-medium font-mono text-xs truncate">{sample.name}</div>
-                                  <div className="text-xs text-slate-500 truncate">{sample.description}</div>
-                                  {sample.violations?.length > 0 && (
+                                  <div className="font-medium font-mono text-xs truncate">{testCase.name}</div>
+                                  <div className="text-xs text-slate-500 truncate">{testCase.description}</div>
+                                  {testCase.violations?.length > 0 && (
                                     <div className="flex gap-1 mt-1 flex-wrap">
-                                      {sample.violations.slice(0, 3).map(v => (
+                                      {testCase.violations.slice(0, 3).map(v => (
                                         <span key={v} className="px-1.5 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded">
                                           {v}
                                         </span>
@@ -1344,7 +1547,7 @@ export default function App() {
                       </>
                     ) : (
                       <div className="p-4 text-center text-slate-500 text-sm">
-                        No sample files found
+                        No test cases found
                       </div>
                     )}
                   </div>
@@ -1964,6 +2167,8 @@ export default function App() {
                 adjudication={adjudication} 
                 violations={analysis?.violations ?? []}
                 enforceResult={enforceResult}
+                isAnalyzing={isActivelyAnalyzing}
+                analysis={analysis}
               />
 
               {/* Tool Execution Status */}
@@ -2415,11 +2620,15 @@ function WorkflowPipeline({ workflow }: { workflow: WorkflowState }) {
 function ComplianceStatus({ 
   adjudication, 
   violations,
-  enforceResult
+  enforceResult,
+  isAnalyzing,
+  analysis,
 }: { 
   adjudication: AdjudicationResult | null;
   violations: Violation[];
   enforceResult: EnforceResponse | null;
+  isAnalyzing: boolean;
+  analysis: AnalysisResult | null;
 }) {
   // Count violations by severity
   const severityCounts = violations.reduce((acc, v) => {
@@ -2428,6 +2637,22 @@ function ComplianceStatus({
   }, {} as Record<string, number>);
   
   const violationCount = violations.length;
+
+  if (!adjudication && isAnalyzing) {
+    return (
+      <div className="glass rounded-2xl p-6 border border-violet-500/20 bg-violet-500/5 animate-fade-in">
+        <div className="flex items-center gap-4">
+          <div className="p-4 rounded-2xl bg-violet-500/15 border border-violet-500/20">
+            <RefreshCw className="w-10 h-10 text-violet-400 animate-spin" />
+          </div>
+          <div>
+            <h3 className="text-xl font-display font-semibold text-violet-300">Analyzing…</h3>
+            <p className="text-sm text-slate-400 mt-1">Running tools, policy checks, and adjudication</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!adjudication) {
     return (
@@ -2596,6 +2821,17 @@ function ComplianceStatus({
                 <div className="text-2xl font-bold text-slate-300">{totalPolicies}</div>
                 <div className="text-xs text-slate-500">Total</div>
               </div>
+              {analysis?.performance && (
+                <>
+                  <div className="h-8 w-px bg-slate-700" />
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-violet-300">
+                      {analysis.performance.total_seconds.toFixed(2)}s
+                    </div>
+                    <div className="text-xs text-slate-500">Analyze Time</div>
+                  </div>
+                </>
+              )}
               {enforceResult.llm_usage && (
                 <>
                   <div className="h-8 w-px bg-slate-700" />
@@ -2615,6 +2851,46 @@ function ComplianceStatus({
                     <div className="text-xs text-slate-500">LLM Tokens</div>
                   </div>
                 </>
+              )}
+              {enforceResult?.performance && (
+                <>
+                  <div className="h-8 w-px bg-slate-700" />
+                  <div className="text-center">
+                    <div className="text-lg font-bold text-violet-300">
+                      {enforceResult.performance.total_seconds.toFixed(2)}s
+                    </div>
+                    <div className="text-xs text-slate-500">Enforce Time</div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {analysis?.performance && (
+            <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-400 flex flex-wrap gap-3">
+              <span>Tools: {analysis.performance.static_tools_seconds.toFixed(2)}s</span>
+              <span>Policies: {analysis.performance.policy_checks_seconds.toFixed(2)}s</span>
+              {adjudication.timing_seconds != null && (
+                <span>Adjudication: {adjudication.timing_seconds.toFixed(2)}s</span>
+              )}
+            </div>
+          )}
+          {enforceResult?.llm_usage && (
+            <div className="mt-2 text-xs text-slate-500">
+              Endpoint usage: {Object.entries(enforceResult.llm_usage.endpoint_breakdown || {})
+                .map(([endpoint, count]) => `${endpoint} (${count})`)
+                .join(', ') || 'n/a'}
+            </div>
+          )}
+          {enforceResult?.performance && (
+            <div className="mt-2 text-xs text-slate-500 flex flex-wrap gap-3">
+              <span>Analyze: {enforceResult.performance.analysis_seconds.toFixed(2)}s</span>
+              <span>Adjudicate: {enforceResult.performance.adjudication_seconds.toFixed(2)}s</span>
+              <span>Fix: {enforceResult.performance.fix_seconds.toFixed(2)}s</span>
+              <span>Proof: {enforceResult.performance.proof_seconds.toFixed(2)}s</span>
+              {enforceResult.performance.stopped_early_reason && (
+                <span className="text-amber-300">
+                  Stop reason: {enforceResult.performance.stopped_early_reason}
+                </span>
               )}
             </div>
           )}
@@ -7866,6 +8142,11 @@ function ModelsConfigurationView() {
               {testResult.usage?.total_tokens != null && (
                 <p className="text-xs text-slate-400 mt-1">
                   Usage: {testResult.usage.total_tokens.toLocaleString()} tokens
+                </p>
+              )}
+              {testResult.estimated_cost_usd != null && (
+                <p className="text-xs text-cyan-300 mt-1">
+                  Estimated cost: ${Number(testResult.estimated_cost_usd).toFixed(8)}
                 </p>
               )}
               {testResult.error && (
