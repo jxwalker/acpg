@@ -122,6 +122,11 @@ interface ManagedTestCase {
   updated_at?: string | null;
 }
 
+interface TestCaseTagSummary {
+  tag: string;
+  count: number;
+}
+
 interface WorkflowState {
   step: WorkflowStep;
   iteration: number;
@@ -229,6 +234,8 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [testCases, setTestCases] = useState<ManagedTestCase[]>([]);
   const [testCasesLoading, setTestCasesLoading] = useState(true);
+  const [testCaseTags, setTestCaseTags] = useState<TestCaseTagSummary[]>([]);
+  const [testCaseTagFilter, setTestCaseTagFilter] = useState<string | null>(null);
   const [showSampleMenu, setShowSampleMenu] = useState(false);
   const sampleMenuRef = useRef<HTMLDivElement | null>(null);
   const [enabledGroupsCount, setEnabledGroupsCount] = useState({ groups: 0, policies: 0 });
@@ -273,6 +280,7 @@ export default function App() {
   }, [code, autoSaveEnabled]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const testCaseImportInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<any>(null);
   
   // Handle editor mount to get reference
@@ -460,7 +468,12 @@ export default function App() {
   const loadTestCases = useCallback(async () => {
     setTestCasesLoading(true);
     try {
-      const response = await fetch('/api/v1/test-cases');
+      const query = new URLSearchParams();
+      if (testCaseTagFilter) {
+        query.set('tag', testCaseTagFilter);
+      }
+      const url = query.toString() ? `/api/v1/test-cases?${query.toString()}` : '/api/v1/test-cases';
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -472,10 +485,25 @@ export default function App() {
     } finally {
       setTestCasesLoading(false);
     }
+  }, [testCaseTagFilter]);
+
+  const loadTestCaseTags = useCallback(async () => {
+    try {
+      const response = await fetch('/api/v1/test-cases/tags?source=db');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      setTestCaseTags(Array.isArray(data.tags) ? data.tags : []);
+    } catch (err) {
+      console.error('Failed to load test case tags:', err);
+      setTestCaseTags([]);
+    }
   }, []);
 
   useEffect(() => {
     void loadTestCases();
+    void loadTestCaseTags();
     
     // Load analysis history
     fetch('/api/v1/history?limit=20')
@@ -491,7 +519,7 @@ export default function App() {
         policies: data.enabled_policies || 0
       }))
       .catch(() => {});
-  }, [loadTestCases]);
+  }, [loadTestCases, loadTestCaseTags]);
 
   useEffect(() => {
     if (!showSampleMenu) {
@@ -509,6 +537,15 @@ export default function App() {
     document.addEventListener('mousedown', onPointerDown);
     return () => document.removeEventListener('mousedown', onPointerDown);
   }, [showSampleMenu]);
+
+  useEffect(() => {
+    if (!testCaseTagFilter) {
+      return;
+    }
+    if (!testCaseTags.some(item => item.tag === testCaseTagFilter)) {
+      setTestCaseTagFilter(null);
+    }
+  }, [testCaseTagFilter, testCaseTags]);
 
   const [analysisProgress, setAnalysisProgress] = useState<{
     phase: string;
@@ -752,6 +789,73 @@ export default function App() {
     }
   };
 
+  const handleExportTestCases = useCallback(async () => {
+    try {
+      const response = await fetch('/api/v1/test-cases/export');
+      if (!response.ok) {
+        throw new Error('Failed to export test cases');
+      }
+      const payload = await response.json();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.download = `acpg-test-cases-${timestamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast(`Exported ${payload.count || 0} DB test cases`, 'success');
+    } catch (err) {
+      addToast('Failed to export test cases', 'error');
+    }
+  }, [addToast]);
+
+  const handleImportTestCasesFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw);
+      const importedCases = Array.isArray(parsed?.cases) ? parsed.cases : Array.isArray(parsed) ? parsed : null;
+      if (!importedCases || importedCases.length === 0) {
+        throw new Error('No test cases found in import file');
+      }
+
+      const overwrite = window.confirm(
+        'Overwrite existing test cases with matching name/language?\nSelect Cancel to keep existing records and skip duplicates.'
+      );
+
+      const response = await fetch('/api/v1/test-cases/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cases: importedCases,
+          overwrite,
+          match_by: 'name_language',
+        }),
+      });
+      if (!response.ok) {
+        throw new Error('Import request failed');
+      }
+      const result = await response.json();
+      const summary = result.summary || {};
+      addToast(
+        `Import complete: ${summary.created || 0} created, ${summary.updated || 0} updated, ${summary.skipped || 0} skipped`,
+        (summary.errors || 0) > 0 ? 'warning' : 'success',
+        6000
+      );
+      await loadTestCaseTags();
+      await loadTestCases();
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : 'Failed to import test cases', 'error');
+    } finally {
+      event.target.value = '';
+    }
+  }, [addToast, loadTestCaseTags, loadTestCases]);
+
   const handleCreateTestCase = useCallback(async () => {
     const name = window.prompt('Name for this test case?');
     if (!name || !name.trim()) {
@@ -779,12 +883,13 @@ export default function App() {
       if (!response.ok) {
         throw new Error('Failed to create test case');
       }
+      await loadTestCaseTags();
       await loadTestCases();
       addToast(`Saved test case "${name.trim()}"`, 'success');
     } catch (err) {
       addToast('Failed to create test case', 'error');
     }
-  }, [code, language, loadTestCases, addToast]);
+  }, [code, language, loadTestCaseTags, loadTestCases, addToast]);
 
   const handleUpdateTestCase = useCallback(async (testCase: ManagedTestCase) => {
     if (testCase.source !== 'db') {
@@ -821,12 +926,13 @@ export default function App() {
       if (!response.ok) {
         throw new Error('Failed to update test case');
       }
+      await loadTestCaseTags();
       await loadTestCases();
       addToast(`Updated test case "${name.trim()}"`, 'success');
     } catch (err) {
       addToast('Failed to update test case', 'error');
     }
-  }, [code, language, loadTestCases, addToast]);
+  }, [code, language, loadTestCaseTags, loadTestCases, addToast]);
 
   const handleDeleteTestCase = useCallback(async (testCase: ManagedTestCase) => {
     if (testCase.source !== 'db') {
@@ -843,12 +949,13 @@ export default function App() {
       if (!response.ok) {
         throw new Error('Failed to delete test case');
       }
+      await loadTestCaseTags();
       await loadTestCases();
       addToast(`Deleted "${testCase.name}"`, 'success');
     } catch (err) {
       addToast('Failed to delete test case', 'error');
     }
-  }, [loadTestCases, addToast]);
+  }, [loadTestCaseTags, loadTestCases, addToast]);
 
   const handleSaveCode = () => {
     if (!saveName.trim()) return;
@@ -1007,6 +1114,13 @@ export default function App() {
         ref={fileInputRef} 
         onChange={handleFileUpload} 
         accept=".py,.js,.ts,.jsx,.tsx"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={testCaseImportInputRef}
+        onChange={handleImportTestCasesFile}
+        accept=".json"
         className="hidden"
       />
 
@@ -1439,6 +1553,26 @@ export default function App() {
                         </div>
                       </button>
                       <button
+                        onClick={() => testCaseImportInputRef.current?.click()}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
+                      >
+                        <FileJson className="w-4 h-4 text-violet-400" />
+                        <div>
+                          <div className="font-medium">Import Test Cases (JSON)</div>
+                          <div className="text-xs text-slate-500">Bulk-import DB suites from export files</div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => void handleExportTestCases()}
+                        className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
+                      >
+                        <Download className="w-4 h-4 text-emerald-400" />
+                        <div>
+                          <div className="font-medium">Export DB Test Cases</div>
+                          <div className="text-xs text-slate-500">Download portable JSON for audit/CI</div>
+                        </div>
+                      </button>
+                      <button
                         onClick={() => fileInputRef.current?.click()}
                         className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-white/10 rounded-lg flex items-center gap-3"
                       >
@@ -1460,6 +1594,34 @@ export default function App() {
                           <span className="text-xs text-slate-500 uppercase tracking-wider px-2">
                             Stored Test Cases ({testCases.filter(tc => tc.source === 'db').length})
                           </span>
+                          {testCaseTags.length > 0 && (
+                            <div className="mt-2 px-2 flex flex-wrap gap-1.5">
+                              <button
+                                onClick={() => setTestCaseTagFilter(null)}
+                                className={`px-2 py-1 rounded text-[10px] border transition-all ${
+                                  testCaseTagFilter === null
+                                    ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                                    : 'bg-slate-800/50 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                all
+                              </button>
+                              {testCaseTags.map((item) => (
+                                <button
+                                  key={item.tag}
+                                  onClick={() => setTestCaseTagFilter(item.tag)}
+                                  className={`px-2 py-1 rounded text-[10px] border transition-all ${
+                                    testCaseTagFilter === item.tag
+                                      ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                                      : 'bg-slate-800/50 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                                  }`}
+                                  title={`Filter by tag: ${item.tag}`}
+                                >
+                                  {item.tag} ({item.count})
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div className="p-1 max-h-56 overflow-y-auto">
                           {testCases.filter(tc => tc.source === 'db').length === 0 && (

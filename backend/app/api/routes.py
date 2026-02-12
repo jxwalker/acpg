@@ -25,7 +25,7 @@ from ..core.tool_rules_registry import get_tool_rules, get_all_tool_rules, get_t
 from ..services.tool_cache import get_tool_cache
 from ..services.tool_mapper import get_tool_mapper
 from ..core.config import settings
-from ..core.database import get_db, AuditLogger, ProofStore, TestCaseStore
+from ..core.database import get_db, AuditLogger, ProofStore, TestCaseStore, TestCase
 
 router = APIRouter()
 
@@ -513,6 +513,24 @@ class UpdateTestCaseRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
+class ImportTestCaseItem(BaseModel):
+    """Import payload item for DB-backed test cases."""
+    id: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    language: str = "python"
+    code: str
+    tags: List[str] = []
+    is_active: Optional[bool] = True
+
+
+class ImportTestCasesRequest(BaseModel):
+    """Bulk import request for DB test cases."""
+    cases: List[ImportTestCaseItem]
+    overwrite: bool = False
+    match_by: Literal["name_language", "id"] = "name_language"
+
+
 def _get_samples_dir() -> Path:
     import os
     return Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
@@ -568,19 +586,36 @@ def _db_case_to_item(case: Any, include_code: bool = False) -> Dict[str, Any]:
     return item
 
 
+def _normalize_tags(tags: Optional[List[str]]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for raw in tags or []:
+        tag = str(raw).strip().lower()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        normalized.append(tag)
+    return normalized
+
+
 @router.get("/test-cases", response_model=Dict[str, List[TestCaseItem]])
 async def list_test_cases(
     source: Literal["all", "db", "file"] = Query("all"),
     language: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """List test cases from DB and/or file samples."""
     items: List[Dict[str, Any]] = []
+    normalized_tag = tag.strip().lower() if tag else None
 
     if source in ("all", "db"):
         store = TestCaseStore(db)
         for case in store.list_cases(include_inactive=False, language=language):
-            items.append(_db_case_to_item(case, include_code=False))
+            item = _db_case_to_item(case, include_code=False)
+            if normalized_tag and normalized_tag not in item.get("tags", []):
+                continue
+            items.append(item)
 
     if source in ("all", "file"):
         samples_dir = _get_samples_dir()
@@ -588,9 +623,152 @@ async def list_test_cases(
             for file in sorted(samples_dir.glob("*.py")):
                 if language and language != "python":
                     continue
-                items.append(_parse_file_test_case(file, include_code=False))
+                item = _parse_file_test_case(file, include_code=False)
+                if normalized_tag and normalized_tag not in item.get("tags", []):
+                    continue
+                items.append(item)
 
     return {"cases": items}
+
+
+@router.get("/test-cases/tags")
+async def list_test_case_tags(
+    source: Literal["all", "db", "file"] = Query("all"),
+    language: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """List available tags with usage counts across test case sources."""
+    tag_counts: Dict[str, int] = {}
+
+    if source in ("all", "db"):
+        store = TestCaseStore(db)
+        for case in store.list_cases(include_inactive=False, language=language):
+            for tag in _normalize_tags(case.tags):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    if source in ("all", "file"):
+        samples_dir = _get_samples_dir()
+        if samples_dir.exists() and (not language or language == "python"):
+            for file in sorted(samples_dir.glob("*.py")):
+                item = _parse_file_test_case(file, include_code=False)
+                for tag in _normalize_tags(item.get("tags", [])):
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    tags = [{"tag": tag, "count": count} for tag, count in sorted(tag_counts.items())]
+    return {"tags": tags, "count": len(tags)}
+
+
+@router.get("/test-cases/export")
+async def export_test_cases(
+    include_inactive: bool = Query(False),
+    language: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Export DB-backed test cases as a portable JSON payload."""
+    store = TestCaseStore(db)
+    cases = store.list_cases(include_inactive=include_inactive, language=language)
+    payload = []
+    for case in cases:
+        payload.append(
+            {
+                "id": f"db:{case.id}",
+                "name": case.name,
+                "description": case.description,
+                "language": case.language or "python",
+                "code": case.code,
+                "tags": _normalize_tags(case.tags),
+                "is_active": bool(case.is_active),
+                "created_at": case.created_at.isoformat() if case.created_at else None,
+                "updated_at": case.updated_at.isoformat() if case.updated_at else None,
+            }
+        )
+
+    return {
+        "version": "1",
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "count": len(payload),
+        "cases": payload,
+    }
+
+
+@router.post("/test-cases/import")
+async def import_test_cases(request: ImportTestCasesRequest, db: Session = Depends(get_db)):
+    """Bulk import DB-backed test cases, with optional overwrite behavior."""
+    if not request.cases:
+        raise HTTPException(status_code=400, detail="cases is required")
+
+    store = TestCaseStore(db)
+    created_ids: List[str] = []
+    updated_ids: List[str] = []
+    skipped_ids: List[str] = []
+    errors: List[Dict[str, Any]] = []
+
+    for index, item in enumerate(request.cases):
+        name = item.name.strip()
+        code = item.code.strip()
+        if not name:
+            errors.append({"index": index, "id": item.id, "error": "name is required"})
+            continue
+        if not code:
+            errors.append({"index": index, "id": item.id, "error": "code is required"})
+            continue
+
+        existing: Optional[TestCase] = None
+        if request.match_by == "id" and item.id:
+            raw_id = str(item.id).strip()
+            if raw_id.startswith("db:"):
+                raw_id = raw_id.split(":", 1)[1]
+            if raw_id.isdigit():
+                existing = store.get_case(int(raw_id))
+        if existing is None:
+            existing = (
+                db.query(TestCase)
+                .filter(TestCase.name == name, TestCase.language == item.language)
+                .first()
+            )
+
+        normalized_tags = _normalize_tags(item.tags)
+        if existing:
+            existing_id = f"db:{existing.id}"
+            if not request.overwrite:
+                skipped_ids.append(existing_id)
+                continue
+            updated = store.update_case(
+                existing,
+                name=name,
+                description=item.description,
+                language=item.language,
+                code=code,
+                tags=normalized_tags,
+                is_active=item.is_active if item.is_active is not None else existing.is_active,
+            )
+            updated_ids.append(f"db:{updated.id}")
+            continue
+
+        created = store.create_case(
+            name=name,
+            description=item.description,
+            language=item.language,
+            code=code,
+            tags=normalized_tags,
+            is_active=True if item.is_active is None else bool(item.is_active),
+        )
+        created_ids.append(f"db:{created.id}")
+
+    return {
+        "success": len(errors) == 0,
+        "summary": {
+            "requested": len(request.cases),
+            "created": len(created_ids),
+            "updated": len(updated_ids),
+            "skipped": len(skipped_ids),
+            "errors": len(errors),
+        },
+        "created_ids": created_ids,
+        "updated_ids": updated_ids,
+        "skipped_ids": skipped_ids,
+        "errors": errors,
+    }
 
 
 @router.get("/test-cases/{case_id}", response_model=TestCaseItem)
@@ -638,7 +816,7 @@ async def create_test_case(request: CreateTestCaseRequest, db: Session = Depends
         description=request.description,
         language=request.language,
         code=request.code,
-        tags=request.tags,
+        tags=_normalize_tags(request.tags),
     )
     return TestCaseItem(**_db_case_to_item(case, include_code=True))
 
@@ -664,7 +842,7 @@ async def update_test_case(case_id: str, request: UpdateTestCaseRequest, db: Ses
         description=request.description,
         language=request.language,
         code=request.code,
-        tags=request.tags,
+        tags=_normalize_tags(request.tags) if request.tags is not None else None,
         is_active=request.is_active,
     )
     return TestCaseItem(**_db_case_to_item(updated, include_code=True))

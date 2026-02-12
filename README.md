@@ -14,7 +14,7 @@ This repository is active and production-oriented for local and CI usage.
 
 Current baseline:
 - Policies loaded: **39** (default + OWASP + NIST + JS/TS)
-- Test status: **96 passed, 1 skipped**
+- Test status: **107 passed, 1 skipped**
 - LLM strategy: **Responses API first**, fallback to Chat Completions when needed
 - Decision semantics: **AUTO -> grounded** (with optional secondary solver evidence)
 - Runtime compliance: **LangGraph runtime events included in proof evidence**
@@ -38,6 +38,7 @@ Core components:
 - Joint attacks supported in solver-backed stable/preferred semantics
 - Optional stable/preferred secondary semantics via ASP/clingo
 - Unified test-code library (file samples + DB-backed CRUD test cases)
+- Bulk test-case import/export and tag-driven regression filtering
 - Runtime guard decisions converted into formal violations
 - Runtime policy compiler (tool/network/filesystem) with graded actions
 - Runtime policy evidence in proof bundles (`runtime_policy_enforcement`, `runtime_policy_monitoring`)
@@ -137,7 +138,10 @@ Runtime policy compiler:
 - `POST /runtime/policies/evaluate`
 
 Test case management:
-- `GET /test-cases` (unified file + DB list)
+- `GET /test-cases` (unified file + DB list, supports `source`, `language`, `tag`)
+- `GET /test-cases/tags` (tag catalog + counts)
+- `GET /test-cases/export` (portable JSON export for DB-backed suites)
+- `POST /test-cases/import` (bulk import with overwrite controls)
 - `GET /test-cases/{id}` (`db:<id>` or `file:<filename>`)
 - `POST /test-cases`
 - `PUT /test-cases/{id}` (DB only)

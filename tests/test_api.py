@@ -245,6 +245,63 @@ def test_test_case_crud(client):
     assert get_deleted_response.status_code == 404
 
 
+def test_test_case_bulk_import_export_and_tag_filters(client):
+    """Bulk import/export endpoints should support tagging and filtered listing."""
+    import_response = client.post(
+        "/api/v1/test-cases/import",
+        json={
+            "overwrite": False,
+            "match_by": "name_language",
+            "cases": [
+                {
+                    "name": "Bulk Case Finance",
+                    "description": "finance compliance sample",
+                    "language": "python",
+                    "code": "print('finance')",
+                    "tags": ["finance", "regression"],
+                },
+                {
+                    "name": "Bulk Case Pharma",
+                    "description": "pharma compliance sample",
+                    "language": "python",
+                    "code": "print('pharma')",
+                    "tags": ["pharma", "regression"],
+                },
+            ],
+        },
+    )
+    assert import_response.status_code == 200
+    imported = import_response.json()
+    assert imported["summary"]["created"] == 2
+    created_ids = imported["created_ids"]
+
+    try:
+        tags_response = client.get("/api/v1/test-cases/tags?source=db")
+        assert tags_response.status_code == 200
+        tags_payload = tags_response.json()
+        tags = {item["tag"]: item["count"] for item in tags_payload["tags"]}
+        assert "finance" in tags
+        assert "pharma" in tags
+        assert "regression" in tags
+
+        filtered_response = client.get("/api/v1/test-cases?source=db&tag=finance")
+        assert filtered_response.status_code == 200
+        filtered_cases = filtered_response.json()["cases"]
+        assert any(case["name"] == "Bulk Case Finance" for case in filtered_cases)
+        assert all("finance" in case["tags"] for case in filtered_cases)
+
+        export_response = client.get("/api/v1/test-cases/export")
+        assert export_response.status_code == 200
+        exported = export_response.json()
+        assert exported["count"] >= 2
+        exported_names = {case["name"] for case in exported["cases"]}
+        assert "Bulk Case Finance" in exported_names
+        assert "Bulk Case Pharma" in exported_names
+    finally:
+        for case_id in created_ids:
+            client.delete(f"/api/v1/test-cases/{case_id}")
+
+
 def test_policy_history_and_diff(client):
     """Policy history endpoints should provide version timeline and diffs."""
     import uuid

@@ -25,17 +25,13 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Policy version history and diff/audit support (API + UI)
 - Policy-group rollout preview simulation against stored test cases
 - Unified test code management: file samples + DB-backed CRUD test cases
+- Bulk test-case import/export APIs with UI tag filtering workflows
 - Analysis/enforcement timing telemetry and UI performance visibility
 - CI pipeline covering lint/test/build/integration/docker
 
 ## Active Near-Term Priorities
 
-1. Policy lifecycle UX and test operations
-- Better versioning and policy diff/audit views
-- Safer rollout controls for policy updates
-- Bulk test-case import/export and tagging workflows for regulated regression suites
-
-2. Runtime and dynamic compliance evidence maturity
+1. Runtime and dynamic compliance evidence maturity
 - Expand dynamic compliance suites (beyond direct execution smoke checks)
 - Add richer replay artifact indexing/search for audit and CI review
 - Formal linkage of dynamic/runtime evidence into proof argumentation narratives

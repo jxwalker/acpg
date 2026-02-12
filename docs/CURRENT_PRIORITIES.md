@@ -38,10 +38,10 @@ Last refreshed: **February 12, 2026**
 - Add deterministic dynamic policy suites beyond direct execution smoke checks.
 - Expand replay artifact indexing and UX for audit workflows.
 
-2. [ ] Policy lifecycle UX and test operations
+2. [x] Policy lifecycle UX and test operations
 - Better versioning and policy diff/audit views. (MVP complete)
 - Safer rollout controls for policy updates. (Preview MVP complete)
-- Bulk test-case import/export and tagging workflows for regulated regression suites.
+- Bulk test-case import/export and tagging workflows for regulated regression suites. (MVP complete)
 
 ## Recently Completed
 
@@ -56,6 +56,7 @@ Last refreshed: **February 12, 2026**
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff API/UI for audit workflows
 - Policy-group rollout preview impact analysis (API + UI)
+- Bulk test-case import/export API + UI tagging filters for regression workflows
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

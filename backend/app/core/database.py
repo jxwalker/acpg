@@ -282,6 +282,7 @@ class TestCaseStore:
         language: str,
         code: str,
         tags: Optional[List[str]] = None,
+        is_active: bool = True,
     ) -> TestCase:
         now = datetime.now(tz=None)
         test_case = TestCase(
@@ -292,7 +293,7 @@ class TestCaseStore:
             tags=tags or [],
             created_at=now,
             updated_at=now,
-            is_active=True,
+            is_active=is_active,
         )
         self.db.add(test_case)
         self.db.commit()
