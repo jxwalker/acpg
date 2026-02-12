@@ -55,7 +55,8 @@ const ToastContainer = ({ toasts, removeToast }: { toasts: Toast[]; removeToast:
 import { api } from './api';
 import type { 
   PolicyRule, Violation, AnalysisResult, 
-  AdjudicationResult, ProofBundle, EnforceResponse 
+  AdjudicationResult, ProofBundle, EnforceResponse,
+  PolicyHistoryEntry, PolicyDiffResponse
 } from './types';
 
 // Sample vulnerable code
@@ -6321,6 +6322,13 @@ function PoliciesView({
   const [customPolicies, setCustomPolicies] = useState<PolicyRule[]>([]);
   const [testCode, setTestCode] = useState('');
   const [testResult, setTestResult] = useState<any>(null);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyPolicyId, setHistoryPolicyId] = useState<string | null>(null);
+  const [policyHistory, setPolicyHistory] = useState<PolicyHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDiff, setHistoryDiff] = useState<PolicyDiffResponse | null>(null);
+  const [fromVersion, setFromVersion] = useState<number | null>(null);
+  const [toVersion, setToVersion] = useState<number | null>(null);
   
   // Policy Groups state
   const [policyGroups, setPolicyGroups] = useState<PolicyGroup[]>([]);
@@ -6469,6 +6477,49 @@ function PoliciesView({
       })
       .catch(() => {});
   };
+
+  const loadPolicyHistory = async (policyId: string) => {
+    setHistoryLoading(true);
+    setHistoryDiff(null);
+    try {
+      const res = await fetch(`/api/v1/policies/${policyId}/audit/history?limit=100`);
+      const data = await res.json();
+      const entries: PolicyHistoryEntry[] = data.entries || [];
+      setPolicyHistory(entries);
+      const versions = entries
+        .map(e => e.version)
+        .filter((v): v is number => typeof v === 'number')
+        .sort((a, b) => a - b);
+      if (versions.length >= 2) {
+        setFromVersion(versions[versions.length - 2]);
+        setToVersion(versions[versions.length - 1]);
+      } else if (versions.length === 1) {
+        setFromVersion(versions[0]);
+        setToVersion(versions[0]);
+      } else {
+        setFromVersion(null);
+        setToVersion(null);
+      }
+    } catch (e) {
+      setPolicyHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const loadPolicyDiff = async (policyId: string, from: number, to: number) => {
+    try {
+      const res = await fetch(`/api/v1/policies/${policyId}/audit/diff?from_version=${from}&to_version=${to}`);
+      if (!res.ok) {
+        setHistoryDiff(null);
+        return;
+      }
+      const data = await res.json();
+      setHistoryDiff(data);
+    } catch (e) {
+      setHistoryDiff(null);
+    }
+  };
   
   const applyTemplate = async (templateId: string) => {
     setLoadingTemplate(templateId);
@@ -6492,6 +6543,13 @@ function PoliciesView({
   useEffect(() => {
     loadTemplates();
   }, []);
+
+  useEffect(() => {
+    if (!showHistoryModal || !historyPolicyId || fromVersion == null || toVersion == null) {
+      return;
+    }
+    loadPolicyDiff(historyPolicyId, fromVersion, toVersion);
+  }, [showHistoryModal, historyPolicyId, fromVersion, toVersion]);
   
   const allPolicies = [...policies, ...customPolicies.filter(cp => 
     !policies.some(p => p.id === cp.id)
@@ -7039,6 +7097,152 @@ function PoliciesView({
           </div>
         </div>
       )}
+
+      {/* Policy History Modal */}
+      {showHistoryModal && historyPolicyId && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-8">
+          <div className="glass rounded-2xl border border-white/10 w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-semibold text-white">Policy History</h3>
+                <p className="text-sm text-slate-400 mt-1 font-mono">{historyPolicyId}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowHistoryModal(false);
+                  setHistoryPolicyId(null);
+                  setHistoryDiff(null);
+                  setPolicyHistory([]);
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              {historyLoading ? (
+                <p className="text-slate-400 text-sm">Loading history...</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-2">From version</label>
+                      <select
+                        value={fromVersion ?? ''}
+                        onChange={(e) => setFromVersion(Number(e.target.value))}
+                        className="w-full px-3 py-2 bg-slate-800/50 border border-white/10 rounded-lg text-white"
+                      >
+                        {policyHistory
+                          .map(entry => entry.version)
+                          .filter((version): version is number => typeof version === 'number')
+                          .sort((a, b) => a - b)
+                          .map(version => (
+                            <option key={`from-${version}`} value={version}>
+                              v{version}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-slate-400 mb-2">To version</label>
+                      <select
+                        value={toVersion ?? ''}
+                        onChange={(e) => setToVersion(Number(e.target.value))}
+                        className="w-full px-3 py-2 bg-slate-800/50 border border-white/10 rounded-lg text-white"
+                      >
+                        {policyHistory
+                          .map(entry => entry.version)
+                          .filter((version): version is number => typeof version === 'number')
+                          .sort((a, b) => a - b)
+                          .map(version => (
+                            <option key={`to-${version}`} value={version}>
+                              v{version}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {historyDiff && (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-slate-800/40 border border-white/10 rounded-lg">
+                        <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">Changed Fields</div>
+                        <div className="flex flex-wrap gap-2">
+                          {historyDiff.changed_fields.length > 0 ? (
+                            historyDiff.changed_fields.map(field => (
+                              <span
+                                key={field}
+                                className="px-2 py-1 rounded-md text-xs font-mono bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"
+                              >
+                                {field}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs text-slate-500">No field changes detected.</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-white/10 overflow-hidden">
+                        <DiffEditor
+                          original={historyDiff.before_json}
+                          modified={historyDiff.after_json}
+                          language="json"
+                          height="320px"
+                          options={{
+                            readOnly: true,
+                            minimap: { enabled: false },
+                            fontSize: 12,
+                            wordWrap: 'on',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border border-white/10 rounded-lg overflow-hidden">
+                    <div className="px-4 py-2 bg-slate-800/40 text-sm text-slate-300 font-medium">
+                      Version Timeline
+                    </div>
+                    <div className="max-h-64 overflow-auto divide-y divide-white/5">
+                      {policyHistory.length === 0 ? (
+                        <div className="px-4 py-4 text-sm text-slate-500">No history records available.</div>
+                      ) : (
+                        policyHistory.map(entry => (
+                          <div key={entry.id} className="px-4 py-3 text-sm">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-cyan-300">v{entry.version ?? '?'}</span>
+                                <span className="px-2 py-0.5 rounded text-[11px] uppercase bg-slate-700 text-slate-300">
+                                  {entry.action}
+                                </span>
+                                {entry.changed_by && (
+                                  <span className="text-xs text-slate-500">by {entry.changed_by}</span>
+                                )}
+                              </div>
+                              <span className="text-xs text-slate-500">
+                                {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'unknown time'}
+                              </span>
+                            </div>
+                            {entry.changed_fields && entry.changed_fields.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {entry.changed_fields.slice(0, 8).map(field => (
+                                  <span key={`${entry.id}-${field}`} className="text-[10px] px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded font-mono">
+                                    {field}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Policy Editor Modal */}
       {showEditor && (
@@ -7273,8 +7477,20 @@ function PoliciesView({
                           </span>
                         )}
                       </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => {
+                            setHistoryPolicyId(policy.id);
+                            setShowHistoryModal(true);
+                            loadPolicyHistory(policy.id);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-lg"
+                          title="View history and diffs"
+                        >
+                          <Clock className="w-4 h-4" />
+                        </button>
                       {isCustomPolicy(policy.id) && (
-                        <div className="flex gap-1">
+                        <>
                           <button
                             onClick={() => handleEdit(policy)}
                             className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
@@ -7287,8 +7503,9 @@ function PoliciesView({
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
-                        </div>
+                        </>
                       )}
+                      </div>
                     </div>
                     <p className="text-sm text-slate-400">{policy.description}</p>
                     {policy.check?.pattern && (

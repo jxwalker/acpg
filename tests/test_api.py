@@ -243,3 +243,55 @@ def test_test_case_crud(client):
 
     get_deleted_response = client.get(f"/api/v1/test-cases/{case_id}")
     assert get_deleted_response.status_code == 404
+
+
+def test_policy_history_and_diff(client):
+    """Policy history endpoints should provide version timeline and diffs."""
+    import uuid
+
+    policy_id = f"HIST-{uuid.uuid4().hex[:6].upper()}"
+    create_payload = {
+        "id": policy_id,
+        "description": "History test policy",
+        "type": "strict",
+        "severity": "medium",
+        "check": {
+            "type": "regex",
+            "pattern": "password\\s*=\\s*['\\\"].+['\\\"]",
+            "languages": ["python"],
+        },
+        "fix_suggestion": "Use environment variables",
+    }
+    update_payload = {
+        **create_payload,
+        "description": "History test policy updated",
+        "severity": "high",
+        "fix_suggestion": "Use a secret manager",
+    }
+
+    create_response = client.post("/api/v1/policies/", json=create_payload)
+    assert create_response.status_code == 200
+
+    update_response = client.put(f"/api/v1/policies/{policy_id}", json=update_payload)
+    assert update_response.status_code == 200
+
+    history_response = client.get(f"/api/v1/policies/{policy_id}/audit/history")
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert history["count"] >= 2
+    versions = [entry["version"] for entry in history["entries"]]
+    assert 1 in versions and 2 in versions
+
+    diff_response = client.get(f"/api/v1/policies/{policy_id}/audit/diff?from_version=1&to_version=2")
+    assert diff_response.status_code == 200
+    diff = diff_response.json()
+    assert diff["policy_id"] == policy_id
+    assert "description" in diff["changed_fields"] or "severity" in diff["changed_fields"]
+
+    list_response = client.get("/api/v1/policies/audit/history")
+    assert list_response.status_code == 200
+    list_data = list_response.json()
+    assert isinstance(list_data.get("entries"), list)
+
+    delete_response = client.delete(f"/api/v1/policies/{policy_id}")
+    assert delete_response.status_code == 200

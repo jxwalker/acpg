@@ -42,6 +42,7 @@ Core components:
 - Runtime policy compiler (tool/network/filesystem) with graded actions
 - Runtime policy evidence in proof bundles (`runtime_policy_enforcement`, `runtime_policy_monitoring`)
 - Sandboxed dynamic analysis (Python) with deterministic replay artifacts in proofs
+- Policy lifecycle audit support (version history and diff endpoints + UI)
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
 - Analysis/enforcement performance telemetry in API responses and UI status cards
@@ -154,6 +155,10 @@ Dynamic analysis:
 
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`
+- `GET /policies/audit/history`
+- `GET /policies/{policy_id}/audit/history`
+- `GET /policies/{policy_id}/audit/versions/{version}`
+- `GET /policies/{policy_id}/audit/diff?from_version=&to_version=`
 
 ## Semantics and Compliance Model
 

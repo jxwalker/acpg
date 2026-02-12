@@ -3,10 +3,12 @@ import json
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Depends, Request, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..core.database import get_db, PolicyHistoryStore
 from ..services.policy_compiler import get_policy_compiler
 
 
@@ -51,6 +53,58 @@ class PolicyExport(BaseModel):
     version: str = "1.0"
 
 
+def _actor_from_request(request: Optional[Request]) -> str:
+    if not request:
+        return "unknown"
+    return (
+        request.headers.get("X-User-Id")
+        or request.headers.get("X-Actor")
+        or request.headers.get("X-Forwarded-User")
+        or "unknown"
+    )
+
+
+def _policy_to_dict(policy: PolicyInput) -> dict:
+    policy_dict = {
+        "id": policy.id,
+        "description": policy.description,
+        "type": policy.type,
+        "severity": policy.severity,
+        "check": {
+            "type": policy.check.type,
+            "pattern": policy.check.pattern,
+            "function": policy.check.function,
+            "target": policy.check.target,
+            "message": policy.check.message,
+            "languages": policy.check.languages,
+        },
+        "fix_suggestion": policy.fix_suggestion,
+    }
+    if policy.category:
+        policy_dict["category"] = policy.category
+    return policy_dict
+
+
+def _normalize_policy_dict(policy: dict) -> dict:
+    """Normalize imported/raw policy dict for history/diff stability."""
+    return {
+        "id": policy.get("id"),
+        "description": policy.get("description"),
+        "type": policy.get("type", "strict"),
+        "severity": policy.get("severity", "medium"),
+        "check": {
+            "type": (policy.get("check") or {}).get("type", "manual"),
+            "pattern": (policy.get("check") or {}).get("pattern"),
+            "function": (policy.get("check") or {}).get("function"),
+            "target": (policy.get("check") or {}).get("target"),
+            "message": (policy.get("check") or {}).get("message"),
+            "languages": (policy.get("check") or {}).get("languages", []),
+        },
+        "fix_suggestion": policy.get("fix_suggestion"),
+        "category": policy.get("category"),
+    }
+
+
 # Custom policies storage file
 CUSTOM_POLICIES_FILE = settings.POLICIES_DIR / "custom_policies.json"
 
@@ -67,6 +121,8 @@ def save_custom_policies(data: dict):
     """Save custom policies to file."""
     with open(CUSTOM_POLICIES_FILE, 'w') as f:
         json.dump(data, f, indent=2)
+        # Keep trailing newline style stable to avoid noisy git diffs.
+        f.write("\n\n")
 
 
 def reload_policies():
@@ -135,6 +191,127 @@ async def get_policy_file(filename: str):
     return data
 
 
+def _format_history_entry(entry) -> dict:
+    payload = entry.policy_data or {}
+    return {
+        "id": entry.id,
+        "policy_id": entry.policy_id,
+        "action": entry.action,
+        "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
+        "changed_by": entry.changed_by or payload.get("changed_by") or "unknown",
+        "version": payload.get("version"),
+        "source": payload.get("source"),
+        "reason": payload.get("reason"),
+        "changed_fields": payload.get("changed_fields", []),
+        "summary": (
+            f"{entry.action} v{payload.get('version')}"
+            if payload.get("version")
+            else entry.action
+        ),
+        "before": payload.get("before"),
+        "after": payload.get("after"),
+    }
+
+
+@router.get("/audit/history", response_model=dict)
+async def list_policy_history(
+    policy_id: Optional[str] = Query(None, description="Optional policy id filter"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """List policy history entries for audit and change tracking."""
+    store = PolicyHistoryStore(db)
+    entries = store.list_history(policy_id=policy_id, limit=limit, offset=offset)
+    return {
+        "entries": [_format_history_entry(entry) for entry in entries],
+        "policy_id": policy_id,
+        "count": len(entries),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/{policy_id}/audit/history", response_model=dict)
+async def get_policy_history(
+    policy_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """Get version history for a specific policy id."""
+    store = PolicyHistoryStore(db)
+    entries = store.list_history(policy_id=policy_id, limit=limit, offset=offset)
+    return {
+        "policy_id": policy_id,
+        "entries": [_format_history_entry(entry) for entry in entries],
+        "count": len(entries),
+    }
+
+
+@router.get("/{policy_id}/audit/versions/{version}", response_model=dict)
+async def get_policy_version_snapshot(
+    policy_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+):
+    """Retrieve a specific historical version snapshot for a policy."""
+    store = PolicyHistoryStore(db)
+    snapshot = store.get_version_snapshot(policy_id, version)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found for policy {policy_id}")
+    return {"policy_id": policy_id, "version": version, "snapshot": snapshot}
+
+
+@router.get("/{policy_id}/audit/diff", response_model=dict)
+async def diff_policy_versions(
+    policy_id: str,
+    from_version: int = Query(..., ge=1),
+    to_version: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+):
+    """Diff two policy versions for auditability."""
+    store = PolicyHistoryStore(db)
+    before = store.get_version_snapshot(policy_id, from_version)
+    after = store.get_version_snapshot(policy_id, to_version)
+    if before is None:
+        raise HTTPException(status_code=404, detail=f"Version {from_version} not found for policy {policy_id}")
+    if after is None:
+        raise HTTPException(status_code=404, detail=f"Version {to_version} not found for policy {policy_id}")
+
+    changed_fields: List[str] = []
+
+    def _walk(prefix: str, left, right):
+        if isinstance(left, dict) and isinstance(right, dict):
+            keys = sorted(set(left.keys()) | set(right.keys()))
+            for key in keys:
+                path = f"{prefix}.{key}" if prefix else str(key)
+                if key not in left or key not in right:
+                    changed_fields.append(path)
+                else:
+                    _walk(path, left[key], right[key])
+            return
+        if isinstance(left, list) and isinstance(right, list):
+            if left != right:
+                changed_fields.append(prefix)
+            return
+        if left != right:
+            changed_fields.append(prefix)
+
+    _walk("", before, after)
+
+    return {
+        "policy_id": policy_id,
+        "from_version": from_version,
+        "to_version": to_version,
+        "changed_fields": changed_fields,
+        "before": before,
+        "after": after,
+        "before_json": json.dumps(before, indent=2, sort_keys=True),
+        "after_json": json.dumps(after, indent=2, sort_keys=True),
+    }
+
+
 @router.get("/{policy_id}")
 async def get_policy(policy_id: str):
     """Get a specific policy by ID."""
@@ -164,7 +341,11 @@ async def get_policy(policy_id: str):
 
 
 @router.post("/", response_model=dict)
-async def create_policy(policy: PolicyInput):
+async def create_policy(
+    policy: PolicyInput,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """Create a new custom policy."""
     compiler = get_policy_compiler()
     
@@ -180,27 +361,21 @@ async def create_policy(policy: PolicyInput):
     data = load_custom_policies()
     
     # Add new policy
-    policy_dict = {
-        "id": policy.id,
-        "description": policy.description,
-        "type": policy.type,
-        "severity": policy.severity,
-        "check": {
-            "type": policy.check.type,
-            "pattern": policy.check.pattern,
-            "function": policy.check.function,
-            "target": policy.check.target,
-            "message": policy.check.message,
-            "languages": policy.check.languages
-        },
-        "fix_suggestion": policy.fix_suggestion
-    }
-    
-    if policy.category:
-        policy_dict["category"] = policy.category
+    policy_dict = _policy_to_dict(policy)
     
     data['policies'].append(policy_dict)
     save_custom_policies(data)
+
+    history = PolicyHistoryStore(db)
+    history.record_change(
+        action="add",
+        policy_id=policy.id,
+        before=None,
+        after=_normalize_policy_dict(policy_dict),
+        changed_by=_actor_from_request(request),
+        source="custom_policies.json",
+        reason="Policy created via API",
+    )
     
     # Reload policies
     reload_policies()
@@ -212,7 +387,12 @@ async def create_policy(policy: PolicyInput):
 
 
 @router.put("/{policy_id}", response_model=dict)
-async def update_policy(policy_id: str, policy: PolicyInput):
+async def update_policy(
+    policy_id: str,
+    policy: PolicyInput,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """Update an existing custom policy."""
     # Only allow updating custom policies
     data = load_custom_policies()
@@ -230,28 +410,22 @@ async def update_policy(policy_id: str, policy: PolicyInput):
             detail=f"Custom policy '{policy_id}' not found. Only custom policies can be updated."
         )
     
-    # Update policy
-    policy_dict = {
-        "id": policy.id,
-        "description": policy.description,
-        "type": policy.type,
-        "severity": policy.severity,
-        "check": {
-            "type": policy.check.type,
-            "pattern": policy.check.pattern,
-            "function": policy.check.function,
-            "target": policy.check.target,
-            "message": policy.check.message,
-            "languages": policy.check.languages
-        },
-        "fix_suggestion": policy.fix_suggestion
-    }
-    
-    if policy.category:
-        policy_dict["category"] = policy.category
+    before_policy = _normalize_policy_dict(data['policies'][policy_index])
+    policy_dict = _policy_to_dict(policy)
     
     data['policies'][policy_index] = policy_dict
     save_custom_policies(data)
+
+    history = PolicyHistoryStore(db)
+    history.record_change(
+        action="modify",
+        policy_id=policy.id,
+        before=before_policy,
+        after=_normalize_policy_dict(policy_dict),
+        changed_by=_actor_from_request(request),
+        source="custom_policies.json",
+        reason=f"Policy updated via API ({policy_id})",
+    )
     
     # Reload policies
     reload_policies()
@@ -263,12 +437,17 @@ async def update_policy(policy_id: str, policy: PolicyInput):
 
 
 @router.delete("/{policy_id}", response_model=dict)
-async def delete_policy(policy_id: str):
+async def delete_policy(
+    policy_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """Delete a custom policy."""
     data = load_custom_policies()
     
     # Find and remove the policy
     original_count = len(data.get('policies', []))
+    removed_policy = next((p for p in data.get('policies', []) if p['id'] == policy_id), None)
     data['policies'] = [p for p in data.get('policies', []) if p['id'] != policy_id]
     
     if len(data['policies']) == original_count:
@@ -278,6 +457,17 @@ async def delete_policy(policy_id: str):
         )
     
     save_custom_policies(data)
+
+    history = PolicyHistoryStore(db)
+    history.record_change(
+        action="delete",
+        policy_id=policy_id,
+        before=_normalize_policy_dict(removed_policy or {"id": policy_id}),
+        after=None,
+        changed_by=_actor_from_request(request),
+        source="custom_policies.json",
+        reason="Policy deleted via API",
+    )
     
     # Reload policies
     reload_policies()
@@ -397,8 +587,10 @@ async def export_custom_policies():
 
 @router.post("/import", response_model=dict)
 async def import_policies(
+    request: Request,
     policies: List[dict] = Body(..., embed=True),
-    overwrite: bool = Body(False, embed=True)
+    overwrite: bool = Body(False, embed=True),
+    db: Session = Depends(get_db),
 ):
     """Import policies from JSON."""
     data = load_custom_policies()
@@ -406,6 +598,8 @@ async def import_policies(
     
     imported = []
     skipped = []
+    history = PolicyHistoryStore(db)
+    actor = _actor_from_request(request)
     
     for policy in policies:
         policy_id = policy.get('id')
@@ -415,15 +609,34 @@ async def import_policies(
         if policy_id in existing_ids:
             if overwrite:
                 # Remove existing and add new
+                previous = next((p for p in data['policies'] if p['id'] == policy_id), None)
                 data['policies'] = [p for p in data['policies'] if p['id'] != policy_id]
                 data['policies'].append(policy)
                 imported.append(policy_id)
+                history.record_change(
+                    action="modify",
+                    policy_id=policy_id,
+                    before=_normalize_policy_dict(previous or {"id": policy_id}),
+                    after=_normalize_policy_dict(policy),
+                    changed_by=actor,
+                    source="custom_policies.json",
+                    reason="Policy import overwrite",
+                )
             else:
                 skipped.append(policy_id)
         else:
             data['policies'].append(policy)
             imported.append(policy_id)
             existing_ids.add(policy_id)
+            history.record_change(
+                action="add",
+                policy_id=policy_id,
+                before=None,
+                after=_normalize_policy_dict(policy),
+                changed_by=actor,
+                source="custom_policies.json",
+                reason="Policy import add",
+            )
     
     save_custom_policies(data)
     reload_policies()
@@ -909,4 +1122,3 @@ async def apply_policy_template(template_id: str, group_name: str = None):
         "group": new_group,
         "policies_added": len(policies)
     }
-

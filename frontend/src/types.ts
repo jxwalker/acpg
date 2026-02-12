@@ -295,6 +295,32 @@ export interface PolicyInput {
   category?: string;
 }
 
+export interface PolicyHistoryEntry {
+  id: number;
+  policy_id: string;
+  action: string;
+  timestamp?: string | null;
+  changed_by?: string;
+  version?: number;
+  source?: string;
+  reason?: string;
+  changed_fields?: string[];
+  summary?: string;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+}
+
+export interface PolicyDiffResponse {
+  policy_id: string;
+  from_version: number;
+  to_version: number;
+  changed_fields: string[];
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  before_json: string;
+  after_json: string;
+}
+
 export interface SampleFile {
   name: string;
   path: string;

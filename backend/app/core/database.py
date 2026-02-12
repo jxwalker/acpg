@@ -1,7 +1,7 @@
 """Database configuration and models for ACPG."""
 import os
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON
@@ -331,3 +331,114 @@ class TestCaseStore:
     def delete_case(self, case: TestCase) -> None:
         self.db.delete(case)
         self.db.commit()
+
+
+def _compute_changed_fields(before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) -> List[str]:
+    """Compute changed JSON paths between two policy versions."""
+    changes: List[str] = []
+
+    def _walk(prefix: str, left: Any, right: Any):
+        if isinstance(left, dict) and isinstance(right, dict):
+            keys = sorted(set(left.keys()) | set(right.keys()))
+            for key in keys:
+                path = f"{prefix}.{key}" if prefix else str(key)
+                if key not in left or key not in right:
+                    changes.append(path)
+                else:
+                    _walk(path, left[key], right[key])
+            return
+        if isinstance(left, list) and isinstance(right, list):
+            if left != right:
+                changes.append(prefix)
+            return
+        if left != right:
+            changes.append(prefix)
+
+    _walk("", before or {}, after or {})
+    return sorted(set(changes))
+
+
+class PolicyHistoryStore:
+    """Helper class for policy history/audit operations."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def record_change(
+        self,
+        *,
+        action: str,
+        policy_id: str,
+        before: Optional[Dict[str, Any]],
+        after: Optional[Dict[str, Any]],
+        changed_by: Optional[str] = None,
+        source: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> PolicyHistory:
+        """Record a policy change event with deterministic versioning metadata."""
+        latest = (
+            self.db.query(PolicyHistory)
+            .filter(PolicyHistory.policy_id == policy_id)
+            .order_by(PolicyHistory.id.desc())
+            .first()
+        )
+        latest_version = 0
+        if latest and isinstance(latest.policy_data, dict):
+            latest_version = int(latest.policy_data.get("version", 0))
+
+        version = latest_version + 1
+        changed_fields = _compute_changed_fields(before, after)
+        payload = {
+            "version": version,
+            "action": action,
+            "before": before,
+            "after": after,
+            "changed_fields": changed_fields,
+            "source": source,
+            "reason": reason,
+            "changed_by": changed_by or "unknown",
+        }
+
+        entry = PolicyHistory(
+            action=action,
+            policy_id=policy_id,
+            policy_data=payload,
+            changed_by=changed_by,
+            timestamp=datetime.now(tz=None),
+        )
+        self.db.add(entry)
+        self.db.commit()
+        self.db.refresh(entry)
+        return entry
+
+    def list_history(
+        self,
+        *,
+        policy_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[PolicyHistory]:
+        query = self.db.query(PolicyHistory)
+        if policy_id:
+            query = query.filter(PolicyHistory.policy_id == policy_id)
+        return query.order_by(PolicyHistory.id.desc()).offset(offset).limit(limit).all()
+
+    def get_policy_versions(self, policy_id: str) -> List[PolicyHistory]:
+        return (
+            self.db.query(PolicyHistory)
+            .filter(PolicyHistory.policy_id == policy_id)
+            .order_by(PolicyHistory.id.asc())
+            .all()
+        )
+
+    def get_version_snapshot(self, policy_id: str, version: int) -> Optional[Dict[str, Any]]:
+        entries = self.get_policy_versions(policy_id)
+        for entry in entries:
+            payload = entry.policy_data or {}
+            if int(payload.get("version", 0)) != version:
+                continue
+            after = payload.get("after")
+            if after is not None:
+                return after
+            return payload.get("before")
+        return None

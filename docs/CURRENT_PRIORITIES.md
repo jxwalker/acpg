@@ -39,7 +39,7 @@ Last refreshed: **February 12, 2026**
 - Expand replay artifact indexing and UX for audit workflows.
 
 2. [ ] Policy lifecycle UX and test operations
-- Better versioning and policy diff/audit views.
+- Better versioning and policy diff/audit views. (MVP complete)
 - Safer rollout controls for policy updates.
 - Bulk test-case import/export and tagging workflows for regulated regression suites.
 
@@ -54,6 +54,7 @@ Last refreshed: **February 12, 2026**
 - Deterministic dynamic replay artifacts included in proofs
 - Solver-backed joint-attack support for stable/preferred semantics
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
+- Policy version history and diff API/UI for audit workflows
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)
