@@ -163,7 +163,7 @@ Dynamic analysis:
 
 History / audit index:
 - `GET /history`
-- `GET /history/dynamic-artifacts` (indexed dynamic replay artifacts; supports `violations_only`)
+- `GET /history/dynamic-artifacts` (indexed dynamic replay artifacts; supports `violations_only`, `suite_id`, `violation_rule_id`, `language`, `compliant`)
 
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`

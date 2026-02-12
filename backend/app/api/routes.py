@@ -2530,17 +2530,32 @@ async def add_to_history(
 async def get_dynamic_artifact_index(
     limit: int = Query(50, ge=1, le=500),
     violations_only: bool = Query(False),
+    suite_id: Optional[str] = Query(None),
+    violation_rule_id: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
+    compliant: Optional[bool] = Query(None),
 ):
     """List recent dynamic replay artifacts across analysis history entries."""
     history = load_history()
     indexed: List[Dict[str, Any]] = []
+    normalized_suite = suite_id.strip().lower() if suite_id else None
+    normalized_rule = violation_rule_id.strip().upper() if violation_rule_id else None
+    normalized_language = language.strip().lower() if language else None
 
     for entry in reversed(history):
+        if normalized_language and str(entry.get("language", "")).lower() != normalized_language:
+            continue
+        if compliant is not None and bool(entry.get("compliant")) != compliant:
+            continue
         artifacts = entry.get("dynamic_artifacts") or []
         if not artifacts:
             continue
         for artifact in artifacts:
+            if normalized_suite and str(artifact.get("suite_id", "")).lower() != normalized_suite:
+                continue
             if violations_only and not artifact.get("violation_rule_id"):
+                continue
+            if normalized_rule and str(artifact.get("violation_rule_id", "")).upper() != normalized_rule:
                 continue
             indexed.append(
                 {

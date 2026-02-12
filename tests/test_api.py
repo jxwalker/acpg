@@ -145,6 +145,15 @@ def test_dynamic_artifact_history_index(client):
         assert payload["total"] >= 1
         assert any(item["suite_id"] == "direct_execution" for item in payload["artifacts"])
         assert all(item.get("replay_fingerprint") for item in payload["artifacts"])
+
+        filtered_response = client.get(
+            "/api/v1/history/dynamic-artifacts?suite_id=direct_execution&language=python&violations_only=true"
+        )
+        assert filtered_response.status_code == 200
+        filtered_payload = filtered_response.json()
+        assert filtered_payload["total"] >= 1
+        assert all(item["suite_id"] == "direct_execution" for item in filtered_payload["artifacts"])
+        assert all(item["language"] == "python" for item in filtered_payload["artifacts"])
     finally:
         settings.ENABLE_DYNAMIC_TESTING = original_dynamic
         settings.ENABLE_STATIC_ANALYSIS = original_static
