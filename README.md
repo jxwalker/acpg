@@ -48,6 +48,7 @@ Core components:
 - Proof argumentation includes explicit runtime/dynamic evidence-channel narratives
 - Compliance history trend analytics for audit dashboards
 - CI integration publishes compliance snapshots (analysis/adjudication/trends) as artifacts
+- CI compliance gate profiles (`strict`/`monitor`) with configurable enforcement
 - Policy lifecycle audit support (version history and diff endpoints + UI)
 - Signed proof bundles (with code + evidence + argumentation trace)
 - LangGraph orchestration with streaming events and runtime traces
@@ -167,6 +168,11 @@ History / audit index:
 - `GET /history`
 - `GET /history/dynamic-artifacts` (indexed dynamic replay artifacts; supports `violations_only`, `suite_id`, `violation_rule_id`, `language`, `compliant`)
 - `GET /history/trends` (windowed compliance and violation trends; `days=1..365`)
+
+CI compliance gate:
+- Profiles are defined in `/Users/James/code/GAD/apcg/.github/compliance-gate-profiles.json`
+- Gate evaluator script: `/Users/James/code/GAD/apcg/scripts/ci/compliance_gate.py`
+- Select profile with GitHub Actions variable `ACPG_COMPLIANCE_GATE_PROFILE` (`strict` by default)
 
 Policy CRUD/grouping:
 - `GET /policies` and related endpoints under `/policies/*` and `/policy-groups/*`

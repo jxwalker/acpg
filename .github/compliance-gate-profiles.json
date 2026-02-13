@@ -1,0 +1,25 @@
+{
+  "default_profile": "strict",
+  "profiles": {
+    "strict": {
+      "description": "Blocking gate for regulated workflows. Any policy failure or elevated risk fails CI.",
+      "enforce": true,
+      "fail_on_non_compliant": true,
+      "max_critical_violations": 0,
+      "max_high_violations": 0,
+      "max_dynamic_issue_artifacts": 0,
+      "min_compliance_rate": 100.0,
+      "max_avg_violations": 0.0
+    },
+    "monitor": {
+      "description": "Observability mode. Records drift but does not fail CI.",
+      "enforce": false,
+      "fail_on_non_compliant": false,
+      "max_critical_violations": 0,
+      "max_high_violations": 5,
+      "max_dynamic_issue_artifacts": 5,
+      "min_compliance_rate": 0.0,
+      "max_avg_violations": 10.0
+    }
+  }
+}

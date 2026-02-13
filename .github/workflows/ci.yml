@@ -192,6 +192,9 @@ jobs:
             -d '{"code": "password = \"secret\"", "language": "python"}' \
             | python -c "import sys,json; d=json.load(sys.stdin); assert len(d['violations']) > 0"
 
+          # Reset history so compliance gate trends reflect the gate run only.
+          curl -fsS -X DELETE http://localhost:8000/api/v1/history
+
           # Analyze + adjudicate clean code (policy gate smoke check)
           CLEAN_ANALYSIS=$(curl -fsS -X POST http://localhost:8000/api/v1/analyze \
             -H "Content-Type: application/json" \
@@ -208,8 +211,26 @@ jobs:
           # Export trend analytics snapshot for CI artifacts
           curl -fsS "http://localhost:8000/api/v1/history/trends?days=30" -o compliance-trends.json
           python -c "import json; d=json.load(open('compliance-trends.json')); assert 'total_runs' in d and 'compliance_rate' in d"
+
+          # Export dynamic issue artifact index for the same window
+          curl -fsS "http://localhost:8000/api/v1/history/dynamic-artifacts?violations_only=true" -o dynamic-artifacts.json
+          python -c "import json; d=json.load(open('dynamic-artifacts.json')); assert 'total' in d"
           
           echo "✅ All integration tests passed"
+
+      - name: Evaluate compliance gate profile
+        env:
+          COMPLIANCE_GATE_PROFILE: ${{ vars.ACPG_COMPLIANCE_GATE_PROFILE || 'strict' }}
+        run: |
+          python scripts/ci/compliance_gate.py \
+            --profiles-file .github/compliance-gate-profiles.json \
+            --profile "$COMPLIANCE_GATE_PROFILE" \
+            --analysis-file clean-analysis.json \
+            --adjudication-file clean-adjudication.json \
+            --trends-file compliance-trends.json \
+            --dynamic-artifacts-file dynamic-artifacts.json \
+            --output compliance-gate-result.json
+          cat compliance-gate-result.json
 
       - name: Upload compliance artifacts
         uses: actions/upload-artifact@v4
@@ -220,4 +241,6 @@ jobs:
             clean-analysis.json
             clean-adjudication.json
             compliance-trends.json
+            dynamic-artifacts.json
+            compliance-gate-result.json
           retention-days: 30

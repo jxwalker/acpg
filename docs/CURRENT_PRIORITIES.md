@@ -63,6 +63,7 @@ Last refreshed: **February 12, 2026**
 - Proof argumentation evidence-channel narratives for runtime + dynamic signals
 - Compliance trend analytics endpoint + history sidebar KPI panel
 - CI workflow compliance artifacts (clean adjudication + trend snapshots)
+- Configurable CI compliance gate profiles with enforce/monitor modes
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

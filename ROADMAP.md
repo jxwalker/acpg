@@ -25,6 +25,7 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Proof argumentation evidence-channel linkage for runtime + dynamic signals
 - Compliance history trend analytics (API + UI summary panels)
 - CI compliance artifacts (clean adjudication + trend snapshot publication)
+- Configurable CI compliance gate profiles (strict/monitor) with threshold enforcement
 - Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff/audit support (API + UI)
