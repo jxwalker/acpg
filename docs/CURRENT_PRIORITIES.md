@@ -66,6 +66,7 @@ Last refreshed: **February 12, 2026**
 - Configurable CI compliance gate profiles with enforce/monitor modes
 - Tenant-scoped API key RBAC foundation (roles + tenant-bound keys + auth routes)
 - Permission-gated core APIs + tenant-scoped history/trend visibility
+- Database operational diagnostics + pooled connection hardening defaults
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

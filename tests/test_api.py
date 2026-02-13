@@ -38,6 +38,16 @@ def test_health_endpoint(client):
     assert data["status"] == "healthy"
 
 
+def test_admin_database_diagnostics_endpoint(client):
+    """Database diagnostics endpoint should expose connectivity metadata."""
+    response = client.get("/api/v1/admin/database/diagnostics")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "dialect" in payload
+    assert "connectivity" in payload
+    assert payload["connectivity"]["healthy"] is True
+
+
 def test_runtime_policies_list_and_evaluate(client):
     """Runtime policy endpoints should list and evaluate deterministic decisions."""
     list_response = client.get("/api/v1/runtime/policies")
@@ -272,6 +282,12 @@ def test_tenant_scoped_auth_and_key_permissions(client):
             headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
         )
         assert viewer_create_attempt.status_code == 403
+
+        viewer_admin_stats = client.get(
+            "/api/v1/admin/stats",
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_admin_stats.status_code == 403
 
         tenant_one_analysis = client.post(
             "/api/v1/analyze",

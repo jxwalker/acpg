@@ -77,6 +77,10 @@ Set environment variables in `backend/.env` (or export in shell):
 export OPENAI_API_KEY="sk-..."
 export ACPG_REQUIRE_AUTH="false"
 export ACPG_MASTER_API_KEY=""
+export DATABASE_URL="sqlite:///backend/acpg.db"
+export DB_POOL_SIZE="5"
+export DB_MAX_OVERFLOW="10"
+export DB_POOL_RECYCLE_SECONDS="300"
 ```
 
 ### 3. Run
@@ -150,6 +154,9 @@ Auth and tenancy:
 - `POST /auth/keys/{name}/revoke`
 - Core endpoints (`/analyze`, `/adjudicate`, `/enforce`, `/proof/*`, `/history*`) are permission-gated when `ACPG_REQUIRE_AUTH=true`
 - Tenant-scoped requests use `X-Tenant-ID`; history/trends/artifact indexes are filtered to caller tenant for non-master keys
+
+Operations diagnostics:
+- `GET /admin/database/diagnostics` (dialect/driver, pool status, redacted DB URL, connection latency)
 
 Runtime policy compiler:
 - `GET /runtime/policies`

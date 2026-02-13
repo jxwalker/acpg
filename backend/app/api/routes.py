@@ -47,6 +47,19 @@ def _auth_actor(auth: Optional[AuthContext]) -> Optional[str]:
     return f"{tenant}:{key_name}"
 
 
+def _redact_database_url(url: str) -> str:
+    if "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if "@" not in rest:
+        return url
+    credentials, host = rest.split("@", 1)
+    if ":" in credentials:
+        user = credentials.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return f"{scheme}://***@{host}"
+
+
 # ============================================================================
 # Health & Info Endpoints
 # ============================================================================
@@ -2429,6 +2442,33 @@ async def get_system_stats(
         "total_proofs_generated": total_proofs,
         "total_enforcements": total_enforcements,
         "policies_loaded": len(compiler.get_all_policies())
+    }
+
+
+@router.get("/admin/database/diagnostics")
+async def get_database_diagnostics(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("admin:read")),
+):
+    """Return database connectivity and pool diagnostics for operations."""
+    from sqlalchemy import text
+    from ..core.database import DATABASE_URL, engine
+
+    _ = auth
+    started = time.perf_counter()
+    db.execute(text("SELECT 1"))
+    latency_ms = round((time.perf_counter() - started) * 1000, 3)
+
+    return {
+        "dialect": engine.dialect.name,
+        "driver": engine.dialect.driver,
+        "database_url": _redact_database_url(DATABASE_URL),
+        "pool_class": engine.pool.__class__.__name__,
+        "pool_status": engine.pool.status() if hasattr(engine.pool, "status") else "n/a",
+        "connectivity": {
+            "healthy": True,
+            "latency_ms": latency_ms,
+        },
     }
 
 

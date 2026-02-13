@@ -14,11 +14,30 @@ DATABASE_URL = os.environ.get(
     f"sqlite:///{Path(__file__).parent.parent.parent}/acpg.db"
 )
 
+def _build_engine():
+    """Create SQLAlchemy engine with conservative operational defaults."""
+    if "sqlite" in DATABASE_URL:
+        return create_engine(
+            DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            pool_pre_ping=True,
+        )
+
+    pool_size = int(os.environ.get("DB_POOL_SIZE", "5"))
+    max_overflow = int(os.environ.get("DB_MAX_OVERFLOW", "10"))
+    pool_recycle_seconds = int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "300"))
+
+    return create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_recycle=pool_recycle_seconds,
+    )
+
+
 # Create engine
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+engine = _build_engine()
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
