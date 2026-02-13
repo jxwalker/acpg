@@ -75,6 +75,8 @@ Set environment variables in `backend/.env` (or export in shell):
 
 ```bash
 export OPENAI_API_KEY="sk-..."
+export ACPG_REQUIRE_AUTH="false"
+export ACPG_MASTER_API_KEY=""
 ```
 
 ### 3. Run
@@ -137,6 +139,15 @@ LLM management:
 - `GET /llm/providers`
 - `POST /llm/switch`
 - `POST /llm/test`
+
+Auth and tenancy:
+- `GET /auth/me`
+- `GET /auth/roles`
+- `GET /auth/tenants`
+- `POST /auth/tenants`
+- `GET /auth/keys`
+- `POST /auth/keys`
+- `POST /auth/keys/{name}/revoke`
 
 Runtime policy compiler:
 - `GET /runtime/policies`

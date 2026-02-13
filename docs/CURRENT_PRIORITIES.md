@@ -64,6 +64,7 @@ Last refreshed: **February 12, 2026**
 - Compliance trend analytics endpoint + history sidebar KPI panel
 - CI workflow compliance artifacts (clean adjudication + trend snapshots)
 - Configurable CI compliance gate profiles with enforce/monitor modes
+- Tenant-scoped API key RBAC foundation (roles + tenant-bound keys + auth routes)
 - LangGraph runtime trace propagation
 - Runtime guard -> violation flow
 - Kimi non-streaming remediation fix (safe output token caps)

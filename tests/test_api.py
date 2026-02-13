@@ -161,6 +161,91 @@ def test_dynamic_artifact_history_index(client):
         client.delete("/api/v1/history")
 
 
+def test_tenant_scoped_auth_and_key_permissions(client):
+    """Tenant-scoped key roles should enforce authz and tenant boundaries."""
+    import uuid
+    import app.core.auth as auth_module
+
+    original_require_auth = auth_module.REQUIRE_AUTH
+    original_master_api_key = auth_module.MASTER_API_KEY
+    auth_module.REQUIRE_AUTH = True
+    auth_module.MASTER_API_KEY = "master-test-key"
+
+    tenant_id = f"tenant-{uuid.uuid4().hex[:8]}"
+    admin_key_name = f"admin-{uuid.uuid4().hex[:8]}"
+    viewer_key_name = f"viewer-{uuid.uuid4().hex[:8]}"
+
+    try:
+        unauth_response = client.get("/api/v1/auth/me")
+        assert unauth_response.status_code == 401
+
+        create_tenant = client.post(
+            "/api/v1/auth/tenants",
+            json={
+                "tenant_id": tenant_id,
+                "name": "Tenant Scoped Test",
+                "description": "auth integration test",
+            },
+            headers={"X-API-Key": "master-test-key"},
+        )
+        assert create_tenant.status_code == 200
+
+        create_admin_key = client.post(
+            "/api/v1/auth/keys",
+            json={
+                "name": admin_key_name,
+                "tenant_id": tenant_id,
+                "role": "admin",
+                "expires_in_days": 7,
+            },
+            headers={"X-API-Key": "master-test-key"},
+        )
+        assert create_admin_key.status_code == 200
+        admin_key = create_admin_key.json()["api_key"]
+        assert admin_key.startswith("acpg_")
+
+        me_response = client.get(
+            "/api/v1/auth/me",
+            headers={"X-API-Key": admin_key, "X-Tenant-ID": tenant_id},
+        )
+        assert me_response.status_code == 200
+        me_data = me_response.json()
+        assert me_data["tenant_id"] == tenant_id
+        assert me_data["role"] == "admin"
+
+        mismatched_tenant = client.get(
+            "/api/v1/auth/me",
+            headers={"X-API-Key": admin_key, "X-Tenant-ID": "other-tenant"},
+        )
+        assert mismatched_tenant.status_code == 403
+
+        create_viewer_key = client.post(
+            "/api/v1/auth/keys",
+            json={
+                "name": viewer_key_name,
+                "tenant_id": tenant_id,
+                "role": "viewer",
+            },
+            headers={"X-API-Key": admin_key, "X-Tenant-ID": tenant_id},
+        )
+        assert create_viewer_key.status_code == 200
+        viewer_key = create_viewer_key.json()["api_key"]
+
+        viewer_create_attempt = client.post(
+            "/api/v1/auth/keys",
+            json={
+                "name": f"blocked-{uuid.uuid4().hex[:8]}",
+                "tenant_id": tenant_id,
+                "role": "viewer",
+            },
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_create_attempt.status_code == 403
+    finally:
+        auth_module.REQUIRE_AUTH = original_require_auth
+        auth_module.MASTER_API_KEY = original_master_api_key
+
+
 def test_history_trends_endpoint(client):
     """History trends should aggregate compliance and rule statistics."""
     client.delete("/api/v1/history")

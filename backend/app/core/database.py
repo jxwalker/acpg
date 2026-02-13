@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 
@@ -92,6 +92,20 @@ class APIKey(Base):
     permissions = Column(JSON, default=list)  # List of allowed actions
     rate_limit = Column(Integer, default=100)  # Requests per minute
     last_used = Column(DateTime, nullable=True)
+    tenant_id = Column(String(100), nullable=True, index=True)
+    role = Column(String(32), default="operator")
+
+
+class Tenant(Base):
+    """Tenants for scoped API access in multi-tenant deployments."""
+    __tablename__ = "tenants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(100), unique=True, index=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=None), index=True)
+    is_active = Column(Boolean, default=True, index=True)
 
 
 class TestCase(Base):
@@ -116,6 +130,21 @@ class TestCase(Base):
 def init_db():
     """Initialize database tables."""
     Base.metadata.create_all(bind=engine)
+    _run_schema_migrations()
+
+
+def _run_schema_migrations():
+    """Apply lightweight schema migrations for environments without Alembic."""
+    with engine.begin() as conn:
+        if "sqlite" in DATABASE_URL:
+            cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(api_keys)")).fetchall()
+            }
+            if "tenant_id" not in cols:
+                conn.execute(text("ALTER TABLE api_keys ADD COLUMN tenant_id VARCHAR(100)"))
+            if "role" not in cols:
+                conn.execute(text("ALTER TABLE api_keys ADD COLUMN role VARCHAR(32) DEFAULT 'operator'"))
 
 
 def get_db() -> Session:
@@ -443,3 +472,32 @@ class PolicyHistoryStore:
                 return after
             return payload.get("before")
         return None
+
+
+class TenantStore:
+    """CRUD helper for tenants used by API key scoping."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create_tenant(self, *, tenant_id: str, name: str, description: Optional[str] = None) -> Tenant:
+        tenant = Tenant(
+            tenant_id=tenant_id,
+            name=name,
+            description=description,
+            created_at=datetime.now(tz=None),
+            is_active=True,
+        )
+        self.db.add(tenant)
+        self.db.commit()
+        self.db.refresh(tenant)
+        return tenant
+
+    def get_tenant(self, tenant_id: str) -> Optional[Tenant]:
+        return self.db.query(Tenant).filter(Tenant.tenant_id == tenant_id).first()
+
+    def list_tenants(self, *, include_inactive: bool = False) -> List[Tenant]:
+        query = self.db.query(Tenant)
+        if not include_inactive:
+            query = query.filter(Tenant.is_active == True)  # noqa: E712
+        return query.order_by(Tenant.created_at.asc()).all()

@@ -140,6 +140,13 @@ try:
 except ImportError as e:
     print(f"⚠️  Policy routes not available: {e}")
 
+# Include auth/tenant routes
+try:
+    from app.api.auth_routes import router as auth_router
+    app.include_router(auth_router, prefix=settings.API_V1_STR)
+except ImportError as e:
+    print(f"⚠️  Auth routes not available: {e}")
+
 
 # Root endpoint
 @app.get("/")
@@ -164,4 +171,3 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
-
