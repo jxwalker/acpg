@@ -148,6 +148,8 @@ Auth and tenancy:
 - `GET /auth/keys`
 - `POST /auth/keys`
 - `POST /auth/keys/{name}/revoke`
+- Core endpoints (`/analyze`, `/adjudicate`, `/enforce`, `/proof/*`, `/history*`) are permission-gated when `ACPG_REQUIRE_AUTH=true`
+- Tenant-scoped requests use `X-Tenant-ID`; history/trends/artifact indexes are filtered to caller tenant for non-master keys
 
 Runtime policy compiler:
 - `GET /runtime/policies`

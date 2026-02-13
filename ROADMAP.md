@@ -27,6 +27,7 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - CI compliance artifacts (clean adjudication + trend snapshot publication)
 - Configurable CI compliance gate profiles (strict/monitor) with threshold enforcement
 - Tenant-scoped API key RBAC foundation (roles + tenant-bound keys + auth routes)
+- Permission-gated core APIs + tenant-scoped history/audit views
 - Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff/audit support (API + UI)

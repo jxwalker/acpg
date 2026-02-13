@@ -26,6 +26,7 @@ from ..services.tool_cache import get_tool_cache
 from ..services.tool_mapper import get_tool_mapper
 from ..core.config import settings
 from ..core.database import get_db, AuditLogger, ProofStore, TestCaseStore, TestCase
+from ..core.auth import AuthContext, require_permission
 
 router = APIRouter()
 
@@ -36,6 +37,14 @@ def get_client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def _auth_actor(auth: Optional[AuthContext]) -> Optional[str]:
+    if not auth:
+        return None
+    key_name = auth.key_name or "anonymous"
+    tenant = auth.tenant_id or "global"
+    return f"{tenant}:{key_name}"
 
 
 # ============================================================================
@@ -1280,7 +1289,8 @@ async def get_policies_by_severity(severity: str):
 async def analyze_code(
     request: ComplianceRequest,
     http_request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("analyze")),
 ):
     """
     Analyze code for policy violations.
@@ -1317,6 +1327,7 @@ async def analyze_code(
             language=request.language,
             compliant=adjudication.compliant,
             violations=[v.model_dump() for v in result.violations],
+            user_id=_auth_actor(auth),
             ip_address=get_client_ip(http_request),
             request_id=str(uuid.uuid4())
         )
@@ -1366,6 +1377,8 @@ async def analyze_code(
             dynamic_executed=bool(result.dynamic_analysis and result.dynamic_analysis.executed),
             dynamic_runner=result.dynamic_analysis.runner if result.dynamic_analysis else None,
             dynamic_artifacts=dynamic_artifacts,
+            tenant_id=auth.tenant_id,
+            auth=auth,
         )
     except Exception:
         pass  # Don't fail if history save fails
@@ -1383,10 +1396,14 @@ class ViolationSummary(BaseModel):
 
 
 @router.post("/analyze/summary", response_model=ViolationSummary)
-async def analyze_code_summary(request: ComplianceRequest):
+async def analyze_code_summary(
+    request: ComplianceRequest,
+    auth: AuthContext = Depends(require_permission("analyze")),
+):
     """
     Analyze code and return a summary of violations.
     """
+    _ = auth
     from .policy_routes import get_enabled_policy_ids
     
     policy_ids = request.policies
@@ -1431,13 +1448,17 @@ class BatchAnalysisResult(BaseModel):
 
 
 @router.post("/analyze/batch")
-async def batch_analyze(request: BatchAnalysisRequest):
+async def batch_analyze(
+    request: BatchAnalysisRequest,
+    auth: AuthContext = Depends(require_permission("analyze")),
+):
     """
     Analyze multiple code snippets in a single request.
     
     Returns compliance status and violations for each item.
     Useful for analyzing multiple files at once.
     """
+    _ = auth
     from .policy_routes import get_enabled_policy_ids
     
     prosecutor = get_prosecutor()
@@ -1508,7 +1529,10 @@ class ReportRequest(BaseModel):
 
 
 @router.post("/report")
-async def generate_report(request: ReportRequest):
+async def generate_report(
+    request: ReportRequest,
+    auth: AuthContext = Depends(require_permission("analyze")),
+):
     """
     Generate a compliance report for code.
     
@@ -1523,6 +1547,7 @@ async def generate_report(request: ReportRequest):
     
     If no policies specified, uses policies from enabled policy groups.
     """
+    _ = auth
     from ..services.report_generator import generate_compliance_report
     from .policy_routes import get_enabled_policy_ids
     
@@ -1714,12 +1739,14 @@ async def adjudicate_analysis(
         "auto",
         description="Solver decision mode for stable/preferred semantics: auto, skeptical, credulous",
     ),
+    auth: AuthContext = Depends(require_permission("adjudicate")),
 ):
     """
     Run adjudication on analysis results.
     
     Uses formal argumentation to determine compliance status.
     """
+    _ = auth
     adjudicator = get_adjudicator()
     return adjudicator.adjudicate(
         analysis,
@@ -1736,10 +1763,14 @@ class GuidanceResponse(BaseModel):
 
 
 @router.post("/adjudicate/guidance", response_model=GuidanceResponse)
-async def get_fix_guidance(analysis: AnalysisResult):
+async def get_fix_guidance(
+    analysis: AnalysisResult,
+    auth: AuthContext = Depends(require_permission("adjudicate")),
+):
     """
     Get prioritized guidance for fixing violations.
     """
+    _ = auth
     adjudicator = get_adjudicator()
     guidance = adjudicator.generate_guidance(analysis)
     
@@ -1765,7 +1796,8 @@ async def get_fix_guidance(analysis: AnalysisResult):
 async def enforce_compliance(
     request: EnforceRequest,
     http_request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("enforce")),
 ):
     """
     Full compliance enforcement loop.
@@ -2001,6 +2033,7 @@ async def enforce_compliance(
             compliant=False,
             violations_fixed=violations_fixed,
             iterations=request.max_iterations,
+            user_id=_auth_actor(auth),
             ip_address=get_client_ip(http_request),
             request_id=request_id
         )
@@ -2036,6 +2069,7 @@ async def generate_proof(
         "auto",
         description="Solver decision mode for stable/preferred semantics: auto, skeptical, credulous",
     ),
+    auth: AuthContext = Depends(require_permission("proof:generate")),
 ):
     """
     Generate a proof bundle for code (compliant or non-compliant).
@@ -2080,6 +2114,7 @@ async def generate_proof(
         audit.log_proof_generation(
             artifact_hash=proof.artifact.hash,
             language=request.language,
+            user_id=_auth_actor(auth),
             ip_address=get_client_ip(http_request)
         )
     except Exception:
@@ -2093,8 +2128,13 @@ async def generate_proof(
 # ============================================================================
 
 @router.get("/proof/{artifact_hash}")
-async def get_proof_by_hash(artifact_hash: str, db: Session = Depends(get_db)):
+async def get_proof_by_hash(
+    artifact_hash: str,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("proof:read")),
+):
     """Retrieve a stored proof bundle by artifact hash."""
+    _ = auth
     proof_store = ProofStore(db)
     proof = proof_store.get_proof_by_hash(artifact_hash)
     
@@ -2108,9 +2148,11 @@ async def get_proof_by_hash(artifact_hash: str, db: Session = Depends(get_db)):
 async def list_proofs(
     limit: int = Query(default=100, le=1000),
     offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("proof:read")),
 ):
     """List stored proof bundles."""
+    _ = auth
     proof_store = ProofStore(db)
     proofs = proof_store.list_proofs(limit=limit, offset=offset)
     return {"proofs": proofs, "count": len(proofs)}
@@ -2125,7 +2167,10 @@ class VerifyProofRequest(BaseModel):
     proof_bundle: Dict[str, Any]
 
 @router.post("/proof/verify")
-async def verify_proof_bundle(request: VerifyProofRequest):
+async def verify_proof_bundle(
+    request: VerifyProofRequest,
+    auth: AuthContext = Depends(require_permission("proof:read")),
+):
     """
     Verify a proof bundle's cryptographic signature.
     
@@ -2136,6 +2181,7 @@ async def verify_proof_bundle(request: VerifyProofRequest):
     
     Returns detailed information about the verification result.
     """
+    _ = auth
     from ..core.crypto import get_signer
     
     proof = request.proof_bundle
@@ -2320,9 +2366,11 @@ async def get_public_key():
 async def get_audit_logs(
     limit: int = Query(default=100, le=1000),
     action: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("admin:read")),
 ):
     """Get audit logs (admin only in production)."""
+    _ = auth
     from ..core.database import AuditLog
     
     query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
@@ -2348,8 +2396,12 @@ async def get_audit_logs(
 
 
 @router.get("/admin/stats")
-async def get_system_stats(db: Session = Depends(get_db)):
+async def get_system_stats(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("admin:read")),
+):
     """Get system statistics."""
+    _ = auth
     from ..core.database import AuditLog, StoredProof
     from sqlalchemy import func
     
@@ -2392,10 +2444,14 @@ class VerifyProofResponse(BaseModel):
 
 
 @router.post("/proof/verify", response_model=VerifyProofResponse)
-async def verify_proof(request: VerifyProofRequest):
+async def verify_proof(
+    request: VerifyProofRequest,
+    auth: AuthContext = Depends(require_permission("proof:read")),
+):
     """
     Verify a proof bundle's signature.
     """
+    _ = auth
     proof_assembler = get_proof_assembler()
     
     try:
@@ -2418,10 +2474,14 @@ class ExportProofRequest(BaseModel):
 
 
 @router.post("/proof/export")
-async def export_proof(request: ExportProofRequest):
+async def export_proof(
+    request: ExportProofRequest,
+    auth: AuthContext = Depends(require_permission("proof:read")),
+):
     """
     Export proof bundle to a portable format.
     """
+    _ = auth
     proof_assembler = get_proof_assembler()
     
     try:
@@ -2471,18 +2531,34 @@ class HistoryEntry(BaseModel):
     severity_breakdown: dict
     rule_breakdown: dict = {}
     code_hash: str
+    tenant_id: Optional[str] = None
     dynamic_executed: bool = False
     dynamic_runner: Optional[str] = None
     dynamic_artifacts: List[Dict[str, Any]] = []
 
 
+def _history_entry_tenant(entry: Dict[str, Any]) -> str:
+    return str(entry.get("tenant_id") or "global")
+
+
+def _history_visible(entry: Dict[str, Any], auth: AuthContext) -> bool:
+    if auth.is_master:
+        return True
+    auth_tenant = auth.tenant_id or "global"
+    return _history_entry_tenant(entry) == auth_tenant
+
+
 @router.get("/history")
-async def get_analysis_history(limit: int = Query(20, ge=1, le=100)):
+async def get_analysis_history(
+    limit: int = Query(20, ge=1, le=100),
+    auth: AuthContext = Depends(require_permission("history:read")),
+):
     """Get recent analysis history."""
     history = load_history()
+    visible = [entry for entry in history if _history_visible(entry, auth)]
     return {
-        "history": history[-limit:][::-1],  # Most recent first
-        "total": len(history)
+        "history": visible[-limit:][::-1],  # Most recent first
+        "total": len(visible)
     }
 
 
@@ -2495,19 +2571,27 @@ async def add_to_history(
     policies_passed: int = 0,
     severity_breakdown: dict = None,
     rule_breakdown: dict = None,
+    tenant_id: Optional[str] = None,
     dynamic_executed: bool = False,
     dynamic_runner: Optional[str] = None,
     dynamic_artifacts: Optional[List[Dict[str, Any]]] = None,
+    auth: AuthContext = Depends(require_permission("history:write")),
 ):
     """Add an analysis result to history."""
     history = load_history()
+    effective_tenant_id = tenant_id if auth.is_master else (auth.tenant_id or tenant_id)
+    normalized_tenant_id = (effective_tenant_id or "global").strip()
     
     # Create code hash for deduplication
     # Use a non-cryptographic identifier for dedupe; avoid weak hashes to satisfy security scans.
     code_hash = hashlib.sha256(code.encode()).hexdigest()[:8]
     
     # Check if this exact code was just analyzed (avoid duplicates)
-    if history and history[-1].get('code_hash') == code_hash:
+    if (
+        history
+        and history[-1].get('code_hash') == code_hash
+        and _history_entry_tenant(history[-1]) == normalized_tenant_id
+    ):
         return {"message": "Duplicate entry skipped", "id": history[-1]['id']}
     
     entry = {
@@ -2521,6 +2605,7 @@ async def add_to_history(
         "severity_breakdown": severity_breakdown or {},
         "rule_breakdown": rule_breakdown or {},
         "code_hash": code_hash,
+        "tenant_id": normalized_tenant_id,
         "dynamic_executed": dynamic_executed,
         "dynamic_runner": dynamic_runner,
         "dynamic_artifacts": dynamic_artifacts or [],
@@ -2540,6 +2625,7 @@ async def get_dynamic_artifact_index(
     violation_rule_id: Optional[str] = Query(None),
     language: Optional[str] = Query(None),
     compliant: Optional[bool] = Query(None),
+    auth: AuthContext = Depends(require_permission("history:read")),
 ):
     """List recent dynamic replay artifacts across analysis history entries."""
     history = load_history()
@@ -2549,6 +2635,8 @@ async def get_dynamic_artifact_index(
     normalized_language = language.strip().lower() if language else None
 
     for entry in reversed(history):
+        if not _history_visible(entry, auth):
+            continue
         if normalized_language and str(entry.get("language", "")).lower() != normalized_language:
             continue
         if compliant is not None and bool(entry.get("compliant")) != compliant:
@@ -2592,13 +2680,18 @@ def _parse_history_timestamp(value: Optional[str]) -> Optional[datetime]:
 
 
 @router.get("/history/trends")
-async def get_history_trends(days: int = Query(30, ge=1, le=365)):
+async def get_history_trends(
+    days: int = Query(30, ge=1, le=365),
+    auth: AuthContext = Depends(require_permission("history:read")),
+):
     """Aggregate compliance trends from analysis history for audit dashboards."""
     history = load_history()
     cutoff = datetime.utcnow() - timedelta(days=days)
 
     selected = []
     for entry in history:
+        if not _history_visible(entry, auth):
+            continue
         ts = _parse_history_timestamp(entry.get("timestamp"))
         if ts is None or ts < cutoff:
             continue
@@ -2689,11 +2782,17 @@ async def get_history_trends(days: int = Query(30, ge=1, le=365)):
 
 
 @router.delete("/history/{entry_id}")
-async def delete_history_entry(entry_id: str):
+async def delete_history_entry(
+    entry_id: str,
+    auth: AuthContext = Depends(require_permission("history:write")),
+):
     """Delete a specific history entry."""
     history = load_history()
     original_len = len(history)
-    history = [h for h in history if h.get('id') != entry_id]
+    history = [
+        h for h in history
+        if not (h.get('id') == entry_id and _history_visible(h, auth))
+    ]
     
     if len(history) == original_len:
         raise HTTPException(status_code=404, detail="Entry not found")
@@ -2703,7 +2802,13 @@ async def delete_history_entry(entry_id: str):
 
 
 @router.delete("/history")
-async def clear_history():
+async def clear_history(auth: AuthContext = Depends(require_permission("history:write"))):
     """Clear all analysis history."""
-    save_history([])
-    return {"message": "History cleared"}
+    history = load_history()
+    if auth.is_master:
+        save_history([])
+        return {"message": "History cleared"}
+
+    remaining = [entry for entry in history if not _history_visible(entry, auth)]
+    save_history(remaining)
+    return {"message": "Tenant history cleared"}

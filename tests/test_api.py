@@ -172,12 +172,20 @@ def test_tenant_scoped_auth_and_key_permissions(client):
     auth_module.MASTER_API_KEY = "master-test-key"
 
     tenant_id = f"tenant-{uuid.uuid4().hex[:8]}"
+    other_tenant_id = f"tenant-{uuid.uuid4().hex[:8]}"
     admin_key_name = f"admin-{uuid.uuid4().hex[:8]}"
+    other_admin_key_name = f"admin-{uuid.uuid4().hex[:8]}"
     viewer_key_name = f"viewer-{uuid.uuid4().hex[:8]}"
 
     try:
         unauth_response = client.get("/api/v1/auth/me")
         assert unauth_response.status_code == 401
+
+        clear_history = client.delete(
+            "/api/v1/history",
+            headers={"X-API-Key": "master-test-key"},
+        )
+        assert clear_history.status_code == 200
 
         create_tenant = client.post(
             "/api/v1/auth/tenants",
@@ -203,6 +211,29 @@ def test_tenant_scoped_auth_and_key_permissions(client):
         assert create_admin_key.status_code == 200
         admin_key = create_admin_key.json()["api_key"]
         assert admin_key.startswith("acpg_")
+
+        create_other_tenant = client.post(
+            "/api/v1/auth/tenants",
+            json={
+                "tenant_id": other_tenant_id,
+                "name": "Other Tenant",
+            },
+            headers={"X-API-Key": "master-test-key"},
+        )
+        assert create_other_tenant.status_code == 200
+
+        create_other_admin_key = client.post(
+            "/api/v1/auth/keys",
+            json={
+                "name": other_admin_key_name,
+                "tenant_id": other_tenant_id,
+                "role": "admin",
+                "expires_in_days": 7,
+            },
+            headers={"X-API-Key": "master-test-key"},
+        )
+        assert create_other_admin_key.status_code == 200
+        other_admin_key = create_other_admin_key.json()["api_key"]
 
         me_response = client.get(
             "/api/v1/auth/me",
@@ -241,6 +272,43 @@ def test_tenant_scoped_auth_and_key_permissions(client):
             headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
         )
         assert viewer_create_attempt.status_code == 403
+
+        tenant_one_analysis = client.post(
+            "/api/v1/analyze",
+            json={"code": "password = 'tenant-one-secret'", "language": "python"},
+            headers={"X-API-Key": admin_key, "X-Tenant-ID": tenant_id},
+        )
+        assert tenant_one_analysis.status_code == 200
+
+        tenant_two_analysis = client.post(
+            "/api/v1/analyze",
+            json={"code": "password = 'tenant-two-secret'", "language": "python"},
+            headers={"X-API-Key": other_admin_key, "X-Tenant-ID": other_tenant_id},
+        )
+        assert tenant_two_analysis.status_code == 200
+
+        tenant_one_history = client.get(
+            "/api/v1/history?limit=20",
+            headers={"X-API-Key": admin_key, "X-Tenant-ID": tenant_id},
+        )
+        assert tenant_one_history.status_code == 200
+        tenant_one_data = tenant_one_history.json()
+        assert tenant_one_data["total"] == 1
+        assert all(item.get("tenant_id") == tenant_id for item in tenant_one_data["history"])
+
+        tenant_one_trends = client.get(
+            "/api/v1/history/trends?days=30",
+            headers={"X-API-Key": admin_key, "X-Tenant-ID": tenant_id},
+        )
+        assert tenant_one_trends.status_code == 200
+        assert tenant_one_trends.json()["total_runs"] == 1
+
+        master_history = client.get(
+            "/api/v1/history?limit=20",
+            headers={"X-API-Key": "master-test-key"},
+        )
+        assert master_history.status_code == 200
+        assert master_history.json()["total"] >= 2
     finally:
         auth_module.REQUIRE_AUTH = original_require_auth
         auth_module.MASTER_API_KEY = original_master_api_key
