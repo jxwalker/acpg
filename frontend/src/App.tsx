@@ -6587,6 +6587,11 @@ function PoliciesView({
   onPolicyCreated?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<'policies' | 'groups'>('policies');
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [mutationStatus, setMutationStatus] = useState<{
+    type: 'success' | 'error' | 'info';
+    message: string;
+  } | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'strict' | 'defeasible'>('all');
   const [showEditor, setShowEditor] = useState(false);
@@ -6616,6 +6621,7 @@ function PoliciesView({
   const [showRolloutPreviewModal, setShowRolloutPreviewModal] = useState(false);
   const [rolloutOverrides, setRolloutOverrides] = useState<Record<string, boolean>>({});
   const [rolloutLimitCases, setRolloutLimitCases] = useState(20);
+  const [rolloutShowChangedOnly, setRolloutShowChangedOnly] = useState(false);
   const [rolloutPreviewLoading, setRolloutPreviewLoading] = useState(false);
   const [rolloutPreviewResult, setRolloutPreviewResult] = useState<{
     baseline: { enabled_group_ids: string[]; policy_ids: string[]; policy_count: number };
@@ -6667,8 +6673,10 @@ function PoliciesView({
       a.download = `acpg-policy-groups-${new Date().toISOString().split('T')[0]}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      setMutationStatus({ type: 'success', message: 'Policy groups exported.' });
     } catch (e) {
       console.error('Export failed:', e);
+      setMutationStatus({ type: 'error', message: 'Failed to export policy groups.' });
     }
   };
   
@@ -6689,11 +6697,14 @@ function PoliciesView({
       
       if (res.ok) {
         const result = await res.json();
-        alert(`Imported ${result.total_imported} groups${result.total_skipped > 0 ? ` (${result.total_skipped} skipped)` : ''}`);
+        setMutationStatus({
+          type: 'success',
+          message: `Imported ${result.total_imported} groups${result.total_skipped > 0 ? ` (${result.total_skipped} skipped)` : ''}.`,
+        });
         loadPolicyGroups();
       }
     } catch (e) {
-      alert('Invalid JSON file');
+      setMutationStatus({ type: 'error', message: 'Invalid policy-group JSON file.' });
     }
     
     // Reset file input
@@ -6783,6 +6794,7 @@ function PoliciesView({
     }
     setRolloutOverrides(initial);
     setRolloutPreviewResult(null);
+    setRolloutShowChangedOnly(false);
     setShowRolloutPreviewModal(true);
   };
 
@@ -6795,6 +6807,7 @@ function PoliciesView({
 
   const runRolloutPreview = async () => {
     setRolloutPreviewLoading(true);
+    setMutationStatus(null);
     try {
       const response = await fetch('/api/v1/policies/groups/rollout/preview', {
         method: 'POST',
@@ -6808,12 +6821,13 @@ function PoliciesView({
       });
       const data = await response.json();
       if (!response.ok) {
-        alert(data.detail || 'Rollout preview failed');
+        setMutationStatus({ type: 'error', message: data.detail || 'Rollout preview failed.' });
         return;
       }
       setRolloutPreviewResult(data);
+      setMutationStatus({ type: 'success', message: `Preview complete for ${data.evaluated_cases} cases.` });
     } catch (e) {
-      alert('Rollout preview failed');
+      setMutationStatus({ type: 'error', message: 'Rollout preview failed.' });
     } finally {
       setRolloutPreviewLoading(false);
     }
@@ -6975,6 +6989,8 @@ function PoliciesView({
   };
   
   const handleSavePolicy = async () => {
+    setMutationBusy(true);
+    setMutationStatus(null);
     const policyData = {
       id: formData.id,
       description: formData.description,
@@ -7010,18 +7026,29 @@ function PoliciesView({
         if (onPolicyCreated) {
           onPolicyCreated();
         }
+        setMutationStatus({
+          type: 'success',
+          message: editingPolicy ? `Policy "${policyData.id}" updated.` : `Policy "${policyData.id}" created.`,
+        });
       } else {
         const error = await response.json();
-        alert(error.detail || 'Failed to save policy');
+        setMutationStatus({ type: 'error', message: error.detail || 'Failed to save policy.' });
       }
     } catch (err) {
-      alert('Failed to save policy');
+      setMutationStatus({ type: 'error', message: 'Failed to save policy.' });
+    } finally {
+      setMutationBusy(false);
     }
   };
   
   const handleDeletePolicy = async (policyId: string) => {
-    if (!confirm(`Delete policy "${policyId}"?`)) return;
+    const approved = window.confirm(
+      `Delete policy "${policyId}"?\n\nThis permanently removes the policy and its future evaluations.`
+    );
+    if (!approved) return;
     
+    setMutationBusy(true);
+    setMutationStatus(null);
     try {
       const response = await fetch(`/api/v1/policies/${policyId}`, {
         method: 'DELETE'
@@ -7029,12 +7056,15 @@ function PoliciesView({
       
       if (response.ok) {
         setCustomPolicies(prev => prev.filter(p => p.id !== policyId));
+        setMutationStatus({ type: 'success', message: `Policy "${policyId}" deleted.` });
       } else {
         const error = await response.json();
-        alert(error.detail || 'Failed to delete policy');
+        setMutationStatus({ type: 'error', message: error.detail || 'Failed to delete policy.' });
       }
     } catch (err) {
-      alert('Failed to delete policy');
+      setMutationStatus({ type: 'error', message: 'Failed to delete policy.' });
+    } finally {
+      setMutationBusy(false);
     }
   };
   
@@ -7048,19 +7078,42 @@ function PoliciesView({
   };
   
   const handleToggleGroup = async (groupId: string) => {
+    const target = policyGroups.find(g => g.id === groupId);
+    if (!target) return;
+    const nextState = !target.enabled;
+    const confirmMsg = nextState
+      ? `Enable group "${target.name}" (${target.id}) for evaluations?`
+      : `Disable group "${target.name}" (${target.id})?\n\nThis removes ${target.policies.length} policies from active checks.`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    setMutationBusy(true);
+    setMutationStatus(null);
     try {
       const response = await fetch(`/api/v1/policies/groups/${groupId}/toggle`, {
         method: 'PATCH'
       });
       if (response.ok) {
         loadPolicyGroups();
+        setMutationStatus({
+          type: 'success',
+          message: `Group "${target.name}" ${nextState ? 'enabled' : 'disabled'}.`,
+        });
+      } else {
+        const error = await response.json();
+        setMutationStatus({ type: 'error', message: error.detail || 'Failed to toggle group.' });
       }
     } catch (err) {
-      alert('Failed to toggle group');
+      setMutationStatus({ type: 'error', message: 'Failed to toggle group.' });
+    } finally {
+      setMutationBusy(false);
     }
   };
   
   const handleSaveGroup = async () => {
+    setMutationBusy(true);
+    setMutationStatus(null);
     try {
       const url = editingGroup 
         ? `/api/v1/policies/groups/${editingGroup.id}`
@@ -7076,30 +7129,47 @@ function PoliciesView({
         loadPolicyGroups();
         setShowGroupEditor(false);
         resetGroupForm();
+        setMutationStatus({
+          type: 'success',
+          message: editingGroup
+            ? `Group "${groupFormData.name}" updated.`
+            : `Group "${groupFormData.name}" created.`,
+        });
       } else {
         const error = await response.json();
-        alert(error.detail || 'Failed to save group');
+        setMutationStatus({ type: 'error', message: error.detail || 'Failed to save group.' });
       }
     } catch (err) {
-      alert('Failed to save group');
+      setMutationStatus({ type: 'error', message: 'Failed to save group.' });
+    } finally {
+      setMutationBusy(false);
     }
   };
   
   const handleDeleteGroup = async (groupId: string) => {
-    if (!confirm(`Delete group "${groupId}"?`)) return;
+    const group = policyGroups.find(g => g.id === groupId);
+    const approved = window.confirm(
+      `Delete group "${group?.name || groupId}"?\n\nThis removes the group definition and ${group?.policies.length ?? 0} policy memberships.`
+    );
+    if (!approved) return;
     
+    setMutationBusy(true);
+    setMutationStatus(null);
     try {
       const response = await fetch(`/api/v1/policies/groups/${groupId}`, {
         method: 'DELETE'
       });
       if (response.ok) {
         loadPolicyGroups();
+        setMutationStatus({ type: 'success', message: `Group "${group?.name || groupId}" deleted.` });
       } else {
         const error = await response.json();
-        alert(error.detail || 'Failed to delete group');
+        setMutationStatus({ type: 'error', message: error.detail || 'Failed to delete group.' });
       }
     } catch (err) {
-      alert('Failed to delete group');
+      setMutationStatus({ type: 'error', message: 'Failed to delete group.' });
+    } finally {
+      setMutationBusy(false);
     }
   };
   
@@ -7125,6 +7195,30 @@ function PoliciesView({
   };
   
   const enabledGroupCount = policyGroups.filter(g => g.enabled).length;
+  const rolloutChangedGroupCount = policyGroups.filter(group => {
+    const proposed = rolloutOverrides[group.id] ?? group.enabled;
+    return proposed !== group.enabled;
+  }).length;
+  const rolloutDisplayedCases = rolloutPreviewResult
+    ? (rolloutShowChangedOnly
+      ? rolloutPreviewResult.cases.filter(item => item.changed)
+      : rolloutPreviewResult.cases)
+    : [];
+  const rolloutBaselineRate = rolloutPreviewResult && rolloutPreviewResult.evaluated_cases > 0
+    ? (rolloutPreviewResult.summary.baseline_compliant / rolloutPreviewResult.evaluated_cases) * 100
+    : null;
+  const rolloutProposedRate = rolloutPreviewResult && rolloutPreviewResult.evaluated_cases > 0
+    ? (rolloutPreviewResult.summary.proposed_compliant / rolloutPreviewResult.evaluated_cases) * 100
+    : null;
+  const rolloutNetComplianceDelta = rolloutPreviewResult
+    ? rolloutPreviewResult.summary.proposed_compliant - rolloutPreviewResult.summary.baseline_compliant
+    : 0;
+  const rolloutNewViolations = rolloutPreviewResult
+    ? rolloutPreviewResult.cases.reduce((acc, item) => acc + item.newly_violated_rules.length, 0)
+    : 0;
+  const rolloutResolvedViolations = rolloutPreviewResult
+    ? rolloutPreviewResult.cases.reduce((acc, item) => acc + item.resolved_rules.length, 0)
+    : 0;
   
   return (
     <div className="space-y-6">
@@ -7146,7 +7240,8 @@ function PoliciesView({
             {activeTab === 'policies' ? (
               <button
                 onClick={() => { resetForm(); setShowEditor(true); }}
-                className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+                disabled={mutationBusy}
+                className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="w-5 h-5" />
                 New Policy
@@ -7155,21 +7250,24 @@ function PoliciesView({
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowTemplates(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all"
+                  disabled={mutationBusy}
+                  className="flex items-center gap-2 px-4 py-2 bg-violet-500 hover:bg-violet-400 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Sparkles className="w-5 h-5" />
                   Templates
                 </button>
                 <button
                   onClick={handleExportGroups}
-                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
+                  disabled={mutationBusy}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Export policy groups"
                 >
                   <Download className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => groupFileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all"
+                  disabled={mutationBusy}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Import policy groups"
                 >
                   <Upload className="w-4 h-4" />
@@ -7183,7 +7281,8 @@ function PoliciesView({
                 />
                 <button
                   onClick={openRolloutPreview}
-                  className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl font-medium transition-all"
+                  disabled={mutationBusy}
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Preview rollout impact before changing groups"
                 >
                   <Eye className="w-5 h-5" />
@@ -7191,7 +7290,8 @@ function PoliciesView({
                 </button>
                 <button
                   onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
-                  className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
+                  disabled={mutationBusy}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-5 h-5" />
                   New Group
@@ -7224,6 +7324,18 @@ function PoliciesView({
             Groups ({policyGroups.length})
           </button>
         </div>
+
+        {mutationStatus && (
+          <div className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+            mutationStatus.type === 'success'
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+              : mutationStatus.type === 'error'
+                ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+          }`}>
+            {mutationStatus.message}
+          </div>
+        )}
         
         {/* Search & Filter - only show for policies tab */}
         {activeTab === 'policies' && (
@@ -7359,16 +7471,17 @@ function PoliciesView({
             <div className="p-6 border-t border-white/10 flex justify-end gap-3">
               <button
                 onClick={() => { setShowGroupEditor(false); resetGroupForm(); }}
-                className="px-6 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl"
+                disabled={mutationBusy}
+                className="px-6 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveGroup}
-                disabled={!groupFormData.id || !groupFormData.name}
+                disabled={!groupFormData.id || !groupFormData.name || mutationBusy}
                 className="px-6 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-medium"
               >
-                {editingGroup ? 'Update Group' : 'Create Group'}
+                {mutationBusy ? 'Saving...' : (editingGroup ? 'Update Group' : 'Create Group')}
               </button>
             </div>
           </div>
@@ -7485,17 +7598,30 @@ function PoliciesView({
                       />
                     </div>
                   </div>
+                  <div className="text-xs text-slate-400">
+                    Planned group changes: <span className="font-mono text-cyan-300">{rolloutChangedGroupCount}</span>
+                  </div>
                   <div className="max-h-72 overflow-auto space-y-2 pr-1">
                     {policyGroups.map(group => {
                       const proposedEnabled = rolloutOverrides[group.id] ?? group.enabled;
+                      const changed = proposedEnabled !== group.enabled;
                       return (
                         <div
                           key={`rollout-${group.id}`}
-                          className="flex items-center justify-between p-3 rounded-lg border border-white/10 bg-slate-800/40"
+                          className={`flex items-center justify-between p-3 rounded-lg border ${
+                            changed
+                              ? 'border-cyan-500/40 bg-cyan-500/10'
+                              : 'border-white/10 bg-slate-800/40'
+                          }`}
                         >
                           <div>
                             <div className="font-medium text-white text-sm">{group.name}</div>
                             <div className="text-xs text-slate-400 font-mono">{group.id}</div>
+                            {changed && (
+                              <div className="text-[11px] text-cyan-300 mt-1">
+                                {group.enabled ? 'Will be disabled' : 'Will be enabled'}
+                              </div>
+                            )}
                           </div>
                           <button
                             onClick={() => toggleRolloutGroup(group.id)}
@@ -7534,12 +7660,22 @@ function PoliciesView({
                           <div className="text-2xl font-semibold text-emerald-200">
                             {rolloutPreviewResult.summary.baseline_compliant}
                           </div>
+                          {rolloutBaselineRate != null && (
+                            <div className="text-xs text-emerald-300 mt-1">
+                              {rolloutBaselineRate.toFixed(1)}%
+                            </div>
+                          )}
                         </div>
                         <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
                           <div className="text-xs text-cyan-300 uppercase tracking-wider">Proposed Compliant</div>
                           <div className="text-2xl font-semibold text-cyan-200">
                             {rolloutPreviewResult.summary.proposed_compliant}
                           </div>
+                          {rolloutProposedRate != null && (
+                            <div className="text-xs text-cyan-300 mt-1">
+                              {rolloutProposedRate.toFixed(1)}%
+                            </div>
+                          )}
                         </div>
                         <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
                           <div className="text-xs text-amber-300 uppercase tracking-wider">Cases Evaluated</div>
@@ -7552,12 +7688,42 @@ function PoliciesView({
                           <div className="text-2xl font-semibold text-violet-200">
                             {rolloutPreviewResult.changed_cases_count}
                           </div>
+                          <div className="text-xs text-violet-300 mt-1">
+                            {rolloutPreviewResult.evaluated_cases > 0
+                              ? `${((rolloutPreviewResult.changed_cases_count / rolloutPreviewResult.evaluated_cases) * 100).toFixed(1)}%`
+                              : '0.0%'}
+                          </div>
                         </div>
                       </div>
-                      <div className="text-xs text-slate-400">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="rounded-lg border border-white/10 bg-slate-800/40 px-3 py-2 text-xs text-slate-300">
+                          Net compliance delta:{' '}
+                          <span className={rolloutNetComplianceDelta >= 0 ? 'text-emerald-300 font-semibold' : 'text-red-300 font-semibold'}>
+                            {rolloutNetComplianceDelta >= 0 ? '+' : ''}{rolloutNetComplianceDelta}
+                          </span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-slate-800/40 px-3 py-2 text-xs text-slate-300">
+                          New violations introduced: <span className="font-mono text-red-300">{rolloutNewViolations}</span>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-slate-800/40 px-3 py-2 text-xs text-slate-300">
+                          Violations resolved: <span className="font-mono text-emerald-300">{rolloutResolvedViolations}</span>
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-400 flex flex-wrap items-center gap-3">
                         Baseline policies: <span className="font-mono">{rolloutPreviewResult.baseline.policy_count}</span>
-                        {' • '}
+                        <span>•</span>
                         Proposed policies: <span className="font-mono">{rolloutPreviewResult.proposed.policy_count}</span>
+                        <label className="inline-flex items-center gap-2 ml-auto cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={rolloutShowChangedOnly}
+                            onChange={(e) => setRolloutShowChangedOnly(e.target.checked)}
+                            className="rounded border-white/20 bg-slate-800"
+                          />
+                          <span className="text-xs text-slate-300">
+                            Show changed cases only ({rolloutPreviewResult.changed_cases_count})
+                          </span>
+                        </label>
                       </div>
                       <div className="max-h-72 overflow-auto border border-white/10 rounded-lg">
                         <table className="w-full text-xs">
@@ -7570,8 +7736,11 @@ function PoliciesView({
                             </tr>
                           </thead>
                           <tbody>
-                            {rolloutPreviewResult.cases.map(item => (
-                              <tr key={`rollout-case-${item.id}`} className="border-t border-white/5">
+                            {rolloutDisplayedCases.map(item => (
+                              <tr
+                                key={`rollout-case-${item.id}`}
+                                className={`border-t border-white/5 ${item.changed ? 'bg-cyan-500/[0.03]' : ''}`}
+                              >
                                 <td className="px-3 py-2">
                                   <div className="text-slate-200 font-medium">{item.name}</div>
                                   <div className="text-slate-500 font-mono">{item.language}</div>
@@ -7606,6 +7775,13 @@ function PoliciesView({
                                 </td>
                               </tr>
                             ))}
+                            {rolloutDisplayedCases.length === 0 && (
+                              <tr>
+                                <td className="px-3 py-4 text-slate-500" colSpan={4}>
+                                  No changed cases for current filter.
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -7934,16 +8110,17 @@ function PoliciesView({
             <div className="p-6 border-t border-white/10 flex justify-end gap-3">
               <button
                 onClick={() => { setShowEditor(false); resetForm(); }}
-                className="px-6 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl"
+                disabled={mutationBusy}
+                className="px-6 py-2 text-slate-400 hover:text-white border border-slate-700 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSavePolicy}
-                disabled={!formData.id || !formData.description}
+                disabled={!formData.id || !formData.description || mutationBusy}
                 className="px-6 py-2 bg-violet-500 hover:bg-violet-400 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-medium"
               >
-                {editingPolicy ? 'Update Policy' : 'Create Policy'}
+                {mutationBusy ? 'Saving...' : (editingPolicy ? 'Update Policy' : 'Create Policy')}
               </button>
             </div>
           </div>
@@ -8004,7 +8181,8 @@ function PoliciesView({
                             setShowHistoryModal(true);
                             loadPolicyHistory(policy.id);
                           }}
-                          className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-lg"
+                          disabled={mutationBusy}
+                          className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                           title="View history and diffs"
                         >
                           <Clock className="w-4 h-4" />
@@ -8013,13 +8191,15 @@ function PoliciesView({
                         <>
                           <button
                             onClick={() => handleEdit(policy)}
-                            className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
+                            disabled={mutationBusy}
+                            className="p-1.5 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleDeletePolicy(policy.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                            disabled={mutationBusy}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -8056,7 +8236,8 @@ function PoliciesView({
               <p className="text-slate-400 mb-6">Create groups to organize and enable/disable sets of policies together.</p>
               <button
                 onClick={() => { resetGroupForm(); setShowGroupEditor(true); }}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all"
+                disabled={mutationBusy}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="w-5 h-5" />
                 Create First Group
@@ -8076,9 +8257,10 @@ function PoliciesView({
                   <div className="flex items-center gap-4">
                     <button
                       onClick={() => handleToggleGroup(group.id)}
+                      disabled={mutationBusy}
                       className={`w-12 h-7 rounded-full transition-all relative ${
                         group.enabled ? 'bg-emerald-500' : 'bg-slate-700'
-                      }`}
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}
                     >
                       <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${
                         group.enabled ? 'left-6' : 'left-1'
@@ -8099,13 +8281,15 @@ function PoliciesView({
                     </span>
                     <button
                       onClick={() => handleEditGroup(group)}
-                      className="p-2 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg"
+                      disabled={mutationBusy}
+                      className="p-2 text-slate-400 hover:text-violet-400 hover:bg-violet-500/10 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteGroup(group.id)}
-                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                      disabled={mutationBusy}
+                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

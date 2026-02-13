@@ -40,7 +40,7 @@ Last refreshed: **February 13, 2026**
 
 2. [ ] UI modernization sprint kickoff
 - [x] Improve model management forms and diagnostics for provider status/offline behavior.
-- [ ] Expand policy/group UX (rollout preview readability, write-operation affordances).
+- [x] Expand policy/group UX (rollout preview readability, write-operation affordances).
 - [ ] Add graph/runtime evidence visualizations tuned for compliance review workflows.
 
 ## Recently Completed
@@ -72,6 +72,7 @@ Last refreshed: **February 13, 2026**
 - Safety tool installed by default in backend requirements
 - Startup/status probe stability improvements
 - Model management UX refresh (provider health filters, persistent diagnostics, test latency/cost snapshots, clearer edit controls)
+- Policy/group UX refresh (safer mutation controls, inline operation feedback, richer rollout delta/compliance summaries)
 
 ## Quality Gate
 
