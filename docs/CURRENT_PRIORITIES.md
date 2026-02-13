@@ -39,9 +39,9 @@ Last refreshed: **February 13, 2026**
 - Validate tenant-scoped role behavior for read vs write operations in integration tests.
 
 2. [ ] UI modernization sprint kickoff
-- Improve model management forms and diagnostics for provider status/offline behavior.
-- Expand policy/group UX (rollout preview readability, write-operation affordances).
-- Add graph/runtime evidence visualizations tuned for compliance review workflows.
+- [x] Improve model management forms and diagnostics for provider status/offline behavior.
+- [ ] Expand policy/group UX (rollout preview readability, write-operation affordances).
+- [ ] Add graph/runtime evidence visualizations tuned for compliance review workflows.
 
 ## Recently Completed
 
@@ -71,6 +71,7 @@ Last refreshed: **February 13, 2026**
 - Kimi non-streaming remediation fix (safe output token caps)
 - Safety tool installed by default in backend requirements
 - Startup/status probe stability improvements
+- Model management UX refresh (provider health filters, persistent diagnostics, test latency/cost snapshots, clearer edit controls)
 
 ## Quality Gate
 

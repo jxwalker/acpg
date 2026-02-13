@@ -8208,6 +8208,19 @@ type ProviderFormState = {
   api_key_set?: boolean;
 };
 
+type ProviderConnectionStatus = 'unknown' | 'testing' | 'success' | 'error';
+type ProviderStatusFilter = 'all' | 'online' | 'offline' | 'untested';
+
+type ProviderTestSnapshot = {
+  tested_at: string;
+  success: boolean;
+  duration_ms: number;
+  endpoint?: string;
+  total_tokens?: number;
+  estimated_cost_usd?: number | null;
+  error?: string;
+};
+
 function ModelsConfigurationView() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -8218,8 +8231,10 @@ function ModelsConfigurationView() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<any>(null);
-  const [providerStatus, setProviderStatus] = useState<Record<string, 'unknown' | 'testing' | 'success' | 'error'>>({});
+  const [providerStatus, setProviderStatus] = useState<Record<string, ProviderConnectionStatus>>({});
   const [providerDiagnostics, setProviderDiagnostics] = useState<Record<string, ModelProviderDiagnostics | null>>({});
+  const [providerTestSnapshots, setProviderTestSnapshots] = useState<Record<string, ProviderTestSnapshot>>({});
+  const [statusFilter, setStatusFilter] = useState<ProviderStatusFilter>('all');
   const [testingAll, setTestingAll] = useState(false);
   const [openaiCatalog, setOpenaiCatalog] = useState<OpenAIModelMetadata[]>([]);
   const [openaiCatalogLoading, setOpenaiCatalogLoading] = useState(false);
@@ -8339,6 +8354,31 @@ function ModelsConfigurationView() {
     }
   }, [showAddForm, editingProvider]);
 
+  const toEditableProvider = useCallback((provider: any): ProviderFormState => {
+    const providerType = provider.type || 'openai_compatible';
+    return {
+      id: provider.id || '',
+      type: providerType,
+      name: provider.name || provider.id || '',
+      base_url: provider.base_url || '',
+      api_key: provider.api_key || '',
+      model: provider.model || '',
+      max_tokens: provider.max_tokens ?? 2000,
+      temperature: provider.temperature ?? 0.3,
+      context_window: provider.context_window ?? 8192,
+      max_output_tokens: provider.max_output_tokens ?? null,
+      preferred_endpoint:
+        provider.preferred_endpoint
+        || (providerType === 'anthropic' ? 'anthropic_messages' : 'responses'),
+      input_cost_per_1m: provider.input_cost_per_1m ?? null,
+      cached_input_cost_per_1m: provider.cached_input_cost_per_1m ?? null,
+      output_cost_per_1m: provider.output_cost_per_1m ?? null,
+      docs_url: provider.docs_url ?? null,
+      api_key_set: provider.api_key_set ?? false,
+      is_active: provider.is_active ?? false,
+    };
+  }, []);
+
   const handleSaveProvider = useCallback(async () => {
     setSaving(true);
     try {
@@ -8407,9 +8447,13 @@ function ModelsConfigurationView() {
     }
   };
 
-  const handleEditProvider = useCallback(async (id: string) => {
+  const handleEditProvider = useCallback(async (id: string, seedProvider?: ProviderFormState) => {
     try {
       setError(null);
+      if (seedProvider) {
+        setShowAddForm(false);
+        setEditingProvider(seedProvider);
+      }
       const res = await fetch(`/api/v1/llm/providers/${id}`);
       if (!res.ok) {
         const err = await res.json();
@@ -8420,13 +8464,14 @@ function ModelsConfigurationView() {
         provider = applyOpenAIModelMetadata(provider as ProviderFormState, provider.model);
       }
       setShowAddForm(false);
-      setEditingProvider(provider);
+      setEditingProvider(toEditableProvider(provider));
     } catch (err: any) {
       setError(err.message || 'Failed to load provider details');
     }
-  }, [applyOpenAIModelMetadata]);
+  }, [applyOpenAIModelMetadata, toEditableProvider]);
 
   const handleTestProvider = useCallback(async (id: string, showResult = true) => {
+    const startedAtMs = Date.now();
     setTesting(id);
     setProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
     setProviderDiagnostics(prev => ({ ...prev, [id]: null }));
@@ -8434,18 +8479,34 @@ function ModelsConfigurationView() {
     
     try {
       // First switch to this provider temporarily
-      await fetch('/api/v1/llm/switch', {
+      const switchResponse = await fetch('/api/v1/llm/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider_id: id })
       });
+      if (!switchResponse.ok) {
+        throw new Error(`Failed to activate provider "${id}" for testing`);
+      }
       
       // Run the test
       const res = await fetch('/api/v1/llm/test', { method: 'POST' });
       const result = await res.json();
+      const durationMs = Date.now() - startedAtMs;
       
       setProviderStatus(prev => ({ ...prev, [id]: result.success ? 'success' : 'error' }));
       setProviderDiagnostics(prev => ({ ...prev, [id]: result.success ? null : (result.diagnostics || null) }));
+      setProviderTestSnapshots(prev => ({
+        ...prev,
+        [id]: {
+          tested_at: new Date().toISOString(),
+          success: !!result.success,
+          duration_ms: durationMs,
+          endpoint: result.endpoint,
+          total_tokens: result.usage?.total_tokens,
+          estimated_cost_usd: result.estimated_cost_usd ?? null,
+          error: result.error || result.diagnostics?.summary,
+        },
+      }));
       if (showResult) setTestResult({ id, ...result });
       
       // Switch back to original active
@@ -8459,6 +8520,7 @@ function ModelsConfigurationView() {
       
       return result.success;
     } catch (err: any) {
+      const durationMs = Date.now() - startedAtMs;
       setProviderStatus(prev => ({ ...prev, [id]: 'error' }));
       const fallbackDiagnostics: ModelProviderDiagnostics = {
         code: 'test_request_failed',
@@ -8470,6 +8532,15 @@ function ModelsConfigurationView() {
         raw_error: err.message,
       };
       setProviderDiagnostics(prev => ({ ...prev, [id]: fallbackDiagnostics }));
+      setProviderTestSnapshots(prev => ({
+        ...prev,
+        [id]: {
+          tested_at: new Date().toISOString(),
+          success: false,
+          duration_ms: durationMs,
+          error: err.message,
+        },
+      }));
       if (showResult) setTestResult({ id, success: false, error: err.message, diagnostics: fallbackDiagnostics });
       return false;
     } finally {
@@ -8560,6 +8631,34 @@ function ModelsConfigurationView() {
   const formProvider = (editingProvider || newProvider) as ProviderFormState;
   const isOpenAIForm = formProvider.type === 'openai';
   const selectedOpenAIModel = openaiCatalog.find(m => m.model === formProvider.model);
+  const endpointCounts = providers.reduce((acc, provider) => {
+    const key = provider.preferred_endpoint || 'responses';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  const providerHealth = providers.reduce(
+    (acc, provider) => {
+      const status = providerStatus[provider.id] || 'unknown';
+      if (status === 'success') acc.online += 1;
+      else if (status === 'error') acc.offline += 1;
+      else acc.untested += 1;
+      return acc;
+    },
+    { online: 0, offline: 0, untested: 0 },
+  );
+  const statusFilterOptions: Array<{ id: ProviderStatusFilter; label: string; count: number }> = [
+    { id: 'all', label: 'All', count: providers.length },
+    { id: 'online', label: 'Online', count: providerHealth.online },
+    { id: 'offline', label: 'Offline', count: providerHealth.offline },
+    { id: 'untested', label: 'Untested', count: providerHealth.untested },
+  ];
+  const filteredProviders = providers.filter(provider => {
+    const status = providerStatus[provider.id] || 'unknown';
+    if (statusFilter === 'online') return status === 'success';
+    if (statusFilter === 'offline') return status === 'error';
+    if (statusFilter === 'untested') return status === 'unknown' || status === 'testing';
+    return true;
+  });
 
   if (loading) {
     return (
@@ -8610,6 +8709,43 @@ function ModelsConfigurationView() {
               Add Provider
             </button>
           </div>
+        </div>
+      </div>
+
+      <div className="glass rounded-xl p-4 border border-white/5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">
+              Providers: <span className="font-semibold text-white">{providers.length}</span>
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300">
+              Online: <span className="font-semibold">{providerHealth.online}</span>
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-red-500/10 text-red-300">
+              Offline: <span className="font-semibold">{providerHealth.offline}</span>
+            </span>
+            <span className="px-2.5 py-1 rounded-full bg-slate-700/60 text-slate-300">
+              Untested: <span className="font-semibold">{providerHealth.untested}</span>
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {statusFilterOptions.map(option => (
+              <button
+                key={option.id}
+                onClick={() => setStatusFilter(option.id)}
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                  statusFilter === option.id
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                    : 'bg-slate-800/70 text-slate-300 border border-slate-700 hover:border-slate-500'
+                }`}
+              >
+                {option.label} ({option.count})
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-2 text-xs text-slate-500">
+          Endpoint preferences: {Object.entries(endpointCounts).map(([endpoint, count]) => `${endpoint} (${count})`).join(', ') || 'none'}
         </div>
       </div>
 
@@ -8762,7 +8898,13 @@ function ModelsConfigurationView() {
               <input
                 type="number"
                 value={formProvider.max_tokens}
-                onChange={(e) => setFormProvider(prev => ({ ...prev, max_tokens: parseInt(e.target.value) }))}
+                onChange={(e) => {
+                  const nextValue = parseInt(e.target.value, 10);
+                  setFormProvider(prev => ({
+                    ...prev,
+                    max_tokens: Number.isFinite(nextValue) ? nextValue : prev.max_tokens,
+                  }));
+                }}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               />
             </div>
@@ -8772,7 +8914,13 @@ function ModelsConfigurationView() {
                 type="number"
                 step="0.1"
                 value={formProvider.temperature}
-                onChange={(e) => setFormProvider(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))}
+                onChange={(e) => {
+                  const nextValue = parseFloat(e.target.value);
+                  setFormProvider(prev => ({
+                    ...prev,
+                    temperature: Number.isFinite(nextValue) ? nextValue : prev.temperature,
+                  }));
+                }}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               />
             </div>
@@ -8781,7 +8929,13 @@ function ModelsConfigurationView() {
               <input
                 type="number"
                 value={formProvider.context_window}
-                onChange={(e) => setFormProvider(prev => ({ ...prev, context_window: parseInt(e.target.value) }))}
+                onChange={(e) => {
+                  const nextValue = parseInt(e.target.value, 10);
+                  setFormProvider(prev => ({
+                    ...prev,
+                    context_window: Number.isFinite(nextValue) ? nextValue : prev.context_window,
+                  }));
+                }}
                 className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
               />
             </div>
@@ -8915,7 +9069,12 @@ function ModelsConfigurationView() {
 
       {/* Providers List */}
       <div className="space-y-4">
-        {providers.map(provider => (
+        {filteredProviders.length === 0 && (
+          <div className="glass rounded-xl p-6 border border-white/5 text-center text-slate-400 text-sm">
+            No providers match the selected filter.
+          </div>
+        )}
+        {filteredProviders.map(provider => (
           <div
             key={provider.id}
             className={`glass rounded-2xl p-6 border transition-all ${
@@ -8996,13 +9155,58 @@ function ModelsConfigurationView() {
                   </div>
                   <div className="flex items-center gap-4 mt-1 text-xs text-slate-500">
                     {provider.max_output_tokens && <span>Max output: {provider.max_output_tokens?.toLocaleString()}</span>}
-                    {provider.preferred_endpoint && <span>Endpoint: {provider.preferred_endpoint}</span>}
+                    {provider.preferred_endpoint && (
+                      <span className={`px-1.5 py-0.5 rounded ${
+                        provider.preferred_endpoint === 'responses'
+                          ? 'bg-cyan-500/15 text-cyan-300'
+                          : provider.preferred_endpoint === 'chat_completions'
+                            ? 'bg-amber-500/15 text-amber-300'
+                            : 'bg-slate-700/70 text-slate-300'
+                      }`}>
+                        Endpoint: {provider.preferred_endpoint}
+                      </span>
+                    )}
                     {(provider.input_cost_per_1m || provider.output_cost_per_1m) && (
                       <span>
                         Cost/1M in/out: ${provider.input_cost_per_1m ?? 'n/a'} / ${provider.output_cost_per_1m ?? 'n/a'}
                       </span>
                     )}
                   </div>
+                  {providerTestSnapshots[provider.id] ? (
+                    <div className="mt-2 text-xs text-slate-400 flex flex-wrap items-center gap-3">
+                      <span>
+                        Last test: {new Date(providerTestSnapshots[provider.id].tested_at).toLocaleString()}
+                      </span>
+                      <span>
+                        Latency: {(providerTestSnapshots[provider.id].duration_ms / 1000).toFixed(2)}s
+                      </span>
+                      {providerTestSnapshots[provider.id].endpoint && (
+                        <span>Used: {providerTestSnapshots[provider.id].endpoint}</span>
+                      )}
+                      {providerTestSnapshots[provider.id].total_tokens != null && (
+                        <span>Tokens: {providerTestSnapshots[provider.id].total_tokens?.toLocaleString()}</span>
+                      )}
+                      {providerTestSnapshots[provider.id].estimated_cost_usd != null && (
+                        <span className="text-cyan-300">
+                          Cost: ${Number(providerTestSnapshots[provider.id].estimated_cost_usd).toFixed(8)}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-xs text-slate-500">
+                      Last test: not yet run
+                    </div>
+                  )}
+                  {provider.docs_url && (
+                    <a
+                      href={provider.docs_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex mt-2 text-xs text-cyan-300 hover:text-cyan-200 underline"
+                    >
+                      Model documentation
+                    </a>
+                  )}
                   <div className="mt-2 text-xs text-slate-500 font-mono truncate max-w-md">
                     {provider.base_url}
                   </div>
@@ -9044,17 +9248,22 @@ function ModelsConfigurationView() {
                   {testing === provider.id ? 'Testing...' : 'Test'}
                 </button>
                 <button
-                  onClick={() => { void handleEditProvider(provider.id); }}
-                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all"
+                  onClick={() => {
+                    const seeded = toEditableProvider(provider);
+                    void handleEditProvider(provider.id, seeded);
+                  }}
+                  className="px-3 py-1.5 text-sm bg-violet-500/10 text-violet-300 rounded-lg hover:bg-violet-500/20 transition-colors flex items-center gap-1.5"
                 >
                   <Edit2 className="w-4 h-4" />
+                  Edit
                 </button>
                 {provider.id !== activeProvider && (
                   <button
                     onClick={() => handleDeleteProvider(provider.id)}
-                    className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                    className="px-3 py-1.5 text-sm bg-red-500/10 text-red-300 rounded-lg hover:bg-red-500/20 transition-colors flex items-center gap-1.5"
                   >
                     <Trash2 className="w-4 h-4" />
+                    Delete
                   </button>
                 )}
               </div>
