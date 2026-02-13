@@ -1,6 +1,6 @@
 # Current Priorities
 
-Last refreshed: **February 12, 2026**
+Last refreshed: **February 13, 2026**
 
 ## Active Delivery Checklist
 
@@ -34,15 +34,14 @@ Last refreshed: **February 12, 2026**
 
 ## Next Up
 
-1. [x] Dynamic analysis coverage expansion
-- Add deterministic dynamic policy suites beyond direct execution smoke checks. (MVP complete)
-- Expand replay artifact indexing and UX for audit workflows. (Index API + history badges complete)
-- Formal linkage of dynamic/runtime evidence into proof argumentation narratives. (MVP complete)
+1. [x] API authorization hardening baseline for UI work
+- Extend RBAC coverage to policy CRUD/groups, LLM management, and LangGraph orchestration routes.
+- Validate tenant-scoped role behavior for read vs write operations in integration tests.
 
-2. [x] Policy lifecycle UX and test operations
-- Better versioning and policy diff/audit views. (MVP complete)
-- Safer rollout controls for policy updates. (Preview MVP complete)
-- Bulk test-case import/export and tagging workflows for regulated regression suites. (MVP complete)
+2. [ ] UI modernization sprint kickoff
+- Improve model management forms and diagnostics for provider status/offline behavior.
+- Expand policy/group UX (rollout preview readability, write-operation affordances).
+- Add graph/runtime evidence visualizations tuned for compliance review workflows.
 
 ## Recently Completed
 

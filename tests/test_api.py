@@ -289,6 +289,44 @@ def test_tenant_scoped_auth_and_key_permissions(client):
         )
         assert viewer_admin_stats.status_code == 403
 
+        viewer_policy_groups = client.get(
+            "/api/v1/policies/groups/",
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_policy_groups.status_code == 200
+
+        viewer_policy_reload = client.post(
+            "/api/v1/policies/reload",
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_policy_reload.status_code == 403
+
+        viewer_llm_providers = client.get(
+            "/api/v1/llm/providers",
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_llm_providers.status_code == 200
+
+        viewer_switch_provider = client.post(
+            "/api/v1/llm/switch",
+            json={"provider_id": "openai"},
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_switch_provider.status_code == 403
+
+        viewer_graph_visualize = client.get(
+            "/api/v1/graph/visualize",
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_graph_visualize.status_code == 200
+
+        viewer_graph_enforce = client.post(
+            "/api/v1/graph/enforce",
+            json={"code": "print('blocked')", "language": "python"},
+            headers={"X-API-Key": viewer_key, "X-Tenant-ID": tenant_id},
+        )
+        assert viewer_graph_enforce.status_code == 403
+
         tenant_one_analysis = client.post(
             "/api/v1/analyze",
             json={"code": "password = 'tenant-one-secret'", "language": "python"},

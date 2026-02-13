@@ -2,11 +2,16 @@
 import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from ..core.auth import require_permission
 from ..core.model_catalog import get_openai_catalog, get_openai_model_metadata
 
-router = APIRouter(prefix="/llm", tags=["LLM Management"])
+router = APIRouter(
+    prefix="/llm",
+    tags=["LLM Management"],
+    dependencies=[Depends(require_permission("llm:read"))],
+)
 
 # Path to LLM config file
 LLM_CONFIG_PATH = Path(__file__).parent.parent.parent / "llm_config.yaml"
@@ -215,7 +220,11 @@ async def get_active_provider():
     }
 
 
-@router.post("/test", response_model=LLMTestResult)
+@router.post(
+    "/test",
+    response_model=LLMTestResult,
+    dependencies=[Depends(require_permission("llm:test"))],
+)
 async def test_llm_connection():
     """
     Test the connection to the active LLM provider.
@@ -230,7 +239,7 @@ async def test_llm_connection():
     return LLMTestResult(**result)
 
 
-@router.post("/switch")
+@router.post("/switch", dependencies=[Depends(require_permission("llm:switch"))])
 async def switch_llm_provider(request: SwitchProviderRequest):
     """
     Switch to a different LLM provider.
@@ -262,7 +271,7 @@ async def switch_llm_provider(request: SwitchProviderRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/generate-test")
+@router.post("/generate-test", dependencies=[Depends(require_permission("llm:test"))])
 async def test_code_generation():
     """
     Test code generation with the active LLM.
@@ -325,7 +334,7 @@ async def test_code_generation():
         }
 
 
-@router.post("/fix-test")
+@router.post("/fix-test", dependencies=[Depends(require_permission("llm:test"))])
 async def test_code_fixing():
     """
     Test code fixing with the active LLM.
@@ -389,7 +398,7 @@ async def get_provider(provider_id: str):
     }
 
 
-@router.post("/providers/")
+@router.post("/providers/", dependencies=[Depends(require_permission("llm:write"))])
 async def create_provider(request: CreateProviderRequest):
     """Create a new LLM provider configuration."""
     config = _load_config()
@@ -427,7 +436,7 @@ async def create_provider(request: CreateProviderRequest):
     }
 
 
-@router.put("/providers/{provider_id}")
+@router.put("/providers/{provider_id}", dependencies=[Depends(require_permission("llm:write"))])
 async def update_provider(provider_id: str, request: UpdateProviderRequest):
     """Update an existing LLM provider configuration."""
     config = _load_config()
@@ -464,7 +473,7 @@ async def update_provider(provider_id: str, request: UpdateProviderRequest):
     }
 
 
-@router.delete("/providers/{provider_id}")
+@router.delete("/providers/{provider_id}", dependencies=[Depends(require_permission("llm:write"))])
 async def delete_provider(provider_id: str):
     """Delete an LLM provider configuration."""
     config = _load_config()
@@ -516,7 +525,7 @@ async def get_full_config():
     }
 
 
-@router.post("/config/set-active")
+@router.post("/config/set-active", dependencies=[Depends(require_permission("llm:switch"))])
 async def set_active_provider(request: SwitchProviderRequest):
     """Set the active provider in the config file (persists across restarts)."""
     config = _load_config()

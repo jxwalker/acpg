@@ -1,10 +1,15 @@
 """LangGraph-based API routes for ACPG."""
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from datetime import datetime
+from ..core.auth import require_permission
 
-router = APIRouter(prefix="/graph", tags=["LangGraph Orchestration"])
+router = APIRouter(
+    prefix="/graph",
+    tags=["LangGraph Orchestration"],
+    dependencies=[Depends(require_permission("graph:read"))],
+)
 
 
 class GraphEnforceRequest(BaseModel):
@@ -44,7 +49,11 @@ class GraphEnforceResponse(BaseModel):
     duration_ms: float
 
 
-@router.post("/enforce", response_model=GraphEnforceResponse)
+@router.post(
+    "/enforce",
+    response_model=GraphEnforceResponse,
+    dependencies=[Depends(require_permission("graph:enforce"))],
+)
 async def graph_enforce(request: GraphEnforceRequest):
     """
     Run compliance enforcement using LangGraph orchestration.
@@ -143,7 +152,7 @@ class StreamingEnforceRequest(BaseModel):
     solver_decision_mode: Optional[str] = None  # auto, skeptical, credulous
 
 
-@router.post("/enforce/stream")
+@router.post("/enforce/stream", dependencies=[Depends(require_permission("graph:enforce"))])
 async def graph_enforce_stream(request: StreamingEnforceRequest):
     """
     Run compliance enforcement with streaming updates.

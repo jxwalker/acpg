@@ -1,4 +1,4 @@
-# ACPG Roadmap (Refreshed February 12, 2026)
+# ACPG Roadmap (Refreshed February 13, 2026)
 
 ## Vision
 
@@ -28,6 +28,7 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Configurable CI compliance gate profiles (strict/monitor) with threshold enforcement
 - Tenant-scoped API key RBAC foundation (roles + tenant-bound keys + auth routes)
 - Permission-gated core APIs + tenant-scoped history/audit views
+- Permission-gated policy/LLM/LangGraph management APIs
 - Database operational diagnostics + pooled connection hardening defaults
 - Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
 - Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
@@ -40,10 +41,10 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 
 ## Active Near-Term Priorities
 
-1. Runtime and dynamic compliance evidence maturity
-- Expand dynamic compliance suites (beyond direct execution smoke checks)
-- Add richer replay artifact indexing/search for audit and CI review
-- Formal linkage of dynamic/runtime evidence into proof argumentation narratives
+1. UI readiness and operator workflows
+- Improve model management UX (provider create/edit diagnostics and endpoint clarity)
+- Expose richer runtime/dynamic evidence views and policy rollout insights
+- Expand cost and performance visualizations for regulated regression runs
 
 ## Medium-Term Priorities
 

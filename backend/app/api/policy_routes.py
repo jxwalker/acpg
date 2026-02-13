@@ -7,13 +7,22 @@ from fastapi import APIRouter, HTTPException, Body, Depends, Request, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..core.auth import require_permission
 from ..core.config import settings
 from ..core.database import get_db, PolicyHistoryStore, TestCaseStore
 from ..services.policy_compiler import get_policy_compiler
 
 
-router = APIRouter(prefix="/policies", tags=["Policy Management"])
-groups_router = APIRouter(prefix="/policies/groups", tags=["Policy Groups"])
+router = APIRouter(
+    prefix="/policies",
+    tags=["Policy Management"],
+    dependencies=[Depends(require_permission("policy:read"))],
+)
+groups_router = APIRouter(
+    prefix="/policies/groups",
+    tags=["Policy Groups"],
+    dependencies=[Depends(require_permission("policy:read"))],
+)
 
 
 # Models for API requests/responses
@@ -340,7 +349,7 @@ async def get_policy(policy_id: str):
     }
 
 
-@router.post("/", response_model=dict)
+@router.post("/", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def create_policy(
     policy: PolicyInput,
     request: Request,
@@ -386,7 +395,7 @@ async def create_policy(
     }
 
 
-@router.put("/{policy_id}", response_model=dict)
+@router.put("/{policy_id}", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def update_policy(
     policy_id: str,
     policy: PolicyInput,
@@ -436,7 +445,7 @@ async def update_policy(
     }
 
 
-@router.delete("/{policy_id}", response_model=dict)
+@router.delete("/{policy_id}", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def delete_policy(
     policy_id: str,
     request: Request,
@@ -585,7 +594,7 @@ async def export_custom_policies():
     )
 
 
-@router.post("/import", response_model=dict)
+@router.post("/import", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def import_policies(
     request: Request,
     policies: List[dict] = Body(..., embed=True),
@@ -649,7 +658,7 @@ async def import_policies(
     }
 
 
-@router.post("/reload", response_model=dict)
+@router.post("/reload", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def reload_all_policies():
     """Reload all policies from disk."""
     compiler = reload_policies()
@@ -811,7 +820,7 @@ async def export_policy_groups():
     }
 
 
-@groups_router.post("/import", response_model=dict)
+@groups_router.post("/import", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def import_policy_groups(
     groups: List[dict] = Body(..., embed=True),
     overwrite: bool = Body(False, embed=True)
@@ -862,7 +871,7 @@ async def get_policy_group(group_id: str):
     raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
 
 
-@groups_router.post("/", response_model=dict)
+@groups_router.post("/", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def create_policy_group(group: PolicyGroupInput):
     """Create a new policy group."""
     data = load_policy_groups()
@@ -885,7 +894,7 @@ async def create_policy_group(group: PolicyGroupInput):
     return {"message": f"Group '{group.id}' created successfully", "group": new_group}
 
 
-@groups_router.put("/{group_id}", response_model=dict)
+@groups_router.put("/{group_id}", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def update_policy_group(group_id: str, group: PolicyGroupInput):
     """Update a policy group."""
     data = load_policy_groups()
@@ -905,7 +914,7 @@ async def update_policy_group(group_id: str, group: PolicyGroupInput):
     raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
 
 
-@groups_router.delete("/{group_id}", response_model=dict)
+@groups_router.delete("/{group_id}", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def delete_policy_group(group_id: str):
     """Delete a policy group."""
     data = load_policy_groups()
@@ -920,7 +929,7 @@ async def delete_policy_group(group_id: str):
     return {"message": f"Group '{group_id}' deleted successfully"}
 
 
-@groups_router.patch("/{group_id}/toggle", response_model=dict)
+@groups_router.patch("/{group_id}/toggle", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def toggle_policy_group(group_id: str):
     """Toggle a policy group's enabled state."""
     data = load_policy_groups()
@@ -937,7 +946,7 @@ async def toggle_policy_group(group_id: str):
     raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
 
 
-@groups_router.post("/{group_id}/policies", response_model=dict)
+@groups_router.post("/{group_id}/policies", response_model=dict, dependencies=[Depends(require_permission("policy:write"))])
 async def add_policy_to_group(group_id: str, policy_id: str = Body(..., embed=True)):
     """Add a policy to a group."""
     data = load_policy_groups()
@@ -952,7 +961,11 @@ async def add_policy_to_group(group_id: str, policy_id: str = Body(..., embed=Tr
     raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
 
 
-@groups_router.delete("/{group_id}/policies/{policy_id}", response_model=dict)
+@groups_router.delete(
+    "/{group_id}/policies/{policy_id}",
+    response_model=dict,
+    dependencies=[Depends(require_permission("policy:write"))],
+)
 async def remove_policy_from_group(group_id: str, policy_id: str):
     """Remove a policy from a group."""
     data = load_policy_groups()
@@ -1267,7 +1280,11 @@ async def list_policy_templates():
     }
 
 
-@groups_router.post("/templates/{template_id}/apply", response_model=dict)
+@groups_router.post(
+    "/templates/{template_id}/apply",
+    response_model=dict,
+    dependencies=[Depends(require_permission("policy:write"))],
+)
 async def apply_policy_template(template_id: str, group_name: str = None):
     """Create a policy group from a template."""
     if template_id not in POLICY_TEMPLATES:
