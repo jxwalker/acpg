@@ -1,5 +1,6 @@
 """
-Sample code demonstrating static analysis tool findings.
+Sample 12: Tool Mapping and Unmapped Findings Workflow
+Violations: SQL-001, SEC-001, SEC-003
 
 This file contains various security issues that tools like Bandit can detect.
 Use this to test the tool integration workflow:
@@ -52,4 +53,3 @@ def dynamic_code_execution(code):
 def validate_input(value):
     assert value is not None  # Assert used in production code
     return value
-

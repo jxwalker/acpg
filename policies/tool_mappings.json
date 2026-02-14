@@ -59,6 +59,12 @@
       "confidence": "medium",
       "severity": null,
       "description": "Use of assert"
+    },
+    "B113": {
+      "policy_id": "",
+      "confidence": "medium",
+      "severity": "medium",
+      "description": "Requests call without timeout - could hang indefinitely."
     }
   },
   "eslint": {

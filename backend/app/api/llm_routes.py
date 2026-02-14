@@ -2,8 +2,8 @@
 import yaml
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends, Body
+from pydantic import BaseModel, Field
 from ..core.auth import require_permission
 from ..core.model_catalog import get_openai_catalog, get_openai_model_metadata
 
@@ -38,6 +38,12 @@ class LLMTestResult(BaseModel):
     estimated_cost_usd: Optional[float] = None
 
 
+class LLMTestRequest(BaseModel):
+    """Request payload for provider connectivity tests."""
+    provider_id: Optional[str] = None
+    timeout_seconds: float = Field(default=12.0, ge=1.0, le=120.0)
+
+
 class SwitchProviderRequest(BaseModel):
     """Request to switch LLM provider."""
     provider_id: str
@@ -56,6 +62,7 @@ class ProviderConfig(BaseModel):
     context_window: int = 8192
     max_output_tokens: Optional[int] = None
     preferred_endpoint: str = "responses"
+    request_timeout_seconds: Optional[float] = Field(default=None, ge=1.0, le=300.0)
     input_cost_per_1m: Optional[float] = None
     cached_input_cost_per_1m: Optional[float] = None
     output_cost_per_1m: Optional[float] = None
@@ -74,6 +81,7 @@ class UpdateProviderRequest(BaseModel):
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     preferred_endpoint: Optional[str] = None
+    request_timeout_seconds: Optional[float] = Field(default=None, ge=1.0, le=300.0)
     input_cost_per_1m: Optional[float] = None
     cached_input_cost_per_1m: Optional[float] = None
     output_cost_per_1m: Optional[float] = None
@@ -93,6 +101,7 @@ class CreateProviderRequest(BaseModel):
     context_window: Optional[int] = None
     max_output_tokens: Optional[int] = None
     preferred_endpoint: str = "responses"
+    request_timeout_seconds: Optional[float] = Field(default=None, ge=1.0, le=300.0)
     input_cost_per_1m: Optional[float] = None
     cached_input_cost_per_1m: Optional[float] = None
     output_cost_per_1m: Optional[float] = None
@@ -214,6 +223,7 @@ async def get_active_provider():
         "context_window": provider.context_window,
         "max_output_tokens": provider.max_output_tokens,
         "preferred_endpoint": provider.preferred_endpoint,
+        "request_timeout_seconds": provider.request_timeout_seconds,
         "input_cost_per_1m": provider.input_cost_per_1m,
         "cached_input_cost_per_1m": provider.cached_input_cost_per_1m,
         "output_cost_per_1m": provider.output_cost_per_1m,
@@ -225,7 +235,7 @@ async def get_active_provider():
     response_model=LLMTestResult,
     dependencies=[Depends(require_permission("llm:test"))],
 )
-async def test_llm_connection():
+async def test_llm_connection(request: Optional[LLMTestRequest] = Body(default=None)):
     """
     Test the connection to the active LLM provider.
     
@@ -234,7 +244,15 @@ async def test_llm_connection():
     from ..core.llm_config import get_llm_config
     
     config = get_llm_config()
-    result = config.test_connection()
+    provider_id = request.provider_id if request else None
+    timeout_seconds = request.timeout_seconds if request else 12.0
+    try:
+        result = config.test_connection(
+            provider_name=provider_id,
+            timeout_seconds=timeout_seconds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     return LLMTestResult(**result)
 
@@ -419,6 +437,7 @@ async def create_provider(request: CreateProviderRequest):
         "context_window": request.context_window,
         "max_output_tokens": request.max_output_tokens,
         "preferred_endpoint": request.preferred_endpoint,
+        "request_timeout_seconds": request.request_timeout_seconds,
         "input_cost_per_1m": request.input_cost_per_1m,
         "cached_input_cost_per_1m": request.cached_input_cost_per_1m,
         "output_cost_per_1m": request.output_cost_per_1m,
@@ -449,8 +468,16 @@ async def update_provider(provider_id: str, request: UpdateProviderRequest):
     provider_data = providers[provider_id]
     update_dict = request.model_dump(exclude_unset=True)
     
+    nullable_fields = {
+        "max_output_tokens",
+        "request_timeout_seconds",
+        "input_cost_per_1m",
+        "cached_input_cost_per_1m",
+        "output_cost_per_1m",
+        "docs_url",
+    }
     for key, value in update_dict.items():
-        if value is not None:
+        if value is not None or key in nullable_fields:
             provider_data[key] = value
 
     provider_data = _apply_openai_defaults(provider_data)

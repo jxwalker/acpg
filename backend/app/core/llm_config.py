@@ -8,6 +8,7 @@ Supports multiple LLM providers:
 """
 import os
 import yaml
+import httpx
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ try:
 except ImportError:
     Anthropic = None
 from dotenv import load_dotenv
-from .llm_text import openai_text_with_usage, is_legacy_model
+from .llm_text import is_legacy_model
 
 # Load .env file if it exists
 _env_path = Path(__file__).parent.parent.parent.parent / ".env"
@@ -38,6 +39,7 @@ class LLMProviderConfig:
     context_window: int
     max_output_tokens: Optional[int] = None
     preferred_endpoint: str = "responses"
+    request_timeout_seconds: Optional[float] = None
     input_cost_per_1m: Optional[float] = None
     cached_input_cost_per_1m: Optional[float] = None
     output_cost_per_1m: Optional[float] = None
@@ -113,6 +115,7 @@ class LLMProviderConfig:
             context_window=context_window,
             max_output_tokens=max_output_tokens,
             preferred_endpoint=preferred_endpoint,
+            request_timeout_seconds=_as_float(data.get('request_timeout_seconds')),
             input_cost_per_1m=_as_float(data.get('input_cost_per_1m')),
             cached_input_cost_per_1m=_as_float(data.get('cached_input_cost_per_1m')),
             output_cost_per_1m=_as_float(data.get('output_cost_per_1m')),
@@ -130,6 +133,28 @@ class LLMConfigManager:
         self._config: Optional[Dict[str, Any]] = None
         self._active_provider: Optional[LLMProviderConfig] = None
         self._client: Optional[Union[OpenAI, Any]] = None
+
+    @staticmethod
+    def _default_timeout_seconds() -> float:
+        """Default per-request timeout for generation calls (seconds)."""
+        raw = os.environ.get("ACPG_LLM_REQUEST_TIMEOUT_SECONDS", "35")
+        try:
+            parsed = float(raw)
+            if parsed <= 0:
+                raise ValueError
+            return parsed
+        except Exception:
+            return 35.0
+
+    @staticmethod
+    def _default_max_retries() -> int:
+        """Default SDK retry count for generation calls."""
+        raw = os.environ.get("ACPG_LLM_MAX_RETRIES", "0")
+        try:
+            parsed = int(raw)
+            return max(0, min(parsed, 5))
+        except Exception:
+            return 0
     
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file."""
@@ -173,13 +198,110 @@ class LLMConfigManager:
         
         config = self.load_config()
         active_name = os.environ.get('ACPG_LLM_PROVIDER') or config.get('active_provider', 'openai_gpt4')
-        
-        providers = config.get('providers', {})
-        if active_name not in providers:
-            raise ValueError(f"Unknown LLM provider: {active_name}")
-        
-        self._active_provider = LLMProviderConfig.from_dict(providers[active_name])
+        self._active_provider = self.get_provider(active_name)
         return self._active_provider
+
+    def get_provider(self, provider_name: str) -> LLMProviderConfig:
+        """Get a specific provider configuration by id."""
+        config = self.load_config()
+        providers = config.get('providers', {})
+        if provider_name not in providers:
+            raise ValueError(f"Unknown LLM provider: {provider_name}")
+        return LLMProviderConfig.from_dict(providers[provider_name])
+
+    def _create_client_for_provider(
+        self,
+        provider: LLMProviderConfig,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Union[OpenAI, Any]:
+        """Create a client for a given provider, optionally overriding request timeout."""
+        if timeout_seconds is not None:
+            effective_timeout = float(timeout_seconds)
+        elif provider.request_timeout_seconds is not None and provider.request_timeout_seconds > 0:
+            effective_timeout = float(provider.request_timeout_seconds)
+        else:
+            effective_timeout = self._default_timeout_seconds()
+        max_retries = self._default_max_retries()
+
+        if provider.type == 'anthropic':
+            if Anthropic is None:
+                raise ImportError("anthropic package is required for Anthropic API. Install with: pip install anthropic")
+            kwargs: Dict[str, Any] = {
+                "api_key": provider.api_key or "",
+                "base_url": provider.base_url,
+                "timeout": effective_timeout,
+                "max_retries": max_retries,
+            }
+            return Anthropic(**kwargs)
+
+        kwargs = {
+            "api_key": provider.api_key or "not-needed",
+            "base_url": provider.base_url,
+            "timeout": effective_timeout,
+            "max_retries": max_retries,
+        }
+        return OpenAI(**kwargs)
+
+    def _test_openai_provider_connectivity(
+        self,
+        provider: LLMProviderConfig,
+        timeout_seconds: float,
+    ) -> Dict[str, Any]:
+        """Fast connectivity test for OpenAI/OpenAI-compatible providers via /models."""
+        base = provider.base_url.rstrip("/")
+        urls = [f"{base}/models"]
+        if not base.endswith("/v1"):
+            urls.append(f"{base}/v1/models")
+
+        # Keep total probe time bounded across URL attempts.
+        per_attempt_timeout = max(1.0, timeout_seconds / max(1, len(urls)))
+        timeout = httpx.Timeout(per_attempt_timeout)
+        headers: Dict[str, str] = {"accept": "application/json"}
+        api_key = provider.api_key or ""
+        if api_key and api_key not in ("not-needed", "ollama"):
+            headers["authorization"] = f"Bearer {api_key}"
+
+        errors: List[str] = []
+        for url in urls:
+            try:
+                with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                    resp = client.get(url, headers=headers)
+
+                if resp.status_code >= 400:
+                    snippet = (resp.text or "").strip().replace("\n", " ")
+                    if len(snippet) > 180:
+                        snippet = snippet[:180] + "..."
+                    raise RuntimeError(f"HTTP {resp.status_code} from {url}: {snippet}")
+
+                payload = resp.json()
+                model_ids: List[str] = []
+                if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+                    for item in payload["data"]:
+                        if isinstance(item, dict) and item.get("id"):
+                            model_ids.append(str(item["id"]))
+
+                if model_ids and provider.model not in model_ids:
+                    preview = ", ".join(model_ids[:5]) if model_ids else "none"
+                    raise RuntimeError(
+                        f"Model not found in provider catalog: {provider.model}. "
+                        f"Sample available models: {preview}"
+                    )
+
+                return {
+                    "success": True,
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "response": f"Connectivity OK via {url}",
+                    "endpoint": "models_list",
+                    "usage": None,
+                    "estimated_cost_usd": None,
+                }
+            except Exception as e:
+                errors.append(str(e))
+
+        # Surface the first failure with details for diagnostics classification.
+        raise RuntimeError(errors[0] if errors else "Provider connectivity check failed")
     
     def get_client(self) -> Union[OpenAI, Any]:
         """Get a client configured for the active provider (OpenAI or Anthropic)."""
@@ -187,20 +309,7 @@ class LLMConfigManager:
             return self._client
         
         provider = self.get_active_provider()
-        
-        if provider.type == 'anthropic':
-            if Anthropic is None:
-                raise ImportError("anthropic package is required for Anthropic API. Install with: pip install anthropic")
-            self._client = Anthropic(
-                api_key=provider.api_key or "",
-                base_url=provider.base_url
-            )
-        else:
-            # OpenAI or OpenAI-compatible
-            self._client = OpenAI(
-                api_key=provider.api_key or "not-needed",
-                base_url=provider.base_url
-            )
+        self._client = self._create_client_for_provider(provider)
         
         return self._client
     
@@ -242,7 +351,12 @@ class LLMConfigManager:
         
         return self.get_active_provider()
 
-    def _build_connection_diagnostics(self, provider: LLMProviderConfig, error: Exception) -> Dict[str, Any]:
+    def _build_connection_diagnostics(
+        self,
+        provider: LLMProviderConfig,
+        error: Exception,
+        timeout_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """Build structured diagnostics for offline/unavailable model scenarios."""
         error_text = str(error).strip()
         error_lower = error_text.lower()
@@ -262,10 +376,22 @@ class LLMConfigManager:
                 "If using a local model server, confirm the process and port are up.",
                 "Check firewall/network rules between ACPG and the model endpoint.",
             ]
+        elif ("http 404" in error_lower and "/models" in error_lower) or ("404" in error_lower and "models" in error_lower):
+            code = "models_endpoint_missing"
+            summary = "Provider did not expose a compatible models endpoint."
+            suggestions = [
+                "Verify base URL points to an OpenAI-compatible API root (often ending in /v1).",
+                "Test manually with: curl <base_url>/models (or <base_url>/v1/models).",
+                "If provider is non-OpenAI-compatible, use the matching provider type/settings.",
+            ]
         elif any(token in error_lower for token in ["timed out", "timeout"]):
             code = "timeout"
-            summary = "Provider did not respond before timeout."
+            if timeout_seconds is not None:
+                summary = f"Provider did not respond before timeout ({timeout_seconds:.1f}s)."
+            else:
+                summary = "Provider did not respond before timeout."
             suggestions = [
+                "Confirm endpoint responsiveness with a quick models-list request.",
                 "Check provider load and increase server-side request timeout if needed.",
                 "Try a smaller/faster model to confirm baseline connectivity.",
                 "Verify network latency between ACPG and the provider endpoint.",
@@ -312,10 +438,14 @@ class LLMConfigManager:
             ]
 
         checks = [
+            f"Provider name: {provider.name}",
             f"Provider type: {provider.type}",
             f"Base URL: {provider.base_url}",
             f"Model: {provider.model}",
+            f"Client retries: {self._default_max_retries()}",
         ]
+        if timeout_seconds is not None:
+            checks.append(f"Client timeout: {timeout_seconds:.1f}s")
 
         return {
             "code": code,
@@ -328,18 +458,27 @@ class LLMConfigManager:
             "raw_error": error_text,
         }
     
-    def test_connection(self) -> Dict[str, Any]:
-        """Test connection to the active LLM provider."""
-        provider = self.get_active_provider()
-        client = self.get_client()
+    def test_connection(
+        self,
+        provider_name: Optional[str] = None,
+        timeout_seconds: Optional[float] = 12.0,
+    ) -> Dict[str, Any]:
+        """Test connection to an LLM provider (active by default)."""
+        provider = self.get_provider(provider_name) if provider_name else self.get_active_provider()
+        timeout_seconds = float(timeout_seconds or 12.0)
         
         try:
-            prompt = "Say 'OK' if you can hear me."
+            if provider.type in ("openai", "openai_compatible"):
+                return self._test_openai_provider_connectivity(provider, timeout_seconds)
+
+            # Anthropic-compatible probe: tiny message request with strict timeout.
+            client = self._create_client_for_provider(provider, timeout_seconds=timeout_seconds)
+            prompt = "OK?"
             if provider.type == "anthropic":
                 response = client.messages.create(
                     model=provider.model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=10,
+                    max_tokens=1,
                     temperature=0,
                 )
                 text = response.content[0].text.strip() if response.content else ""
@@ -355,21 +494,6 @@ class LLMConfigManager:
                         "cached_input_tokens": 0,
                         "reasoning_tokens": 0,
                     }
-            else:
-                result = openai_text_with_usage(
-                    client,
-                    model=provider.model,
-                    system_prompt=None,
-                    user_prompt=prompt,
-                    temperature=0,
-                    max_output_tokens=10,
-                    max_tokens_fallback=10,
-                    preferred_endpoint=provider.preferred_endpoint,
-                )
-                text = result.text
-                endpoint_used = result.endpoint
-                usage_data = result.usage
-
             estimated_cost_usd = None
             if usage_data and provider.input_cost_per_1m is not None and provider.output_cost_per_1m is not None:
                 input_tokens = int(usage_data.get("input_tokens") or 0)
@@ -399,7 +523,7 @@ class LLMConfigManager:
                 "provider": provider.name,
                 "model": provider.model,
                 "error": str(e),
-                "diagnostics": self._build_connection_diagnostics(provider, e),
+                "diagnostics": self._build_connection_diagnostics(provider, e, timeout_seconds=timeout_seconds),
             }
 
 

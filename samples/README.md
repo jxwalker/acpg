@@ -53,6 +53,11 @@ This directory contains sample code files demonstrating various security policy 
 | `09_defeasible_policies.py` | **Defeasible policies** - with valid exceptions | INPUT-001, ERR-001, LOG-001 |
 | `10_argumentation_conflict.py` | **Conflict resolution** - competing arguments | Multiple |
 | `11_severity_priority.py` | **Priority ordering** - severity-based triage | Multiple |
+| `12_tool_demo.py` | **Tool mapping** - mapped vs unmapped tool findings | SQL-001, SEC-001, SEC-003 |
+| `13_semantics_stable_vs_grounded.py` | **Semantics comparison** - grounded vs stable/preferred | SEC-003, CRYPTO-001, NIST-SC-13 |
+| `14_joint_attack_nelson_parsons.py` | **Joint attack demo** - Nielsen-Parsons style policy conflict | SEC-001, SEC-003, SQL-001 |
+| `15_runtime_policy_events.py` | **Runtime governance demo** - tool/network/filesystem event set | SEC-004 |
+| `16_dynamic_analysis_replay.py` | **Dynamic replay demo** - deterministic runtime artifacts | SEC-003, CRYPTO-001 |
 
 ## Usage
 
@@ -166,6 +171,22 @@ Grounded Extension:
    - Critical > High > Medium > Low
    - Affects fix ordering and threshold compliance
 
+5. **13_semantics_stable_vs_grounded.py**: Semantics behavior comparison
+   - Run under grounded, auto, stable, preferred
+   - Compare accepted/rejected argument sets and final compliance outcome
+
+6. **14_joint_attack_nelson_parsons.py**: Joint-attack narrative
+   - Illustrates multi-condition mitigation arguments
+   - Useful for demos of set-attack reasoning and policy conflict discussions
+
+7. **15_runtime_policy_events.py**: Runtime policy channel demo
+   - Pairs with runtime policy evaluate endpoints/UI
+   - Demonstrates allow/deny/monitor event decisions as proof evidence
+
+8. **16_dynamic_analysis_replay.py**: Dynamic analysis + replay evidence
+   - Demonstrates deterministic dynamic artifact generation
+   - Shows replay-linked evidence in history and proof bundle views
+
 ## For Patent Demonstration
 
 These samples demonstrate ACPG's ability to:
@@ -175,4 +196,3 @@ These samples demonstrate ACPG's ability to:
 4. Generate cryptographically signed compliance proofs
 5. **Use formal argumentation to resolve policy conflicts**
 6. **Support defeasible reasoning with contextual exceptions**
-

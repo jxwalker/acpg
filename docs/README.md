@@ -15,6 +15,8 @@ Start here:
 
 Operational and product docs:
 
+- `/Users/James/code/GAD/apcg/docs/USER_MANUAL.md` — Comprehensive user manual for sales demos and CISO technical guidance
+- `/Users/James/code/GAD/apcg/docs/NEW_USER_MANUAL.md` — **Detailed new user manual** with step-by-step UI guide and screenshot placeholders
 - `/Users/James/code/GAD/apcg/docs/USER_GUIDE.md`
 - `/Users/James/code/GAD/apcg/docs/COMPLETE_FEATURE_LIST.md`
 - `/Users/James/code/GAD/apcg/docs/IMPLEMENTATION_SUMMARY.md`

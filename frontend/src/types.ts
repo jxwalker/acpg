@@ -246,6 +246,7 @@ export interface EnforceResponse {
       adjudication_seconds: number;
       fix_seconds?: number | null;
       fix_attempted: boolean;
+      fix_changed?: boolean | null;
       fix_error?: string | null;
       semantics_used?: string | null;
     }>;

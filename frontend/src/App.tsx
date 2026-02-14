@@ -103,6 +103,227 @@ def login(username: str, password_input: str) -> Optional[dict]:
     return None
 `;
 
+const MODEL_TEST_TIMEOUT_SECONDS = 10;
+
+const formatMsSeconds = (ms: number): string => `${(ms / 1000).toFixed(2)}s`;
+
+type EnforceFailureExplanation = {
+  title: string;
+  detail: string;
+  actions: string[];
+  targetedActions?: string[];
+  reasonCode?: string | null;
+  rawError?: string | null;
+};
+
+const humanizeStopReason = (reason?: string | null): string => {
+  switch (reason) {
+    case 'stagnation_no_violation_reduction':
+      return 'No violation reduction across iterations';
+    case 'fix_returned_unchanged_code':
+      return 'Model returned unchanged code';
+    case 'fix_cycle_detected':
+      return 'Fix cycle detected (repeating code state)';
+    case 'fix_error':
+      return 'Model fix request failed';
+    case 'max_iterations_reached':
+      return 'Reached max iteration limit';
+    default:
+      return reason || 'Unknown stop reason';
+  }
+};
+
+const summarizeRemainingViolations = (violations: Violation[], limit = 3): string => {
+  if (!violations.length) {
+    return 'none reported';
+  }
+  const selected = violations.slice(0, limit).map((violation) => {
+    if (violation.line != null) {
+      return `${violation.rule_id} (L${violation.line})`;
+    }
+    return violation.rule_id;
+  });
+  const hidden = Math.max(0, violations.length - selected.length);
+  if (hidden > 0) {
+    return `${selected.join(', ')}, +${hidden} more`;
+  }
+  return selected.join(', ');
+};
+
+const getRuleSpecificHint = (ruleId: string): string | null => {
+  if (ruleId === 'SEC-003' || ruleId === 'JS-SEC-003') {
+    return 'Replace eval/exec with a safe parser (Python: ast.literal_eval, JS: JSON.parse).';
+  }
+  if (ruleId === 'NIST-SC-13' || ruleId === 'CRYPTO-001') {
+    return 'Replace weak crypto/hash algorithms (e.g., MD5/SHA1/DES/RC4) with SHA-256+ and approved ciphers.';
+  }
+  if (ruleId === 'SEC-001' || ruleId === 'NIST-AC-1') {
+    return 'Move secrets to environment variables or a secrets manager.';
+  }
+  if (ruleId === 'SQL-001') {
+    return 'Use parameterized queries instead of string concatenation.';
+  }
+  return null;
+};
+
+const buildTargetedRemediationActions = (
+  violations: Violation[],
+  policies: PolicyRule[],
+  limit = 3,
+): string[] => {
+  if (!violations.length) {
+    return [];
+  }
+
+  const grouped = new Map<string, { lines: number[]; count: number }>();
+  for (const violation of violations) {
+    const existing = grouped.get(violation.rule_id) || { lines: [], count: 0 };
+    existing.count += 1;
+    if (violation.line != null && !existing.lines.includes(violation.line)) {
+      existing.lines.push(violation.line);
+    }
+    grouped.set(violation.rule_id, existing);
+  }
+
+  const prioritized = Array.from(grouped.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, limit);
+
+  return prioritized.map(([ruleId, meta]) => {
+    const policy = policies.find((item) => item.id === ruleId);
+    const lines = meta.lines.sort((a, b) => a - b);
+    const lineText = lines.length > 0
+      ? `line${lines.length > 1 ? 's' : ''} ${lines.slice(0, 4).join(', ')}`
+      : `${meta.count} occurrence${meta.count > 1 ? 's' : ''}`;
+    const policySuggestion = policy?.fix_suggestion?.trim();
+    const fallbackHint = getRuleSpecificHint(ruleId);
+    const suggestion = policySuggestion || fallbackHint || 'Apply the policy-specific secure coding change and re-run analysis.';
+    return `${ruleId} (${lineText}): ${suggestion}`;
+  });
+};
+
+const buildEnforceFailureExplanation = (
+  result: EnforceResponse | null,
+  violations: Violation[] = [],
+  policies: PolicyRule[] = [],
+): EnforceFailureExplanation | null => {
+  if (!result || result.compliant) {
+    return null;
+  }
+
+  const iterationMetrics = result.performance?.iterations ?? [];
+  const reason = result.performance?.stopped_early_reason || null;
+  const fixAttempts = iterationMetrics.filter((item) => item.fix_attempted).length;
+  const unchangedFixIterations = iterationMetrics
+    .filter((item) => item.fix_changed === false)
+    .map((item) => item.iteration);
+  const unresolvedSummary = summarizeRemainingViolations(violations);
+  const targetedActions = buildTargetedRemediationActions(violations, policies);
+  const latestFixError = (
+    iterationMetrics
+      ?.slice()
+      .reverse()
+      .find((item) => !!item.fix_error)
+      ?.fix_error || null
+  );
+
+  if (reason === 'fix_error') {
+    return {
+      title: 'The model could not produce a valid fix.',
+      detail: latestFixError || 'The fix request failed before compliant code could be generated.',
+      actions: [
+        'Validate provider availability and credentials in the Models tab.',
+        'Retry with a faster or higher-quality coding model.',
+        'Reduce scope by fixing one violation cluster at a time.',
+      ],
+      reasonCode: reason,
+      rawError: latestFixError,
+    };
+  }
+
+  if (reason === 'fix_returned_unchanged_code') {
+    const unchangedIterationLabel = unchangedFixIterations.length > 0
+      ? `Unchanged output on iteration${unchangedFixIterations.length > 1 ? 's' : ''} ${unchangedFixIterations.join(', ')}. `
+      : '';
+    return {
+      title: 'Auto-fix stalled because the model kept returning unchanged code.',
+      detail: `${unchangedIterationLabel}Fix attempts: ${fixAttempts || result.iterations}. Remaining violations: ${unresolvedSummary}.`,
+      targetedActions,
+      actions: [
+        'Apply the targeted rule fixes listed above, then run Auto-Fix again.',
+        'If unchanged again, switch to another coding model/provider in Models.',
+        'For large files, fix one rule family at a time (crypto first, then eval/exec, etc.).',
+      ],
+      reasonCode: reason,
+    };
+  }
+
+  if (reason === 'fix_cycle_detected') {
+    return {
+      title: 'Auto-fix entered a repeating edit cycle.',
+      detail: 'The system detected recurring code states and stopped to avoid infinite loops.',
+      actions: [
+        'Switch to a different remediation model.',
+        'Apply one manual edit to break cycle state, then retry.',
+        'Lower iteration scope by addressing highest-severity findings first.',
+      ],
+      reasonCode: reason,
+    };
+  }
+
+  if (reason === 'stagnation_no_violation_reduction') {
+    return {
+      title: 'Auto-fix stalled without reducing violations.',
+      detail: `Across iterations, violation count/signature did not improve. Remaining violations: ${unresolvedSummary}.`,
+      targetedActions,
+      actions: [
+        'Apply the targeted rule fixes listed above.',
+        'Try a model with stronger code-edit capability.',
+        'Check whether some findings are non-autofixable and require design changes.',
+      ],
+      reasonCode: reason,
+    };
+  }
+
+  if (reason === 'max_iterations_reached') {
+    return {
+      title: 'Auto-fix reached the configured iteration limit.',
+      detail: `The app used ${result.iterations} iteration(s). Remaining violations: ${unresolvedSummary}.`,
+      targetedActions,
+      actions: [
+        'Increase max iterations only if each iteration shows real improvement.',
+        'Apply the targeted rule fixes listed above, then re-run.',
+        'Use a stronger/faster model for remediation passes.',
+      ],
+      reasonCode: reason,
+    };
+  }
+
+  if (latestFixError) {
+    return {
+      title: 'Auto-fix could not complete.',
+      detail: latestFixError,
+      actions: [
+        'Check provider diagnostics in the Models tab.',
+        'Retry after confirming model endpoint health.',
+      ],
+      reasonCode: reason,
+      rawError: latestFixError,
+    };
+  }
+
+  return {
+    title: 'Auto-fix finished but code remains non-compliant.',
+    detail: `Some violations require manual remediation or a different model strategy. Remaining violations: ${unresolvedSummary}.`,
+    targetedActions,
+    actions: [
+      'Apply the targeted rule fixes listed above.',
+      'Re-run Auto-Fix after adjusting provider/model settings.',
+    ],
+    reasonCode: reason,
+  };
+};
+
 type WorkflowStep = 'idle' | 'prosecutor' | 'adjudicator' | 'generator' | 'proof' | 'complete';
 type ViewMode = 'editor' | 'diff' | 'proof' | 'policies' | 'verify' | 'tools' | 'metrics' | 'models';
 type CodeViewMode = 'current' | 'original' | 'fixed' | 'diff';
@@ -399,34 +620,42 @@ export default function App() {
 
   // Test a single LLM provider
   const testLlmProvider = async (id: string, showToast = false): Promise<boolean> => {
+    const startedAtMs = Date.now();
     setLlmProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
+    const provider = llmProviders.find(p => p.id === id);
+    const providerName = provider?.name || id;
+    const providerModel = provider?.model || 'unknown-model';
     try {
-      // Switch to provider
-      await fetch('/api/v1/llm/switch', {
+      const res = await fetch('/api/v1/llm/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: id })
+        body: JSON.stringify({ provider_id: id, timeout_seconds: MODEL_TEST_TIMEOUT_SECONDS }),
       });
-      // Test it
-      const res = await fetch('/api/v1/llm/test', { method: 'POST' });
       const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.detail || result.error || 'Failed to test provider');
+      }
       const success = result.success;
       setLlmProviderStatus(prev => ({ ...prev, [id]: success ? 'success' : 'error' }));
       if (showToast) {
-        const provider = llmProviders.find(p => p.id === id);
-        const name = provider?.name || id;
+        const durationMs = Date.now() - startedAtMs;
+        const summary = result.diagnostics?.summary || result.error || 'Connection failed';
         addToast(
-          success ? `${name} is online and working` : `${name} connection failed`,
+          success
+            ? `${providerName} (${providerModel}) online in ${formatMsSeconds(durationMs)}`
+            : `${providerName} (${providerModel}) failed in ${formatMsSeconds(durationMs)}: ${summary}`,
           success ? 'success' : 'error'
         );
       }
       return success;
-    } catch {
+    } catch (err: any) {
       setLlmProviderStatus(prev => ({ ...prev, [id]: 'error' }));
       if (showToast) {
-        const provider = llmProviders.find(p => p.id === id);
-        const name = provider?.name || id;
-        addToast(`${name} connection failed`, 'error');
+        const durationMs = Date.now() - startedAtMs;
+        addToast(
+          `${providerName} (${providerModel}) failed in ${formatMsSeconds(durationMs)}: ${err?.message || 'Connection failed'}`,
+          'error',
+        );
       }
       return false;
     }
@@ -446,14 +675,9 @@ export default function App() {
     
     fetch('/api/v1/llm/providers')
       .then(res => res.json())
-      .then(async (data) => {
+      .then((data) => {
         const providers = data || [];
         setLlmProviders(providers);
-        // Auto-test the active provider
-        const activeProvider = providers.find((p: any) => p.is_active);
-        if (activeProvider) {
-          await testLlmProvider(activeProvider.id);
-        }
       })
       .catch(() => setLlmProviders([]));
   }, []);
@@ -462,22 +686,13 @@ export default function App() {
   const testAllLlmProviders = async () => {
     if (llmProviders.length === 0) return;
     setTestingAllLlm(true);
-    const originalActive = llmProviders.find(p => p.is_active)?.id;
     
     let successCount = 0;
     for (const provider of llmProviders) {
       const success = await testLlmProvider(provider.id);
       if (success) successCount++;
     }
-    
-    // Switch back to original
-    if (originalActive) {
-      await fetch('/api/v1/llm/switch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: originalActive })
-      });
-    }
+
     setTestingAllLlm(false);
     addToast(
       `Tested ${llmProviders.length} providers: ${successCount} online, ${llmProviders.length - successCount} offline`,
@@ -596,6 +811,26 @@ export default function App() {
     tool?: string;
     message?: string;
   } | null>(null);
+  const [analysisStartedAtMs, setAnalysisStartedAtMs] = useState<number | null>(null);
+  const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0);
+
+  useEffect(() => {
+    if (!analysisProgress || analysisProgress.phase === 'complete' || analysisStartedAtMs == null) {
+      return;
+    }
+    setAnalysisElapsedMs(Math.max(0, Date.now() - analysisStartedAtMs));
+    const interval = window.setInterval(() => {
+      setAnalysisElapsedMs(Math.max(0, Date.now() - analysisStartedAtMs));
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [analysisProgress, analysisStartedAtMs]);
+
+  useEffect(() => {
+    if (!analysisProgress || analysisProgress.phase === 'complete') {
+      setAnalysisStartedAtMs(null);
+      setAnalysisElapsedMs(0);
+    }
+  }, [analysisProgress]);
 
   // Refresh history after analysis
   const refreshHistory = useCallback(() => {
@@ -606,6 +841,8 @@ export default function App() {
   const handleAnalyze = useCallback(async () => {
     setError(null);
     setEnforceResult(null);
+    setAnalysisStartedAtMs(Date.now());
+    setAnalysisElapsedMs(0);
     setAnalysisProgress({ phase: 'starting', message: 'Initializing analysis...' });
     addToast('Starting analysis...', 'info', 2000);
     setWorkflow({ step: 'prosecutor', iteration: 0, maxIterations: 3, violations: 0 });
@@ -659,6 +896,7 @@ export default function App() {
       setError(errorMsg);
       addToast(errorMsg, 'error');
       setAnalysisProgress(null);
+      setAnalysisStartedAtMs(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
   }, [code, language, semantics, addToast]);
@@ -666,8 +904,10 @@ export default function App() {
   const handleEnforce = useCallback(async () => {
     setError(null);
     setOriginalCode(code); // Save original for diff
+    setAnalysisStartedAtMs(Date.now());
+    setAnalysisElapsedMs(0);
     setAnalysisProgress({ phase: 'starting', message: 'Starting enforcement...' });
-    addToast('Starting auto-fix...', 'info', 2000);
+    addToast('Starting auto-fix workflow...', 'info', 2500);
     setWorkflow({ step: 'prosecutor', iteration: 1, maxIterations: 3, violations: 0 });
     
     try {
@@ -693,7 +933,10 @@ export default function App() {
       setWorkflow(w => ({ ...w, step: 'adjudicator' }));
       
       await new Promise(r => setTimeout(r, 300));
-      setAnalysisProgress({ phase: 'generating', message: 'Generating fixes...' });
+      setAnalysisProgress({ 
+        phase: 'generating', 
+        message: `Applying iterative fixes with ${llmProvider} (up to 3 iterations)...` 
+      });
       setWorkflow(w => ({ ...w, step: 'generator' }));
       
       const result = await api.enforce(code, language, 3, semantics);
@@ -719,15 +962,25 @@ export default function App() {
       setAnalysisProgress({ phase: 'complete', message: 'Enforcement complete' });
       setWorkflow(w => ({ ...w, step: 'complete', violations: finalAnalysis.violations.length }));
       setTimeout(() => setAnalysisProgress(null), 2000);
-      addToast('Auto-fix completed successfully', 'success');
+      if (result.compliant && adjResult.compliant) {
+        addToast(`Auto-fix completed in ${result.iterations} iteration(s)`, 'success');
+      } else {
+        const explanation = buildEnforceFailureExplanation(result, finalAnalysis.violations, policies);
+        if (explanation) {
+          addToast(`Auto-fix incomplete: ${explanation.title}`, 'warning', 7000);
+        } else {
+          addToast('Auto-fix finished but code is still non-compliant', 'warning', 7000);
+        }
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Enforcement failed';
       setError(errorMsg);
       addToast(errorMsg, 'error');
       setAnalysisProgress(null);
+      setAnalysisStartedAtMs(null);
       setWorkflow({ step: 'idle', iteration: 0, maxIterations: 3, violations: 0 });
     }
-  }, [code, language, semantics, addToast]);
+  }, [code, language, semantics, addToast, llmProvider, policies]);
 
   const handleGenerateReport = useCallback(async (format: 'json' | 'markdown' | 'html' = 'json') => {
     setReportLoading(true);
@@ -1265,6 +1518,19 @@ export default function App() {
                   <span className="flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4" />
                     Verify
+                  </span>
+                </button>
+                <button
+                  onClick={() => setViewMode('metrics')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                    viewMode === 'metrics'
+                      ? 'bg-slate-700 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Terminal className="w-4 h-4" />
+                    Demo Lab
                   </span>
                 </button>
               </div>
@@ -1946,6 +2212,11 @@ export default function App() {
       <main className="max-w-[1920px] mx-auto px-8 pb-12">
         {viewMode === 'verify' ? (
           <ProofVerifier />
+        ) : viewMode === 'metrics' ? (
+          <DemoLabView
+            currentCode={code}
+            semantics={semantics}
+          />
         ) : viewMode === 'tools' ? (
           <ToolsConfigurationView 
             onCreatePolicy={(data) => {
@@ -2424,11 +2695,20 @@ export default function App() {
                         {analysisProgress.phase === 'policies' && 'Running Policy Checks'}
                         {analysisProgress.phase === 'adjudicating' && 'Adjudicating Compliance'}
                         {analysisProgress.phase === 'starting' && 'Starting Analysis'}
-                        {analysisProgress.phase === 'generating' && 'Generating Fixes'}
+                        {analysisProgress.phase === 'generating' && 'Auto-Fixing with Model'}
                       </div>
                       <div className="text-xs text-slate-400 mt-0.5">
                         {analysisProgress.message}
                         {analysisProgress.tool && ` (${analysisProgress.tool})`}
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+                        <span>Elapsed: {formatMsSeconds(analysisElapsedMs)}</span>
+                        {analysisProgress.phase === 'generating' && (
+                          <>
+                            <span>•</span>
+                            <span>Waiting for model response and iteration checks</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2442,6 +2722,7 @@ export default function App() {
                 enforceResult={enforceResult}
                 isAnalyzing={isActivelyAnalyzing}
                 analysis={analysis}
+                policies={policies}
               />
 
               {/* Tool Execution Status */}
@@ -2896,12 +3177,14 @@ function ComplianceStatus({
   enforceResult,
   isAnalyzing,
   analysis,
+  policies,
 }: { 
   adjudication: AdjudicationResult | null;
   violations: Violation[];
   enforceResult: EnforceResponse | null;
   isAnalyzing: boolean;
   analysis: AnalysisResult | null;
+  policies: PolicyRule[];
 }) {
   // Count violations by severity
   const severityCounts = violations.reduce((acc, v) => {
@@ -2946,6 +3229,12 @@ function ComplianceStatus({
   const isCompliant = adjudication.compliant;
   const totalPolicies = adjudication.satisfied_rules.length + violationCount;
   const passRate = totalPolicies > 0 ? (adjudication.satisfied_rules.length / totalPolicies) * 100 : 0;
+  const enforceFailure = buildEnforceFailureExplanation(enforceResult, violations, policies);
+  const iterationDiagnostics = enforceResult?.performance?.iterations ?? [];
+  const fixIterationDiagnostics = iterationDiagnostics.filter((item) => item.fix_attempted);
+  const avgFixSeconds = fixIterationDiagnostics.length > 0
+    ? fixIterationDiagnostics.reduce((sum, item) => sum + (item.fix_seconds ?? 0), 0) / fixIterationDiagnostics.length
+    : null;
 
   return (
     <div className={`relative glass rounded-2xl p-6 border overflow-hidden ${
@@ -3064,6 +3353,33 @@ function ComplianceStatus({
               )}
             </div>
           )}
+
+          {!isCompliant && enforceFailure && (
+            <div className="mt-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10">
+              <div className="text-sm font-semibold text-amber-200">{enforceFailure.title}</div>
+              <p className="text-xs text-slate-300 mt-1">{enforceFailure.detail}</p>
+              {enforceFailure.reasonCode && (
+                <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                  reason: {enforceFailure.reasonCode}
+                </p>
+              )}
+              {enforceFailure.targetedActions && enforceFailure.targetedActions.length > 0 && (
+                <div className="mt-2 text-xs text-cyan-200">
+                  <p className="text-[11px] uppercase tracking-wide text-cyan-300/80 mb-1">Targeted next fixes</p>
+                  {enforceFailure.targetedActions.map((action, idx) => (
+                    <p key={idx}>• {action}</p>
+                  ))}
+                </div>
+              )}
+              {enforceFailure.actions.length > 0 && (
+                <div className="mt-2 text-xs text-slate-300">
+                  {enforceFailure.actions.map((action, idx) => (
+                    <p key={idx}>• {action}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           
           {enforceResult && (
             <div className="flex items-center gap-4 mt-4 pt-4 border-t border-white/5">
@@ -3165,9 +3481,64 @@ function ComplianceStatus({
               <span>Proof: {enforceResult.performance.proof_seconds.toFixed(2)}s</span>
               {enforceResult.performance.stopped_early_reason && (
                 <span className="text-amber-300">
-                  Stop reason: {enforceResult.performance.stopped_early_reason}
+                  Stop reason: {humanizeStopReason(enforceResult.performance.stopped_early_reason)}
                 </span>
               )}
+            </div>
+          )}
+          {iterationDiagnostics.length > 0 && (
+            <div className="mt-3 p-3 rounded-xl border border-white/10 bg-slate-900/40">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">Iteration diagnostics</div>
+                <div className="text-[11px] text-slate-500">
+                  Fix attempts: {fixIterationDiagnostics.length}
+                  {avgFixSeconds != null && ` • Avg fix latency ${avgFixSeconds.toFixed(2)}s`}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-[11px] text-left text-slate-300">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="py-1 pr-4 font-medium">Iter</th>
+                      <th className="py-1 pr-4 font-medium">Violations</th>
+                      <th className="py-1 pr-4 font-medium">Analyze</th>
+                      <th className="py-1 pr-4 font-medium">Adjudicate</th>
+                      <th className="py-1 pr-4 font-medium">Fix</th>
+                      <th className="py-1 pr-0 font-medium">Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {iterationDiagnostics.map((item) => {
+                      let outcome = 'No fix step';
+                      let outcomeClass = 'text-slate-500';
+                      if (item.fix_error) {
+                        outcome = 'Fix error';
+                        outcomeClass = 'text-red-300';
+                      } else if (item.fix_attempted && item.fix_changed === false) {
+                        outcome = 'Unchanged';
+                        outcomeClass = 'text-amber-300';
+                      } else if (item.fix_attempted && item.fix_changed === true) {
+                        outcome = 'Code changed';
+                        outcomeClass = 'text-emerald-300';
+                      } else if (item.compliant) {
+                        outcome = 'Compliant';
+                        outcomeClass = 'text-emerald-300';
+                      }
+
+                      return (
+                        <tr key={item.iteration} className="border-t border-white/5">
+                          <td className="py-1 pr-4 font-mono text-slate-400">{item.iteration}</td>
+                          <td className="py-1 pr-4 font-mono">{item.violation_count}</td>
+                          <td className="py-1 pr-4 font-mono">{item.analysis_seconds.toFixed(2)}s</td>
+                          <td className="py-1 pr-4 font-mono">{item.adjudication_seconds.toFixed(2)}s</td>
+                          <td className="py-1 pr-4 font-mono">{item.fix_seconds != null ? `${item.fix_seconds.toFixed(2)}s` : 'n/a'}</td>
+                          <td className={`py-1 pr-0 ${outcomeClass}`}>{outcome}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -3725,6 +4096,93 @@ function ViolationsList({
 }
 
 // Proof Bundle Card (Compact)
+const safeArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+
+const safeObject = (value: unknown): Record<string, any> => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : {}
+);
+
+const safeText = (value: unknown, fallback = ''): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (value == null) {
+    return fallback;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+};
+
+type RuntimePolicyEvent = {
+  tool: string;
+  action: string;
+  rule_id?: string | null;
+  allowed?: boolean;
+  message?: string | null;
+};
+
+const parseJsonIfString = (value: unknown): unknown => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) {
+    return value;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
+const normalizeRuntimePolicyEvents = (value: unknown): RuntimePolicyEvent[] => {
+  const parsed = parseJsonIfString(value);
+  const asArray = Array.isArray(parsed) ? parsed : [parsed];
+  const events: RuntimePolicyEvent[] = [];
+
+  for (const item of asArray) {
+    const obj = safeObject(item);
+    const tool = safeText(obj.tool, '');
+    const action = safeText(obj.action, '');
+    if (!tool || !action) {
+      continue;
+    }
+    events.push({
+      tool,
+      action,
+      rule_id: obj.rule_id ? safeText(obj.rule_id) : null,
+      allowed: typeof obj.allowed === 'boolean' ? obj.allowed : undefined,
+      message: obj.message ? safeText(obj.message) : null,
+    });
+  }
+
+  return events;
+};
+
+const describeRuntimeAction = (action: string): string => {
+  switch (action) {
+    case 'allow_with_monitoring':
+      return 'Allowed with monitoring';
+    case 'require_approval':
+      return 'Approval required';
+    case 'deny':
+      return 'Blocked';
+    case 'allow':
+      return 'Allowed';
+    default:
+      return action;
+  }
+};
+
 function ProofBundleCard({ 
   proof, 
   onCopy, 
@@ -3736,6 +4194,8 @@ function ProofBundleCard({
   onViewFull: () => void;
   copied: boolean;
 }) {
+  const artifact = safeObject(proof?.artifact);
+  const artifactHash = typeof artifact.hash === 'string' ? artifact.hash : 'n/a';
   return (
     <div className="gradient-border rounded-2xl overflow-hidden animate-scale-in stagger-2">
       <div className="p-6 space-y-4">
@@ -3772,7 +4232,9 @@ function ProofBundleCard({
         <div className="grid grid-cols-2 gap-3">
           <div className="p-3 rounded-xl bg-slate-900/50 border border-white/5">
             <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Hash</div>
-            <div className="font-mono text-sm text-slate-300 truncate">{proof.artifact.hash.slice(0, 16)}...</div>
+            <div className="font-mono text-sm text-slate-300 truncate">
+              {artifactHash !== 'n/a' ? `${artifactHash.slice(0, 16)}...` : 'n/a'}
+            </div>
           </div>
           <div className="p-3 rounded-xl bg-slate-900/50 border border-white/5">
             <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Status</div>
@@ -3804,6 +4266,9 @@ function ProofBundleView({
   const [activeTab, setActiveTab] = useState<'overview' | 'formal' | 'json'>('overview');
   const [exportFormat, setExportFormat] = useState<string>('json');
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const artifact = safeObject(proof?.artifact);
+  const signed = safeObject(proof?.signed);
+  const policies = safeArray<any>(proof?.policies);
   
   const exportFormats = [
     { value: 'json', label: 'JSON', icon: '{}' },
@@ -3896,20 +4361,24 @@ function ProofBundleView({
             </h3>
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b border-white/5">
-                <span className="text-slate-400">Hash (SHA-256)</span>
-                <span className="font-mono text-sm text-slate-200">{proof.artifact.hash.slice(0, 24)}...</span>
-              </div>
+                  <span className="text-slate-400">Hash (SHA-256)</span>
+                  <span className="font-mono text-sm text-slate-200">
+                    {typeof artifact.hash === 'string' ? `${artifact.hash.slice(0, 24)}...` : 'n/a'}
+                  </span>
+                </div>
               <div className="flex justify-between py-2 border-b border-white/5">
                 <span className="text-slate-400">Language</span>
-                <span className="text-slate-200">{proof.artifact.language}</span>
+                <span className="text-slate-200">{artifact.language || 'unknown'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-white/5">
                 <span className="text-slate-400">Generator</span>
-                <span className="text-slate-200">{proof.artifact.generator}</span>
+                <span className="text-slate-200">{artifact.generator || 'unknown'}</span>
               </div>
               <div className="flex justify-between py-2">
                 <span className="text-slate-400">Timestamp</span>
-                <span className="text-slate-200">{new Date(proof.artifact.timestamp).toLocaleString()}</span>
+                <span className="text-slate-200">
+                  {artifact.timestamp ? new Date(artifact.timestamp).toLocaleString() : 'n/a'}
+                </span>
               </div>
             </div>
           </div>
@@ -3923,11 +4392,11 @@ function ProofBundleView({
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b border-white/5">
                 <span className="text-slate-400">Algorithm</span>
-                <span className="text-slate-200">{proof.signed.algorithm}</span>
+                <span className="text-slate-200">{signed.algorithm || 'unknown'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-white/5">
                 <span className="text-slate-400">Signer</span>
-                <span className="text-slate-200">{proof.signed.signer}</span>
+                <span className="text-slate-200">{signed.signer || 'unknown'}</span>
               </div>
               <div className="flex justify-between py-2 border-b border-white/5">
                 <span className="text-slate-400">Decision</span>
@@ -3946,10 +4415,10 @@ function ProofBundleView({
           <div className="glass rounded-2xl p-6 border border-white/5 col-span-2">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <FileCheck className="w-5 h-5 text-emerald-400" />
-              Verified Policies ({proof.policies.length})
+              Verified Policies ({policies.length})
             </h3>
             <div className="grid grid-cols-4 gap-3">
-              {proof.policies.map((p, i) => (
+              {policies.map((p, i) => (
                 <div
                   key={i}
                   className={`p-3 rounded-xl border ${
@@ -3995,7 +4464,8 @@ function ProofBundleView({
 
 // Visual Argumentation Graph Component
 function ArgumentationGraphVisual({ proof }: { proof: ProofBundle }) {
-  const args = proof.argumentation?.arguments || [];
+  const argumentation = safeObject(proof?.argumentation);
+  const args = safeArray<any>(argumentation.arguments);
   
   // Group arguments by rule
   const violationArgs = args.filter(a => a.type === 'violation');
@@ -4086,8 +4556,8 @@ function ArgumentationGraphVisual({ proof }: { proof: ProofBundle }) {
                     {violation?.status === 'accepted' ? '✓ ACCEPTED' : '✗ REJECTED'}
                   </div>
                   {violation?.evidence && (
-                    <div className="text-xs text-slate-500 mt-1 max-w-32 truncate" title={violation.evidence}>
-                      {violation.evidence}
+                    <div className="text-xs text-slate-500 mt-1 max-w-32 truncate" title={safeText(violation.evidence, 'n/a')}>
+                      {safeText(violation.evidence, 'n/a')}
                     </div>
                   )}
                 </div>
@@ -4194,21 +4664,35 @@ function ArgumentationGraphVisual({ proof }: { proof: ProofBundle }) {
 // Formal Proof View - Step-by-step logical reasoning
 function FormalProofView({ proof }: { proof: ProofBundle }) {
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({ 1: true, 5: true });
+  const argumentation = safeObject(proof?.argumentation);
   
   const toggleStep = (step: number) => {
     setExpandedSteps(prev => ({ ...prev, [step]: !prev[step] }));
   };
   
   // Extract reasoning steps from the proof
-  const reasoningSteps = proof.argumentation?.reasoning_trace?.filter(
-    (item: any) => item.step !== undefined
-  ) || [];
+  const reasoningTrace = safeArray<any>(argumentation.reasoning_trace);
+  const reasoningSteps = reasoningTrace.filter((item: any) => item && item.step !== undefined);
   
   // Extract legacy format data
-  const proofArguments = proof.argumentation?.arguments || [];
-  const proofAttacks = proof.argumentation?.attacks || [];
-  const groundedExtension = proof.argumentation?.grounded_extension;
-  const summary = proof.argumentation?.summary;
+  const proofArguments = safeArray<any>(argumentation.arguments);
+  const proofAttacks = safeArray<any>(argumentation.attacks);
+  const groundedExtension = safeObject(argumentation.grounded_extension);
+  const summary = safeObject(argumentation.summary);
+  const groundedAccepted = safeArray<string>(groundedExtension.accepted);
+  const groundedRejected = safeArray<string>(groundedExtension.rejected);
+  const totalArguments = (
+    typeof summary.total_arguments === 'number'
+      ? summary.total_arguments
+      : proofArguments.length
+  );
+  const hasFormalPayload = (
+    reasoningSteps.length > 0
+    || proofArguments.length > 0
+    || proofAttacks.length > 0
+    || groundedAccepted.length > 0
+    || groundedRejected.length > 0
+  );
   
   return (
     <div className="space-y-6">
@@ -4236,7 +4720,7 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
           </div>
           <div className="p-4 bg-violet-500/10 rounded-xl border border-violet-500/30 text-center">
             <div className="text-xs text-violet-300 uppercase tracking-wider mb-1">Arguments</div>
-            <div className="text-white font-semibold">{summary?.total_arguments || proofArguments.length}</div>
+            <div className="text-white font-semibold">{totalArguments}</div>
           </div>
           <div className={`p-4 rounded-xl border text-center ${
             proof.decision === 'Compliant' 
@@ -4252,9 +4736,18 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
           </div>
         </div>
       </div>
+
+      {!hasFormalPayload && (
+        <div className="glass rounded-2xl p-6 border border-amber-500/30 bg-amber-500/10">
+          <div className="text-amber-300 font-semibold">Formal proof data is unavailable for this bundle.</div>
+          <p className="text-sm text-slate-300 mt-2">
+            The proof bundle is valid, but argumentation details were missing or in a legacy format.
+          </p>
+        </div>
+      )}
       
       {/* Plain English Explanation */}
-      {proof.argumentation?.explanation && (
+      {argumentation.explanation && (
         <div className="glass rounded-2xl p-6 border border-white/5">
           <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-cyan-400" />
@@ -4267,28 +4760,80 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
               ? 'bg-emerald-500/10 border-emerald-500/30' 
               : 'bg-red-500/10 border-red-500/30'
           }`}>
-            <p className="text-slate-200">{proof.argumentation.explanation.summary}</p>
+            <p className="text-slate-200">
+              {safeText(safeObject(argumentation.explanation).summary, 'No summary available.')}
+            </p>
           </div>
           
           {/* What happened for each violation */}
-          {proof.argumentation.explanation.what_happened?.length > 0 && (
+          {safeArray<any>(safeObject(argumentation.explanation).what_happened).length > 0 && (
             <div className="space-y-3 mb-4">
-              <h4 className="text-sm font-semibold text-slate-300">Policy Violations Explained:</h4>
-              {proof.argumentation.explanation.what_happened.map((item: any, i: number) => (
-                <div key={i} className="p-4 bg-red-500/5 rounded-xl border border-red-500/20">
+              <h4 className="text-sm font-semibold text-slate-300">Policy And Runtime Evidence Explained:</h4>
+              {safeArray<any>(safeObject(argumentation.explanation).what_happened).map((item: any, i: number) => (
+                (() => {
+                  const policyId = safeText(item.policy, 'unknown-policy');
+                  const resultLabel = safeText(item.result, 'UNKNOWN');
+                  const isRuntimePolicy = policyId === 'RUNTIME-POLICY';
+                  const runtimeEvents = isRuntimePolicy ? normalizeRuntimePolicyEvents(item.evidence) : [];
+                  const cardClass = isRuntimePolicy
+                    ? 'p-4 bg-cyan-500/5 rounded-xl border border-cyan-500/20'
+                    : 'p-4 bg-red-500/5 rounded-xl border border-red-500/20';
+                  const badgeClass = isRuntimePolicy
+                    ? 'px-2 py-1 bg-cyan-500/20 text-cyan-300 text-xs font-mono rounded'
+                    : 'px-2 py-1 bg-red-500/20 text-red-400 text-xs font-mono rounded';
+                  const resultClass = isRuntimePolicy ? 'text-cyan-300 font-semibold' : 'text-red-400 font-semibold';
+
+                  return (
+                <div key={i} className={cardClass}>
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="px-2 py-1 bg-red-500/20 text-red-400 text-xs font-mono rounded">
-                      {item.policy}
+                    <span className={badgeClass}>
+                      {policyId}
                     </span>
-                    <span className="text-red-400 font-semibold">{item.result}</span>
+                    <span className={resultClass}>{resultLabel}</span>
                   </div>
-                  <p className="text-sm text-slate-300 mb-2">{item.explanation}</p>
-                  {item.evidence && (
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900/50 px-3 py-2 rounded">
-                      Evidence: {item.evidence}
+                  <p className="text-sm text-slate-300 mb-2">{safeText(item.explanation, 'No explanation provided.')}</p>
+
+                  {isRuntimePolicy && (
+                    <div className="mb-2 p-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 text-xs text-slate-300">
+                      <p>This is runtime governance evidence, not a direct static-code violation.</p>
+                      <p className="mt-1">
+                        It records policy decisions about tool execution (allow, deny, monitoring, approval) and is included in the proof for audit traceability.
+                      </p>
                     </div>
                   )}
+
+                  {isRuntimePolicy && runtimeEvents.length > 0 ? (
+                    <div className="space-y-2">
+                      {runtimeEvents.map((event, idx) => (
+                        <div key={`${event.tool}-${event.action}-${idx}`} className="text-xs text-slate-300 bg-slate-900/50 px-3 py-2 rounded border border-cyan-500/20">
+                          <div className="flex flex-wrap gap-2">
+                            <span className="font-mono text-cyan-300">{event.tool}</span>
+                            <span className="text-slate-500">•</span>
+                            <span>{describeRuntimeAction(event.action)}</span>
+                            {event.allowed !== undefined && (
+                              <>
+                                <span className="text-slate-500">•</span>
+                                <span>{event.allowed ? 'execution permitted' : 'execution blocked'}</span>
+                              </>
+                            )}
+                          </div>
+                          {event.rule_id && (
+                            <p className="mt-1 text-slate-400">Rule: <span className="font-mono">{event.rule_id}</span></p>
+                          )}
+                          {event.message && (
+                            <p className="mt-1 text-slate-400">{event.message}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : item.evidence ? (
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900/50 px-3 py-2 rounded">
+                      Evidence: {safeText(item.evidence, 'n/a')}
+                    </div>
+                  ) : null}
                 </div>
+                  );
+                })()
               ))}
             </div>
           )}
@@ -4300,10 +4845,10 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
               Terminology Reference
             </summary>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              {Object.entries(proof.argumentation.explanation.terminology || {}).map(([term, def]: [string, any]) => (
+              {Object.entries(safeObject(safeObject(argumentation.explanation).terminology)).map(([term, def]: [string, any]) => (
                 <div key={term} className="p-2 bg-slate-800/50 rounded-lg">
                   <span className="font-mono text-cyan-400 text-sm">{term}</span>
-                  <p className="text-xs text-slate-400 mt-1">{def}</p>
+                  <p className="text-xs text-slate-400 mt-1">{safeText(def, 'n/a')}</p>
                 </div>
               ))}
             </div>
@@ -4333,8 +4878,8 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                   {step.step}
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-white">{step.title}</h3>
-                  <p className="text-sm text-slate-400">{step.description}</p>
+                  <h3 className="text-lg font-semibold text-white">{safeText(step.title, `Step ${step.step}`)}</h3>
+                  <p className="text-sm text-slate-400">{safeText(step.description, '')}</p>
                 </div>
                 {expandedSteps[step.step] ? (
                   <ChevronDown className="w-5 h-5 text-slate-400" />
@@ -4350,7 +4895,7 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                     <div className="mt-4 p-4 bg-slate-900/50 rounded-xl border border-white/5">
                       <div className="text-xs text-cyan-400 uppercase tracking-wider mb-2">Formal Logic</div>
                       <div className="space-y-1 font-mono text-sm">
-                        {step.logic.map((rule: string, i: number) => (
+                        {safeArray<string>(step.logic).map((rule: string, i: number) => (
                           <div key={i} className="text-slate-300 flex items-start gap-2">
                             <span className="text-cyan-500">→</span>
                             <span>{rule}</span>
@@ -4365,7 +4910,7 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                     <div className="mt-4 p-4 bg-slate-900/50 rounded-xl border border-white/5">
                       <div className="text-xs text-amber-400 uppercase tracking-wider mb-2">Algorithm</div>
                       <div className="space-y-1 font-mono text-sm">
-                        {step.algorithm.map((line: string, i: number) => (
+                        {safeArray<string>(step.algorithm).map((line: string, i: number) => (
                           <div key={i} className="text-slate-300">{line}</div>
                         ))}
                       </div>
@@ -4375,45 +4920,45 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                   {/* Arguments by type */}
                   {step.arguments && (
                     <div className="mt-4 grid grid-cols-2 gap-4">
-                      {step.arguments.compliance?.length > 0 && (
+                      {safeArray<any>(safeObject(step.arguments).compliance).length > 0 && (
                         <div className="p-4 bg-emerald-500/5 rounded-xl border border-emerald-500/20">
                           <div className="text-xs text-emerald-400 uppercase tracking-wider mb-2">
-                            Compliance Arguments ({step.arguments.compliance.length})
+                            Compliance Arguments ({safeArray<any>(safeObject(step.arguments).compliance).length})
                           </div>
                           <div className="space-y-2 max-h-40 overflow-y-auto">
-                            {step.arguments.compliance.map((arg: any, i: number) => (
+                            {safeArray<any>(safeObject(step.arguments).compliance).map((arg: any, i: number) => (
                               <div key={i} className={`p-2 rounded-lg text-xs ${
                                 arg.status === 'accepted' ? 'bg-emerald-500/10' : 'bg-slate-800/50'
                               }`}>
                                 <span className={`font-mono font-semibold ${
                                   arg.status === 'accepted' ? 'text-emerald-400' : 'text-slate-500'
-                                }`}>{arg.id}</span>
+                                }`}>{safeText(arg.id, 'unknown')}</span>
                                 <span className={`ml-2 ${
                                   arg.status === 'accepted' ? 'text-emerald-300' : 'text-slate-500'
-                                }`}>({arg.status})</span>
+                                }`}>({safeText(arg.status, 'unknown')})</span>
                               </div>
                             ))}
                           </div>
                         </div>
                       )}
-                      {step.arguments.violation?.length > 0 && (
+                      {safeArray<any>(safeObject(step.arguments).violation).length > 0 && (
                         <div className="p-4 bg-red-500/5 rounded-xl border border-red-500/20">
                           <div className="text-xs text-red-400 uppercase tracking-wider mb-2">
-                            Violation Arguments ({step.arguments.violation.length})
+                            Violation Arguments ({safeArray<any>(safeObject(step.arguments).violation).length})
                           </div>
                           <div className="space-y-2 max-h-40 overflow-y-auto">
-                            {step.arguments.violation.map((arg: any, i: number) => (
+                            {safeArray<any>(safeObject(step.arguments).violation).map((arg: any, i: number) => (
                               <div key={i} className={`p-2 rounded-lg text-xs ${
                                 arg.status === 'accepted' ? 'bg-red-500/10' : 'bg-slate-800/50'
                               }`}>
                                 <span className={`font-mono font-semibold ${
                                   arg.status === 'accepted' ? 'text-red-400' : 'text-slate-500'
-                                }`}>{arg.id}</span>
+                                }`}>{safeText(arg.id, 'unknown')}</span>
                                 <span className={`ml-2 ${
                                   arg.status === 'accepted' ? 'text-red-300' : 'text-slate-500'
-                                }`}>({arg.status})</span>
+                                }`}>({safeText(arg.status, 'unknown')})</span>
                                 {arg.evidence && (
-                                  <div className="mt-1 text-slate-400 truncate">Evidence: {arg.evidence}</div>
+                                  <div className="mt-1 text-slate-400 truncate">Evidence: {safeText(arg.evidence, 'n/a')}</div>
                                 )}
                               </div>
                             ))}
@@ -4424,30 +4969,33 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                   )}
                   
                   {/* Attacks */}
-                  {step.attacks && step.attacks.length > 0 && (
+                  {safeArray<any>(step.attacks).length > 0 && (
                     <div className="mt-4 p-4 bg-orange-500/5 rounded-xl border border-orange-500/20">
                       <div className="text-xs text-orange-400 uppercase tracking-wider mb-2">
-                        Attack Relations ({step.attacks.length})
+                        Attack Relations ({safeArray<any>(step.attacks).length})
                       </div>
                       <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-                        {step.attacks.map((attack: any, i: number) => (
+                        {safeArray<any>(step.attacks).map((attack: any, i: number) => (
                           <div key={i} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${
                             attack.effective ? 'bg-orange-500/10' : 'bg-slate-800/50'
                           }`}>
-                            <span className="font-mono text-slate-300">{attack.attacker}</span>
+                            <span className="font-mono text-slate-300">{safeText(attack.attacker, '?')}</span>
                             <span className={attack.effective ? 'text-orange-400' : 'text-slate-500'}>→</span>
-                            <span className="font-mono text-slate-300">{attack.target}</span>
+                            <span className="font-mono text-slate-300">{safeText(attack.target, '?')}</span>
                             <span className={`ml-auto ${attack.effective ? 'text-orange-400' : 'text-slate-500'}`}>
                               {attack.effective ? '✓' : '✗'}
                             </span>
                           </div>
                         ))}
                       </div>
-                      {step.attacks.some((a: any) => a.reason) && (
+                      {safeArray<any>(step.attacks).some((a: any) => a.reason) && (
                         <div className="mt-3 pt-3 border-t border-orange-500/20">
-                          {step.attacks.filter((a: any) => a.reason).slice(0, 3).map((attack: any, i: number) => (
+                          {safeArray<any>(step.attacks).filter((a: any) => a.reason).slice(0, 3).map((attack: any, i: number) => (
                             <div key={i} className="text-xs text-slate-400 mb-1">
-                              <span className="text-orange-400">{attack.attacker} → {attack.target}:</span> {attack.reason}
+                              <span className="text-orange-400">
+                                {safeText(attack.attacker, '?')} → {safeText(attack.target, '?')}:
+                              </span>{' '}
+                              {safeText(attack.reason, '')}
                             </div>
                           ))}
                         </div>
@@ -4463,9 +5011,9 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                           Accepted ({step.result.accepted_count})
                         </div>
                         <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-                          {step.result.accepted.map((id: string, i: number) => (
+                          {safeArray<string>(safeObject(step.result).accepted).map((id: string, i: number) => (
                             <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
-                              {id}
+                              {safeText(id, '?')}
                             </span>
                           ))}
                         </div>
@@ -4475,9 +5023,9 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                           Rejected ({step.result.rejected_count})
                         </div>
                         <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-                          {step.result.rejected.map((id: string, i: number) => (
+                          {safeArray<string>(safeObject(step.result).rejected).map((id: string, i: number) => (
                             <span key={i} className="px-2 py-1 bg-slate-700 text-slate-400 text-xs font-mono rounded">
-                              {id}
+                              {safeText(id, '?')}
                             </span>
                           ))}
                         </div>
@@ -4501,35 +5049,35 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                         <div className={`text-2xl font-bold ${
                           step.decision === 'COMPLIANT' ? 'text-emerald-400' : 'text-red-400'
                         }`}>
-                          {step.decision}
+                          {safeText(step.decision, 'UNKNOWN')}
                         </div>
                       </div>
-                      <p className="text-sm text-slate-300">{step.reasoning}</p>
+                      <p className="text-sm text-slate-300">{safeText(step.reasoning, '')}</p>
                       
-                      {step.satisfied_policies?.length > 0 && (
+                      {safeArray<string>(step.satisfied_policies).length > 0 && (
                         <div className="mt-3 pt-3 border-t border-white/10">
                           <div className="text-xs text-emerald-400 uppercase tracking-wider mb-2">
-                            Satisfied Policies ({step.satisfied_policies.length})
+                            Satisfied Policies ({safeArray<string>(step.satisfied_policies).length})
                           </div>
                           <div className="flex flex-wrap gap-1">
-                            {step.satisfied_policies.map((id: string, i: number) => (
+                            {safeArray<string>(step.satisfied_policies).map((id: string, i: number) => (
                               <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
-                                {id}
+                                {safeText(id, '?')}
                               </span>
                             ))}
                           </div>
                         </div>
                       )}
                       
-                      {step.violated_policies?.length > 0 && (
+                      {safeArray<string>(step.violated_policies).length > 0 && (
                         <div className="mt-3 pt-3 border-t border-white/10">
                           <div className="text-xs text-red-400 uppercase tracking-wider mb-2">
-                            Violated Policies ({step.violated_policies.length})
+                            Violated Policies ({safeArray<string>(step.violated_policies).length})
                           </div>
                           <div className="flex flex-wrap gap-1">
-                            {step.violated_policies.map((id: string, i: number) => (
+                            {safeArray<string>(step.violated_policies).map((id: string, i: number) => (
                               <span key={i} className="px-2 py-1 bg-red-500/20 text-red-400 text-xs font-mono rounded">
-                                {id}
+                                {safeText(id, '?')}
                               </span>
                             ))}
                           </div>
@@ -4583,17 +5131,17 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                       <span className={`font-mono text-sm ${
                         arg.status === 'accepted' ? 'text-emerald-400' : 'text-slate-400'
                       }`}>
-                        {arg.id}
+                        {safeText(arg.id, 'unknown')}
                       </span>
                       <span className={`px-2 py-0.5 text-xs rounded ${
                         arg.type === 'compliance' ? 'bg-emerald-500/20 text-emerald-400' :
                         arg.type === 'violation' ? 'bg-red-500/20 text-red-400' :
                         'bg-slate-700 text-slate-400'
                       }`}>
-                        {arg.type}
+                        {safeText(arg.type, 'unknown')}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 truncate">{arg.details}</p>
+                    <p className="text-xs text-slate-400 truncate">{safeText(arg.details, '')}</p>
                   </div>
                 ))}
               </div>
@@ -4614,7 +5162,7 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
                         : 'bg-slate-800/50 border-slate-700/50'
                     }`}
                   >
-                    <span className="font-mono text-slate-300">{attack.relation}</span>
+                    <span className="font-mono text-slate-300">{safeText(attack.relation, '?')}</span>
                   </div>
                 ))}
               </div>
@@ -4622,14 +5170,14 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
           )}
           
           {/* Grounded Extension */}
-          {groundedExtension && (
+          {(groundedAccepted.length > 0 || groundedRejected.length > 0) && (
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
                 <div className="text-xs text-emerald-300 uppercase tracking-wider mb-2">Accepted</div>
                 <div className="flex flex-wrap gap-1">
-                  {groundedExtension.accepted?.map((id: string, i: number) => (
+                  {groundedAccepted.map((id: string, i: number) => (
                     <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-mono rounded">
-                      {id}
+                      {safeText(id, '?')}
                     </span>
                   ))}
                 </div>
@@ -4637,9 +5185,9 @@ function FormalProofView({ proof }: { proof: ProofBundle }) {
               <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
                 <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Rejected</div>
                 <div className="flex flex-wrap gap-1">
-                  {groundedExtension.rejected?.map((id: string, i: number) => (
+                  {groundedRejected.map((id: string, i: number) => (
                     <span key={i} className="px-2 py-1 bg-slate-700 text-slate-400 text-xs font-mono rounded">
-                      {id}
+                      {safeText(id, '?')}
                     </span>
                   ))}
                 </div>
@@ -6576,6 +7124,1135 @@ function ProofVerifier() {
   );
 }
 
+type DemoLabProps = {
+  currentCode: string;
+  semantics: SemanticsMode;
+};
+
+type RuntimePolicyRule = {
+  id: string;
+  event_type: string;
+  action: string;
+  severity: string;
+  priority: number;
+  description?: string;
+};
+
+type RuntimePolicyDecision = {
+  allowed: boolean;
+  action: string;
+  rule_id?: string | null;
+  severity?: string | null;
+  message?: string | null;
+  evidence?: string | null;
+  matched_policies?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+type DynamicArtifactEntry = {
+  history_id: string;
+  timestamp: string;
+  language: string;
+  compliant: boolean;
+  artifact_id?: string;
+  suite_id?: string;
+  suite_name?: string;
+  return_code?: number | null;
+  timed_out?: boolean;
+  duration_seconds?: number;
+  replay_fingerprint?: string;
+  violation_rule_id?: string | null;
+};
+
+type ProofSummary = {
+  id: number;
+  artifact_hash: string;
+  artifact_name?: string;
+  decision: string;
+  created_at: string;
+};
+
+function DemoLabView({ currentCode, semantics }: DemoLabProps) {
+  const [activeTab, setActiveTab] = useState<'runtime' | 'batch' | 'graph' | 'proofs' | 'dynamic'>('runtime');
+
+  const [runtimeRules, setRuntimeRules] = useState<RuntimePolicyRule[]>([]);
+  const [runtimePolicyFile, setRuntimePolicyFile] = useState<string>('');
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeEventType, setRuntimeEventType] = useState<'tool' | 'network' | 'filesystem'>('tool');
+  const [runtimeToolName, setRuntimeToolName] = useState('bandit');
+  const [runtimeCommand, setRuntimeCommand] = useState('bandit -f json -ll -r target.py');
+  const [runtimeLanguage, setRuntimeLanguage] = useState('python');
+  const [runtimeHost, setRuntimeHost] = useState('api.example.com');
+  const [runtimeMethod, setRuntimeMethod] = useState('GET');
+  const [runtimeProtocol, setRuntimeProtocol] = useState('https');
+  const [runtimePath, setRuntimePath] = useState('/tmp/output.json');
+  const [runtimeOperation, setRuntimeOperation] = useState('write');
+  const [runtimeDecision, setRuntimeDecision] = useState<RuntimePolicyDecision | null>(null);
+  const [runtimeEvaluating, setRuntimeEvaluating] = useState(false);
+
+  const [batchCases, setBatchCases] = useState<ManagedTestCase[]>([]);
+  const [batchSelected, setBatchSelected] = useState<string[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<{
+    items: Array<{ name: string; compliant: boolean; violation_count: number; risk_score: number }>;
+    summary: { total_items: number; compliant_count: number; non_compliant_count: number; total_violations: number; compliance_rate: number };
+  } | null>(null);
+
+  const [graphDefinition, setGraphDefinition] = useState<string>('');
+  const [graphNodes, setGraphNodes] = useState<Array<{ name: string; description: string }>>([]);
+  const [graphEdges, setGraphEdges] = useState<Array<{ from: string; to: string; condition: string }>>([]);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState<string | null>(null);
+  const [graphCode, setGraphCode] = useState(currentCode);
+  const [graphMaxIterations, setGraphMaxIterations] = useState(3);
+  const [graphSemantics, setGraphSemantics] = useState<SemanticsMode>(semantics);
+  const [graphSolverDecisionMode, setGraphSolverDecisionMode] = useState<'auto' | 'skeptical' | 'credulous'>('auto');
+  const [graphStreaming, setGraphStreaming] = useState(false);
+  const [graphEvents, setGraphEvents] = useState<Array<{ event: string; data: unknown; at: string }>>([]);
+  const graphAbortRef = useRef<AbortController | null>(null);
+
+  const [proofsLoading, setProofsLoading] = useState(false);
+  const [proofsError, setProofsError] = useState<string | null>(null);
+  const [proofs, setProofs] = useState<ProofSummary[]>([]);
+  const [publicKey, setPublicKey] = useState<{
+    fingerprint: string;
+    algorithm: string;
+    curve: string;
+    public_key_pem: string;
+  } | null>(null);
+  const [selectedProof, setSelectedProof] = useState<Record<string, unknown> | null>(null);
+  const [selectedProofHash, setSelectedProofHash] = useState<string | null>(null);
+  const [selectedProofLoading, setSelectedProofLoading] = useState(false);
+
+  const [dynamicLoading, setDynamicLoading] = useState(false);
+  const [dynamicError, setDynamicError] = useState<string | null>(null);
+  const [dynamicLimit, setDynamicLimit] = useState(50);
+  const [dynamicViolationsOnly, setDynamicViolationsOnly] = useState(false);
+  const [dynamicSuite, setDynamicSuite] = useState('');
+  const [dynamicRule, setDynamicRule] = useState('');
+  const [dynamicArtifacts, setDynamicArtifacts] = useState<DynamicArtifactEntry[]>([]);
+
+  const loadRuntimePolicies = useCallback(async () => {
+    setRuntimeLoading(true);
+    setRuntimeError(null);
+    try {
+      const response = await fetch('/api/v1/runtime/policies');
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to load runtime policies');
+      }
+      setRuntimeRules(Array.isArray(payload.rules) ? payload.rules : []);
+      setRuntimePolicyFile(payload.policy_file || '');
+    } catch (err) {
+      setRuntimeError(err instanceof Error ? err.message : 'Failed to load runtime policies');
+      setRuntimeRules([]);
+      setRuntimePolicyFile('');
+    } finally {
+      setRuntimeLoading(false);
+    }
+  }, []);
+
+  const evaluateRuntimePolicy = useCallback(async () => {
+    setRuntimeEvaluating(true);
+    setRuntimeError(null);
+    setRuntimeDecision(null);
+    try {
+      const body: Record<string, unknown> = {
+        event_type: runtimeEventType,
+      };
+      if (runtimeEventType === 'tool') {
+        body.tool_name = runtimeToolName;
+        body.command = runtimeCommand
+          .split(' ')
+          .map((token) => token.trim())
+          .filter(Boolean);
+        body.language = runtimeLanguage;
+      } else if (runtimeEventType === 'network') {
+        body.host = runtimeHost;
+        body.method = runtimeMethod;
+        body.protocol = runtimeProtocol;
+      } else {
+        body.path = runtimePath;
+        body.operation = runtimeOperation;
+      }
+
+      const response = await fetch('/api/v1/runtime/policies/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Runtime policy evaluation failed');
+      }
+      setRuntimeDecision(payload.decision || null);
+    } catch (err) {
+      setRuntimeError(err instanceof Error ? err.message : 'Runtime policy evaluation failed');
+    } finally {
+      setRuntimeEvaluating(false);
+    }
+  }, [
+    runtimeCommand,
+    runtimeEventType,
+    runtimeHost,
+    runtimeLanguage,
+    runtimeMethod,
+    runtimeOperation,
+    runtimePath,
+    runtimeProtocol,
+    runtimeToolName,
+  ]);
+
+  const loadBatchCases = useCallback(async () => {
+    setBatchLoading(true);
+    setBatchError(null);
+    try {
+      const response = await fetch('/api/v1/test-cases');
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to load test cases');
+      }
+      const cases = Array.isArray(payload.cases) ? payload.cases : [];
+      setBatchCases(cases);
+      if (cases.length > 0 && batchSelected.length === 0) {
+        setBatchSelected(cases.slice(0, 3).map((item: ManagedTestCase) => item.id));
+      }
+    } catch (err) {
+      setBatchCases([]);
+      setBatchError(err instanceof Error ? err.message : 'Failed to load test cases');
+    } finally {
+      setBatchLoading(false);
+    }
+  }, [batchSelected.length]);
+
+  const runBatchAnalysis = useCallback(async () => {
+    if (batchSelected.length === 0) {
+      setBatchError('Select at least one test case.');
+      return;
+    }
+    setBatchRunning(true);
+    setBatchError(null);
+    setBatchResult(null);
+    try {
+      const details = await Promise.all(
+        batchSelected.map(async (caseId) => {
+          const response = await fetch(`/api/v1/test-cases/${encodeURIComponent(caseId)}`);
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || `Failed to load ${caseId}`);
+          }
+          return payload as ManagedTestCase;
+        })
+      );
+
+      const requestBody = {
+        items: details.map((item) => ({
+          name: item.name,
+          code: item.code || '',
+          language: item.language || 'python',
+        })),
+      };
+
+      const response = await fetch('/api/v1/analyze/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Batch analysis failed');
+      }
+      setBatchResult(payload);
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : 'Batch analysis failed');
+    } finally {
+      setBatchRunning(false);
+    }
+  }, [batchSelected]);
+
+  const loadGraphVisualization = useCallback(async () => {
+    setGraphLoading(true);
+    setGraphError(null);
+    try {
+      const response = await fetch('/api/v1/graph/visualize');
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to load graph visualization');
+      }
+      setGraphDefinition(payload.graph || '');
+      setGraphNodes(Array.isArray(payload.nodes) ? payload.nodes : []);
+      setGraphEdges(Array.isArray(payload.edges) ? payload.edges : []);
+    } catch (err) {
+      setGraphError(err instanceof Error ? err.message : 'Failed to load graph visualization');
+      setGraphDefinition('');
+      setGraphNodes([]);
+      setGraphEdges([]);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, []);
+
+  const appendGraphEvent = useCallback((event: string, data: unknown) => {
+    const next = {
+      event,
+      data,
+      at: new Date().toISOString(),
+    };
+    setGraphEvents((prev) => [...prev.slice(-149), next]);
+  }, []);
+
+  const stopGraphStream = useCallback(() => {
+    if (graphAbortRef.current) {
+      graphAbortRef.current.abort();
+      graphAbortRef.current = null;
+    }
+    setGraphStreaming(false);
+  }, []);
+
+  const startGraphStream = useCallback(async () => {
+    setGraphError(null);
+    setGraphEvents([]);
+    if (graphAbortRef.current) {
+      graphAbortRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    graphAbortRef.current = controller;
+    setGraphStreaming(true);
+
+    try {
+      const response = await fetch('/api/v1/graph/enforce/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: graphCode,
+          language: 'python',
+          max_iterations: graphMaxIterations,
+          semantics: graphSemantics,
+          solver_decision_mode: graphSolverDecisionMode,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || 'Failed to start graph stream');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const packet = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+
+          const lines = packet.split('\n');
+          let eventName = 'message';
+          const dataParts: string[] = [];
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataParts.push(line.slice(5).trim());
+            }
+          }
+          const rawData = dataParts.join('\n');
+          let parsedData: unknown = rawData;
+          try {
+            parsedData = rawData ? JSON.parse(rawData) : null;
+          } catch {
+            parsedData = rawData;
+          }
+
+          appendGraphEvent(eventName, parsedData);
+          if (eventName === 'error') {
+            const eventPayload = parsedData as { error?: string } | null;
+            throw new Error(eventPayload?.error || 'Graph stream error');
+          }
+
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        setGraphError(err instanceof Error ? err.message : 'Graph stream failed');
+      }
+    } finally {
+      if (graphAbortRef.current === controller) {
+        graphAbortRef.current = null;
+      }
+      setGraphStreaming(false);
+    }
+  }, [appendGraphEvent, graphCode, graphMaxIterations, graphSemantics, graphSolverDecisionMode]);
+
+  const loadProofRegistry = useCallback(async () => {
+    setProofsLoading(true);
+    setProofsError(null);
+    try {
+      const [proofsResponse, keyResponse] = await Promise.all([
+        fetch('/api/v1/proofs?limit=100'),
+        fetch('/api/v1/proof/public-key'),
+      ]);
+      const proofsPayload = await proofsResponse.json();
+      const keyPayload = await keyResponse.json();
+      if (!proofsResponse.ok) {
+        throw new Error(proofsPayload.detail || 'Failed to load proofs');
+      }
+      if (!keyResponse.ok) {
+        throw new Error(keyPayload.detail || 'Failed to load public key');
+      }
+      setProofs(Array.isArray(proofsPayload.proofs) ? proofsPayload.proofs : []);
+      setPublicKey(keyPayload);
+    } catch (err) {
+      setProofs([]);
+      setPublicKey(null);
+      setProofsError(err instanceof Error ? err.message : 'Failed to load proof registry');
+    } finally {
+      setProofsLoading(false);
+    }
+  }, []);
+
+  const loadProofBundle = useCallback(async (artifactHash: string) => {
+    setSelectedProofHash(artifactHash);
+    setSelectedProofLoading(true);
+    try {
+      const response = await fetch(`/api/v1/proof/${artifactHash}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to load proof bundle');
+      }
+      setSelectedProof(payload);
+    } catch (err) {
+      setProofsError(err instanceof Error ? err.message : 'Failed to load proof bundle');
+      setSelectedProof(null);
+    } finally {
+      setSelectedProofLoading(false);
+    }
+  }, []);
+
+  const loadDynamicArtifacts = useCallback(async () => {
+    setDynamicLoading(true);
+    setDynamicError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(dynamicLimit));
+      if (dynamicViolationsOnly) params.set('violations_only', 'true');
+      if (dynamicSuite.trim()) params.set('suite_id', dynamicSuite.trim());
+      if (dynamicRule.trim()) params.set('violation_rule_id', dynamicRule.trim());
+      const response = await fetch(`/api/v1/history/dynamic-artifacts?${params.toString()}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to load dynamic artifacts');
+      }
+      setDynamicArtifacts(Array.isArray(payload.artifacts) ? payload.artifacts : []);
+    } catch (err) {
+      setDynamicArtifacts([]);
+      setDynamicError(err instanceof Error ? err.message : 'Failed to load dynamic artifacts');
+    } finally {
+      setDynamicLoading(false);
+    }
+  }, [dynamicLimit, dynamicRule, dynamicSuite, dynamicViolationsOnly]);
+
+  useEffect(() => {
+    if (activeTab === 'runtime') {
+      void loadRuntimePolicies();
+    } else if (activeTab === 'batch') {
+      void loadBatchCases();
+    } else if (activeTab === 'graph') {
+      void loadGraphVisualization();
+    } else if (activeTab === 'proofs') {
+      void loadProofRegistry();
+    } else if (activeTab === 'dynamic') {
+      void loadDynamicArtifacts();
+    }
+  }, [activeTab, loadBatchCases, loadDynamicArtifacts, loadGraphVisualization, loadProofRegistry, loadRuntimePolicies]);
+
+  useEffect(() => () => {
+    if (graphAbortRef.current) {
+      graphAbortRef.current.abort();
+    }
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <div className="glass rounded-2xl p-6 border border-white/5">
+        <div className="flex items-center gap-4">
+          <div className="p-4 rounded-2xl bg-cyan-500/20 border border-cyan-500/30">
+            <Terminal className="w-10 h-10 text-cyan-300" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-display font-bold text-white">Demo Lab</h2>
+            <p className="text-slate-400">Interactive UI demos for runtime governance, argumentation, proof evidence, and batch compliance runs.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass rounded-xl p-3 border border-white/5">
+        <div className="flex flex-wrap gap-2">
+          {[
+            { id: 'runtime', label: 'Runtime Policies' },
+            { id: 'batch', label: 'Batch Runner' },
+            { id: 'graph', label: 'LangGraph Stream' },
+            { id: 'proofs', label: 'Proof Registry' },
+            { id: 'dynamic', label: 'Dynamic Artifacts' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as 'runtime' | 'batch' | 'graph' | 'proofs' | 'dynamic')}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                  : 'bg-slate-800/70 text-slate-300 border border-slate-700 hover:border-slate-500'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'runtime' && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Event Simulator</h3>
+              <button
+                onClick={() => void loadRuntimePolicies()}
+                className="px-3 py-1.5 text-xs bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:border-slate-500"
+              >
+                Refresh Rules
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Event Type</label>
+              <select
+                value={runtimeEventType}
+                onChange={(e) => setRuntimeEventType(e.target.value as 'tool' | 'network' | 'filesystem')}
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              >
+                <option value="tool">Tool</option>
+                <option value="network">Network</option>
+                <option value="filesystem">Filesystem</option>
+              </select>
+            </div>
+
+            {runtimeEventType === 'tool' && (
+              <>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Tool</label>
+                  <input
+                    value={runtimeToolName}
+                    onChange={(e) => setRuntimeToolName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Command</label>
+                  <input
+                    value={runtimeCommand}
+                    onChange={(e) => setRuntimeCommand(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Language</label>
+                  <input
+                    value={runtimeLanguage}
+                    onChange={(e) => setRuntimeLanguage(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                  />
+                </div>
+              </>
+            )}
+
+            {runtimeEventType === 'network' && (
+              <>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Host</label>
+                  <input
+                    value={runtimeHost}
+                    onChange={(e) => setRuntimeHost(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Method</label>
+                    <input
+                      value={runtimeMethod}
+                      onChange={(e) => setRuntimeMethod(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Protocol</label>
+                    <input
+                      value={runtimeProtocol}
+                      onChange={(e) => setRuntimeProtocol(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {runtimeEventType === 'filesystem' && (
+              <>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Path</label>
+                  <input
+                    value={runtimePath}
+                    onChange={(e) => setRuntimePath(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Operation</label>
+                  <input
+                    value={runtimeOperation}
+                    onChange={(e) => setRuntimeOperation(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                  />
+                </div>
+              </>
+            )}
+
+            <button
+              onClick={() => void evaluateRuntimePolicy()}
+              disabled={runtimeEvaluating}
+              className="w-full py-2.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50"
+            >
+              {runtimeEvaluating ? 'Evaluating...' : 'Evaluate Policy Decision'}
+            </button>
+
+            {runtimeError && (
+              <div className="p-3 text-sm bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg">
+                {runtimeError}
+              </div>
+            )}
+          </div>
+
+          <div className="xl:col-span-3 space-y-5">
+            <div className="glass rounded-2xl p-5 border border-white/5">
+              <h3 className="text-lg font-semibold text-white mb-3">Decision Output</h3>
+              {!runtimeDecision ? (
+                <p className="text-sm text-slate-500">Run an event evaluation to inspect allow/deny/monitor reasoning.</p>
+              ) : (
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                      runtimeDecision.allowed ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                    }`}>
+                      {runtimeDecision.allowed ? 'ALLOWED' : 'DENIED'}
+                    </span>
+                    <span className="px-2 py-1 rounded text-xs bg-slate-800 text-slate-300">
+                      action: {runtimeDecision.action}
+                    </span>
+                    {runtimeDecision.rule_id && (
+                      <span className="px-2 py-1 rounded text-xs bg-violet-500/20 text-violet-300 font-mono">
+                        {runtimeDecision.rule_id}
+                      </span>
+                    )}
+                  </div>
+                  {runtimeDecision.message && <p className="text-slate-300">{runtimeDecision.message}</p>}
+                  {runtimeDecision.evidence && (
+                    <p className="text-xs text-slate-500 font-mono break-all">{runtimeDecision.evidence}</p>
+                  )}
+                  {(runtimeDecision.matched_policies || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(runtimeDecision.matched_policies || []).map((policyId) => (
+                        <span key={policyId} className="px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 rounded font-mono">
+                          {policyId}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="glass rounded-2xl p-5 border border-white/5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-semibold text-white">Compiled Runtime Rules</h3>
+                {runtimePolicyFile && <span className="text-xs text-slate-500 font-mono truncate max-w-[60%]">{runtimePolicyFile}</span>}
+              </div>
+              {runtimeLoading ? (
+                <p className="text-sm text-slate-500">Loading runtime policy rules...</p>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {runtimeRules.map((rule) => (
+                    <div key={rule.id} className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-mono text-cyan-300">{rule.id}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">{rule.event_type}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300">{rule.action}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">priority {rule.priority}</span>
+                      </div>
+                      {rule.description && <p className="text-xs text-slate-400 mt-1">{rule.description}</p>}
+                    </div>
+                  ))}
+                  {runtimeRules.length === 0 && <p className="text-sm text-slate-500">No runtime rules loaded.</p>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'batch' && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Stored Test Cases</h3>
+              <button
+                onClick={() => void loadBatchCases()}
+                className="px-3 py-1.5 text-xs bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:border-slate-500"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {batchLoading ? (
+              <p className="text-sm text-slate-500">Loading test cases...</p>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setBatchSelected(batchCases.map((item) => item.id))}
+                    className="px-2 py-1 text-xs bg-slate-800 text-slate-300 rounded border border-slate-700"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    onClick={() => setBatchSelected(batchCases.filter((item) => item.source === 'file').map((item) => item.id))}
+                    className="px-2 py-1 text-xs bg-slate-800 text-slate-300 rounded border border-slate-700"
+                  >
+                    File samples
+                  </button>
+                  <button
+                    onClick={() => setBatchSelected([])}
+                    className="px-2 py-1 text-xs bg-slate-800 text-slate-300 rounded border border-slate-700"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto space-y-2">
+                  {batchCases.map((item) => (
+                    <label key={item.id} className="flex items-start gap-2 p-2 rounded bg-slate-800/50 border border-slate-700/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={batchSelected.includes(item.id)}
+                        onChange={(e) => {
+                          setBatchSelected((prev) => {
+                            if (e.target.checked) {
+                              return [...prev, item.id];
+                            }
+                            return prev.filter((id) => id !== item.id);
+                          });
+                        }}
+                        className="mt-1"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs text-white truncate">{item.name}</div>
+                        <div className="text-[11px] text-slate-500">{item.source} | {item.language}</div>
+                      </div>
+                    </label>
+                  ))}
+                  {batchCases.length === 0 && <p className="text-sm text-slate-500">No test cases available.</p>}
+                </div>
+
+                <button
+                  onClick={() => void runBatchAnalysis()}
+                  disabled={batchRunning || batchSelected.length === 0}
+                  className="w-full py-2.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50"
+                >
+                  {batchRunning ? 'Running batch analysis...' : `Run Batch (${batchSelected.length})`}
+                </button>
+              </>
+            )}
+
+            {batchError && (
+              <div className="p-3 text-sm bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg">
+                {batchError}
+              </div>
+            )}
+          </div>
+
+          <div className="xl:col-span-3 glass rounded-2xl p-5 border border-white/5">
+            <h3 className="text-lg font-semibold text-white mb-3">Batch Results</h3>
+            {!batchResult ? (
+              <p className="text-sm text-slate-500">Select test cases and run batch analysis to compare compliance outcomes.</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 text-xs">
+                  <div className="p-2 rounded bg-slate-800/70 border border-slate-700">
+                    <div className="text-slate-500">Items</div>
+                    <div className="text-white font-semibold">{batchResult.summary.total_items}</div>
+                  </div>
+                  <div className="p-2 rounded bg-emerald-500/10 border border-emerald-500/30">
+                    <div className="text-slate-500">Compliant</div>
+                    <div className="text-emerald-300 font-semibold">{batchResult.summary.compliant_count}</div>
+                  </div>
+                  <div className="p-2 rounded bg-red-500/10 border border-red-500/30">
+                    <div className="text-slate-500">Non-compliant</div>
+                    <div className="text-red-300 font-semibold">{batchResult.summary.non_compliant_count}</div>
+                  </div>
+                  <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30">
+                    <div className="text-slate-500">Violations</div>
+                    <div className="text-amber-300 font-semibold">{batchResult.summary.total_violations}</div>
+                  </div>
+                  <div className="p-2 rounded bg-cyan-500/10 border border-cyan-500/30">
+                    <div className="text-slate-500">Compliance Rate</div>
+                    <div className="text-cyan-300 font-semibold">{batchResult.summary.compliance_rate}%</div>
+                  </div>
+                </div>
+
+                <div className="max-h-96 overflow-y-auto space-y-2">
+                  {batchResult.items.map((item, idx) => (
+                    <div key={`${item.name}-${idx}`} className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm text-white">{item.name}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          item.compliant ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                        }`}>
+                          {item.compliant ? 'PASS' : 'FAIL'}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">
+                          {item.violation_count} violations
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300">
+                          risk {item.risk_score}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'graph' && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Stream Controls</h3>
+              <button
+                onClick={() => void loadGraphVisualization()}
+                className="px-3 py-1.5 text-xs bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:border-slate-500"
+              >
+                Refresh Graph
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Semantics</label>
+              <select
+                value={graphSemantics}
+                onChange={(e) => setGraphSemantics(e.target.value as SemanticsMode)}
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              >
+                <option value="auto">auto</option>
+                <option value="grounded">grounded</option>
+                <option value="stable">stable</option>
+                <option value="preferred">preferred</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Solver Decision Mode</label>
+              <select
+                value={graphSolverDecisionMode}
+                onChange={(e) => setGraphSolverDecisionMode(e.target.value as 'auto' | 'skeptical' | 'credulous')}
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              >
+                <option value="auto">auto</option>
+                <option value="skeptical">skeptical</option>
+                <option value="credulous">credulous</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Max Iterations</label>
+              <input
+                type="number"
+                min={1}
+                max={8}
+                value={graphMaxIterations}
+                onChange={(e) => setGraphMaxIterations(Math.max(1, Number(e.target.value) || 1))}
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => void startGraphStream()}
+                disabled={graphStreaming}
+                className="flex-1 py-2.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50"
+              >
+                {graphStreaming ? 'Streaming...' : 'Start Stream'}
+              </button>
+              <button
+                onClick={stopGraphStream}
+                disabled={!graphStreaming}
+                className="px-3 py-2.5 bg-red-500/20 text-red-300 rounded-lg border border-red-500/30 disabled:opacity-50"
+              >
+                Stop
+              </button>
+            </div>
+
+            {graphError && (
+              <div className="p-3 text-sm bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg">
+                {graphError}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Code</label>
+              <textarea
+                value={graphCode}
+                onChange={(e) => setGraphCode(e.target.value)}
+                className="w-full h-52 px-3 py-2 bg-slate-900/70 border border-slate-700 rounded-lg text-white font-mono text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="xl:col-span-3 space-y-5">
+            <div className="glass rounded-2xl p-5 border border-white/5">
+              <h3 className="text-lg font-semibold text-white mb-2">Graph Definition</h3>
+              {graphLoading ? (
+                <p className="text-sm text-slate-500">Loading graph metadata...</p>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500 font-mono break-all mb-3">{graphDefinition || 'No graph definition available.'}</p>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 rounded bg-slate-800/60 border border-slate-700/60">
+                      <div className="text-slate-400 mb-2">Nodes</div>
+                      <div className="space-y-1">
+                        {graphNodes.map((node) => (
+                          <div key={node.name} className="text-slate-300">
+                            <span className="font-mono text-cyan-300">{node.name}</span>
+                            <span className="text-slate-500"> - {node.description}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded bg-slate-800/60 border border-slate-700/60">
+                      <div className="text-slate-400 mb-2">Transitions</div>
+                      <div className="space-y-1">
+                        {graphEdges.map((edge, idx) => (
+                          <div key={`${edge.from}-${edge.to}-${idx}`} className="text-slate-300">
+                            <span className="font-mono text-violet-300">{edge.from}</span>
+                            <span className="text-slate-500">{' -> '}</span>
+                            <span className="font-mono text-violet-300">{edge.to}</span>
+                            <span className="text-slate-500"> ({edge.condition})</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="glass rounded-2xl p-5 border border-white/5">
+              <h3 className="text-lg font-semibold text-white mb-2">Live Stream Events</h3>
+              <div className="max-h-96 overflow-y-auto space-y-2">
+                {graphEvents.length === 0 && (
+                  <p className="text-sm text-slate-500">Start streaming to inspect agent_message, state_update, runtime_event, and completion events.</p>
+                )}
+                {graphEvents.map((entry, idx) => (
+                  <div key={`${entry.at}-${idx}`} className="p-3 rounded-lg bg-slate-800/70 border border-slate-700/60">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300">{entry.event}</span>
+                      <span className="text-[10px] text-slate-500">{new Date(entry.at).toLocaleTimeString()}</span>
+                    </div>
+                    <pre className="text-[11px] text-slate-300 whitespace-pre-wrap break-all">
+                      {typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'proofs' && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Proof Registry</h3>
+              <button
+                onClick={() => void loadProofRegistry()}
+                className="px-3 py-1.5 text-xs bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:border-slate-500"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {proofsLoading ? (
+              <p className="text-sm text-slate-500">Loading proofs...</p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto space-y-2">
+                {proofs.map((proof) => (
+                  <button
+                    key={proof.id}
+                    onClick={() => void loadProofBundle(proof.artifact_hash)}
+                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                      selectedProofHash === proof.artifact_hash
+                        ? 'bg-cyan-500/10 border-cyan-500/30'
+                        : 'bg-slate-800/60 border-slate-700/60 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="text-xs text-white truncate">{proof.artifact_name || proof.artifact_hash}</div>
+                    <div className="text-[11px] text-slate-500 font-mono truncate">{proof.artifact_hash}</div>
+                    <div className="text-[11px] text-slate-400 mt-1">{proof.decision} | {new Date(proof.created_at).toLocaleString()}</div>
+                  </button>
+                ))}
+                {proofs.length === 0 && <p className="text-sm text-slate-500">No proofs stored yet.</p>}
+              </div>
+            )}
+
+            {publicKey && (
+              <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60 text-xs space-y-1">
+                <div className="text-slate-400">Signer Public Key</div>
+                <div className="text-cyan-300 font-mono break-all">{publicKey.fingerprint}</div>
+                <div className="text-slate-500">{publicKey.algorithm} | {publicKey.curve}</div>
+              </div>
+            )}
+
+            {proofsError && (
+              <div className="p-3 text-sm bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg">
+                {proofsError}
+              </div>
+            )}
+          </div>
+
+          <div className="xl:col-span-3 glass rounded-2xl p-5 border border-white/5">
+            <h3 className="text-lg font-semibold text-white mb-3">Selected Proof Bundle</h3>
+            {selectedProofLoading ? (
+              <p className="text-sm text-slate-500">Loading proof bundle...</p>
+            ) : !selectedProof ? (
+              <p className="text-sm text-slate-500">Select a proof to inspect stored evidence and decision details.</p>
+            ) : (
+              <pre className="text-xs text-slate-300 bg-slate-900/70 border border-slate-700 rounded-lg p-4 overflow-auto max-h-[34rem]">
+                {JSON.stringify(selectedProof, null, 2)}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'dynamic' && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-4">
+            <h3 className="text-lg font-semibold text-white">Artifact Filters</h3>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Limit</label>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={dynamicLimit}
+                onChange={(e) => setDynamicLimit(Math.min(500, Math.max(1, Number(e.target.value) || 50)))}
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Suite ID</label>
+              <input
+                value={dynamicSuite}
+                onChange={(e) => setDynamicSuite(e.target.value)}
+                placeholder="optional"
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Violation Rule</label>
+              <input
+                value={dynamicRule}
+                onChange={(e) => setDynamicRule(e.target.value)}
+                placeholder="e.g. SEC-003"
+                className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={dynamicViolationsOnly}
+                onChange={(e) => setDynamicViolationsOnly(e.target.checked)}
+              />
+              violations only
+            </label>
+            <button
+              onClick={() => void loadDynamicArtifacts()}
+              disabled={dynamicLoading}
+              className="w-full py-2.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50"
+            >
+              {dynamicLoading ? 'Loading...' : 'Refresh Artifact Index'}
+            </button>
+
+            {dynamicError && (
+              <div className="p-3 text-sm bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg">
+                {dynamicError}
+              </div>
+            )}
+          </div>
+
+          <div className="xl:col-span-3 glass rounded-2xl p-5 border border-white/5">
+            <h3 className="text-lg font-semibold text-white mb-3">Dynamic Replay Artifacts</h3>
+            <div className="max-h-[40rem] overflow-y-auto space-y-2">
+              {dynamicArtifacts.map((artifact, idx) => (
+                <div key={`${artifact.history_id}-${artifact.artifact_id || idx}`} className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono">{artifact.suite_id || 'unknown-suite'}</span>
+                    <span className={`px-1.5 py-0.5 rounded ${artifact.compliant ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>
+                      {artifact.compliant ? 'compliant' : 'non-compliant'}
+                    </span>
+                    {artifact.violation_rule_id && (
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono">
+                        {artifact.violation_rule_id}
+                      </span>
+                    )}
+                    {artifact.timed_out && (
+                      <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">timed out</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    history {artifact.history_id} | {new Date(artifact.timestamp).toLocaleString()} | return {artifact.return_code ?? 'n/a'} | duration {artifact.duration_seconds?.toFixed(3) ?? 'n/a'}s
+                  </div>
+                  {artifact.replay_fingerprint && (
+                    <div className="text-[11px] text-slate-500 font-mono break-all mt-1">
+                      replay: {artifact.replay_fingerprint}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {!dynamicLoading && dynamicArtifacts.length === 0 && (
+                <p className="text-sm text-slate-500">No dynamic artifacts matched the current filters.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Policies View with Editor and Groups
 function PoliciesView({ 
   policies, 
@@ -8384,6 +10061,7 @@ type ProviderFormState = {
   context_window: number;
   max_output_tokens?: number | null;
   preferred_endpoint?: string;
+  request_timeout_seconds?: number | null;
   input_cost_per_1m?: number | null;
   cached_input_cost_per_1m?: number | null;
   output_cost_per_1m?: number | null;
@@ -8405,6 +10083,29 @@ type ProviderTestSnapshot = {
   error?: string;
 };
 
+type ProviderTestResult = {
+  id: string;
+  provider: string;
+  model: string;
+  success: boolean;
+  response?: string | null;
+  error?: string | null;
+  diagnostics?: ModelProviderDiagnostics | null;
+  endpoint?: string | null;
+  usage?: { total_tokens?: number } | null;
+  estimated_cost_usd?: number | null;
+  duration_ms: number;
+  timeout_seconds: number;
+};
+
+type ActiveProviderTest = {
+  id: string;
+  providerName: string;
+  model: string;
+  timeoutSeconds: number;
+  startedAtMs: number;
+};
+
 function ModelsConfigurationView() {
   const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -8414,7 +10115,9 @@ function ModelsConfigurationView() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<any>(null);
+  const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
+  const [activeTest, setActiveTest] = useState<ActiveProviderTest | null>(null);
+  const [activeTestElapsedMs, setActiveTestElapsedMs] = useState(0);
   const [providerStatus, setProviderStatus] = useState<Record<string, ProviderConnectionStatus>>({});
   const [providerDiagnostics, setProviderDiagnostics] = useState<Record<string, ModelProviderDiagnostics | null>>({});
   const [providerTestSnapshots, setProviderTestSnapshots] = useState<Record<string, ProviderTestSnapshot>>({});
@@ -8423,7 +10126,6 @@ function ModelsConfigurationView() {
   const [openaiCatalog, setOpenaiCatalog] = useState<OpenAIModelMetadata[]>([]);
   const [openaiCatalogLoading, setOpenaiCatalogLoading] = useState(false);
   const editFormRef = useRef<HTMLDivElement | null>(null);
-  const initialActiveTestedRef = useRef<string | null>(null);
   
   const [newProvider, setNewProvider] = useState<ProviderFormState>({
     id: '',
@@ -8437,6 +10139,7 @@ function ModelsConfigurationView() {
     context_window: 8192,
     max_output_tokens: null,
     preferred_endpoint: 'responses',
+    request_timeout_seconds: null,
     input_cost_per_1m: null,
     cached_input_cost_per_1m: null,
     output_cost_per_1m: null,
@@ -8499,6 +10202,7 @@ function ModelsConfigurationView() {
       context_window: 8192,
       max_output_tokens: null,
       preferred_endpoint: 'responses',
+      request_timeout_seconds: null,
       input_cost_per_1m: null,
       cached_input_cost_per_1m: null,
       output_cost_per_1m: null,
@@ -8554,6 +10258,7 @@ function ModelsConfigurationView() {
       preferred_endpoint:
         provider.preferred_endpoint
         || (providerType === 'anthropic' ? 'anthropic_messages' : 'responses'),
+      request_timeout_seconds: provider.request_timeout_seconds ?? null,
       input_cost_per_1m: provider.input_cost_per_1m ?? null,
       cached_input_cost_per_1m: provider.cached_input_cost_per_1m ?? null,
       output_cost_per_1m: provider.output_cost_per_1m ?? null,
@@ -8654,28 +10359,49 @@ function ModelsConfigurationView() {
     }
   }, [applyOpenAIModelMetadata, toEditableProvider]);
 
+  useEffect(() => {
+    if (!activeTest || testing !== activeTest.id) {
+      return;
+    }
+    setActiveTestElapsedMs(Math.max(0, Date.now() - activeTest.startedAtMs));
+    const interval = window.setInterval(() => {
+      setActiveTestElapsedMs(Math.max(0, Date.now() - activeTest.startedAtMs));
+    }, 200);
+    return () => window.clearInterval(interval);
+  }, [activeTest, testing]);
+
   const handleTestProvider = useCallback(async (id: string, showResult = true) => {
     const startedAtMs = Date.now();
+    const timeoutSeconds = MODEL_TEST_TIMEOUT_SECONDS;
+    const provider = providers.find((p) => p.id === id);
+    const providerName = provider?.name || id;
+    const providerModel = provider?.model || 'unknown-model';
     setTesting(id);
+    setActiveTest({
+      id,
+      providerName,
+      model: providerModel,
+      timeoutSeconds,
+      startedAtMs,
+    });
+    setActiveTestElapsedMs(0);
     setProviderStatus(prev => ({ ...prev, [id]: 'testing' }));
     setProviderDiagnostics(prev => ({ ...prev, [id]: null }));
     if (showResult) setTestResult(null);
     
     try {
-      // First switch to this provider temporarily
-      const switchResponse = await fetch('/api/v1/llm/switch', {
+      const res = await fetch('/api/v1/llm/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: id })
+        body: JSON.stringify({ provider_id: id, timeout_seconds: timeoutSeconds }),
       });
-      if (!switchResponse.ok) {
-        throw new Error(`Failed to activate provider "${id}" for testing`);
-      }
-      
-      // Run the test
-      const res = await fetch('/api/v1/llm/test', { method: 'POST' });
       const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.detail || result.error || `Failed to test provider "${id}"`);
+      }
       const durationMs = Date.now() - startedAtMs;
+      const resolvedProviderName = result.provider || providerName;
+      const resolvedModel = result.model || providerModel;
       
       setProviderStatus(prev => ({ ...prev, [id]: result.success ? 'success' : 'error' }));
       setProviderDiagnostics(prev => ({ ...prev, [id]: result.success ? null : (result.diagnostics || null) }));
@@ -8691,24 +10417,30 @@ function ModelsConfigurationView() {
           error: result.error || result.diagnostics?.summary,
         },
       }));
-      if (showResult) setTestResult({ id, ...result });
-      
-      // Switch back to original active
-      if (activeProvider && activeProvider !== id) {
-        await fetch('/api/v1/llm/switch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider_id: activeProvider })
+      if (showResult) {
+        setTestResult({
+          id,
+          provider: resolvedProviderName,
+          model: resolvedModel,
+          success: !!result.success,
+          response: result.response ?? null,
+          error: result.error ?? null,
+          diagnostics: result.diagnostics ?? null,
+          endpoint: result.endpoint ?? null,
+          usage: result.usage ?? null,
+          estimated_cost_usd: result.estimated_cost_usd ?? null,
+          duration_ms: durationMs,
+          timeout_seconds: timeoutSeconds,
         });
       }
-      
+
       return result.success;
     } catch (err: any) {
       const durationMs = Date.now() - startedAtMs;
       setProviderStatus(prev => ({ ...prev, [id]: 'error' }));
       const fallbackDiagnostics: ModelProviderDiagnostics = {
         code: 'test_request_failed',
-        summary: 'Failed to call model test endpoint.',
+        summary: `Failed to test ${providerName} (${providerModel}).`,
         suggestions: [
           'Verify backend is running and reachable.',
           'Inspect backend logs for /api/v1/llm/test errors.',
@@ -8725,19 +10457,24 @@ function ModelsConfigurationView() {
           error: err.message,
         },
       }));
-      if (showResult) setTestResult({ id, success: false, error: err.message, diagnostics: fallbackDiagnostics });
+      if (showResult) {
+        setTestResult({
+          id,
+          provider: providerName,
+          model: providerModel,
+          success: false,
+          error: err.message,
+          diagnostics: fallbackDiagnostics,
+          duration_ms: durationMs,
+          timeout_seconds: timeoutSeconds,
+        });
+      }
       return false;
     } finally {
       setTesting(null);
+      setActiveTest(null);
     }
-  }, [activeProvider]);
-
-  useEffect(() => {
-    if (!loading && activeProvider && providers.some(p => p.id === activeProvider) && initialActiveTestedRef.current !== activeProvider) {
-      initialActiveTestedRef.current = activeProvider;
-      void handleTestProvider(activeProvider, false);
-    }
-  }, [loading, activeProvider, providers, handleTestProvider]);
+  }, [providers]);
 
   const handleTestAllProviders = async () => {
     setTestingAll(true);
@@ -8752,16 +10489,7 @@ function ModelsConfigurationView() {
     for (const provider of providers) {
       await handleTestProvider(provider.id, false);
     }
-    
-    // Switch back to original active provider
-    if (activeProvider) {
-      await fetch('/api/v1/llm/switch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: activeProvider })
-      });
-    }
-    
+
     setTestingAll(false);
   };
 
@@ -8944,6 +10672,22 @@ function ModelsConfigurationView() {
             <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300">
               <XCircle className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {activeTest && testing === activeTest.id && (
+        <div className="glass rounded-xl p-4 border border-amber-500/30 bg-amber-500/10">
+          <div className="flex items-center gap-3">
+            <RefreshCw className="w-4 h-4 text-amber-300 animate-spin" />
+            <div className="text-sm">
+              <div className="text-amber-200 font-medium">
+                Testing {activeTest.providerName} ({activeTest.model})
+              </div>
+              <div className="text-amber-100/80 text-xs mt-1">
+                Elapsed: {formatMsSeconds(activeTestElapsedMs)} / timeout {activeTest.timeoutSeconds}s
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -9148,6 +10892,22 @@ function ModelsConfigurationView() {
               </select>
             </div>
             <div>
+              <label className="block text-sm text-slate-400 mb-1">Request Timeout (seconds)</label>
+              <input
+                type="number"
+                min={1}
+                max={300}
+                step="1"
+                value={formProvider.request_timeout_seconds ?? ''}
+                onChange={(e) => setFormProvider(prev => ({
+                  ...prev,
+                  request_timeout_seconds: e.target.value ? Number(e.target.value) : null,
+                }))}
+                className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white"
+                placeholder="default (35s)"
+              />
+            </div>
+            <div>
               <label className="block text-sm text-slate-400 mb-1">Input Cost ($ / 1M tokens)</label>
               <input
                 type="number"
@@ -9209,8 +10969,11 @@ function ModelsConfigurationView() {
             )}
             <div>
               <span className={testResult.success ? 'text-emerald-300' : 'text-red-300'}>
-                {testResult.success ? 'Connection successful!' : 'Connection failed'}
+                {testResult.success ? 'Connection successful' : 'Connection failed'}: {testResult.provider} ({testResult.model})
               </span>
+              <p className="text-xs text-slate-400 mt-1">
+                Latency: {formatMsSeconds(testResult.duration_ms)} (timeout {testResult.timeout_seconds}s)
+              </p>
               {testResult.response && (
                 <p className="text-sm text-slate-400 mt-1">Response: {testResult.response}</p>
               )}
@@ -9233,12 +10996,24 @@ function ModelsConfigurationView() {
               {!testResult.success && testResult.diagnostics?.summary && (
                 <p className="text-sm text-amber-300 mt-1">{testResult.diagnostics.summary}</p>
               )}
-              {!testResult.success && testResult.diagnostics?.suggestions?.length > 0 && (
+              {!testResult.success && testResult.diagnostics?.checks?.length ? (
                 <div className="mt-2 text-xs text-slate-300">
-                  {testResult.diagnostics.suggestions.slice(0, 2).map((suggestion: string, idx: number) => (
+                  {testResult.diagnostics.checks.slice(0, 3).map((check: string, idx: number) => (
+                    <p key={idx}>• {check}</p>
+                  ))}
+                </div>
+              ) : null}
+              {!testResult.success && (testResult.diagnostics?.suggestions?.length ?? 0) > 0 && (
+                <div className="mt-2 text-xs text-slate-300">
+                  {(testResult.diagnostics?.suggestions ?? []).slice(0, 2).map((suggestion: string, idx: number) => (
                     <p key={idx}>• {suggestion}</p>
                   ))}
                 </div>
+              )}
+              {!testResult.success && testResult.diagnostics?.raw_error && (
+                <p className="text-[11px] text-slate-500 mt-2 font-mono break-all">
+                  raw: {testResult.diagnostics.raw_error}
+                </p>
               )}
             </div>
             <button 
@@ -9315,6 +11090,11 @@ function ModelsConfigurationView() {
                         Offline
                       </span>
                     )}
+                    {providerStatus[provider.id] === 'testing' && activeTest?.id === provider.id && (
+                      <span className="px-2 py-0.5 text-xs bg-amber-500/20 text-amber-300 rounded-full">
+                        Testing {formatMsSeconds(activeTestElapsedMs)}
+                      </span>
+                    )}
                     {editingProvider?.id === provider.id && (
                       <span className="px-2 py-0.5 text-xs bg-violet-500/20 text-violet-300 rounded-full">
                         Editing
@@ -9336,6 +11116,7 @@ function ModelsConfigurationView() {
                     <span>Max tokens: {provider.max_tokens}</span>
                     <span>Temp: {provider.temperature}</span>
                     <span>Context: {provider.context_window?.toLocaleString()}</span>
+                    <span>Timeout: {provider.request_timeout_seconds ? `${provider.request_timeout_seconds}s` : 'default'}</span>
                   </div>
                   <div className="flex items-center gap-4 mt-1 text-xs text-slate-500">
                     {provider.max_output_tokens && <span>Max output: {provider.max_output_tokens?.toLocaleString()}</span>}
@@ -9411,6 +11192,18 @@ function ModelsConfigurationView() {
                           ))}
                         </div>
                       ) : null}
+                      {providerDiagnostics[provider.id]?.checks?.length ? (
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {providerDiagnostics[provider.id]?.checks?.slice(0, 3).map((check, idx) => (
+                            <p key={idx}>• {check}</p>
+                          ))}
+                        </div>
+                      ) : null}
+                      {providerDiagnostics[provider.id]?.raw_error ? (
+                        <p className="text-[11px] text-slate-500 mt-1 font-mono break-all">
+                          raw: {providerDiagnostics[provider.id]?.raw_error}
+                        </p>
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -9426,10 +11219,10 @@ function ModelsConfigurationView() {
                 )}
                 <button
                   onClick={() => handleTestProvider(provider.id)}
-                  disabled={testing === provider.id}
+                  disabled={testing === provider.id || testingAll}
                   className="px-3 py-1.5 text-sm bg-emerald-500/10 text-emerald-400 rounded-lg hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
                 >
-                  {testing === provider.id ? 'Testing...' : 'Test'}
+                  {testing === provider.id ? `Testing ${formatMsSeconds(activeTestElapsedMs)}` : 'Test'}
                 </button>
                 <button
                   onClick={() => {

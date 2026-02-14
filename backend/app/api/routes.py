@@ -1,6 +1,7 @@
 """API Routes for ACPG system."""
 import json
 import hashlib
+import re
 import uuid
 import time
 from datetime import datetime, timedelta
@@ -558,29 +559,81 @@ def _get_samples_dir() -> Path:
     return Path(os.environ.get("SAMPLES_DIR", Path(__file__).parent.parent.parent.parent / "samples"))
 
 
+_POLICY_ID_RE = re.compile(r"\b[A-Z][A-Z0-9_]*(?:-[A-Z0-9_]+)*-\d{1,4}\b")
+_SAMPLE_TITLE_RE = re.compile(r"^\s*Sample(?:\s+\d+)?\s*:\s*(.+?)\s*$", re.IGNORECASE)
+_MAPPED_POLICY_RE = re.compile(r"mapped to\s+([A-Z][A-Z0-9_]*(?:-[A-Z0-9_]+)*-\d{1,4})", re.IGNORECASE)
+
+
+def _dedupe_preserving_order(values: List[str]) -> List[str]:
+    seen = set()
+    ordered: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def _extract_sample_metadata(lines: List[str], stem_fallback: str) -> Dict[str, Any]:
+    description = ""
+    violations: List[str] = []
+
+    for line in lines[:40]:
+        stripped = line.strip()
+        normalized = stripped.strip("# ").strip("'\"")
+        if not normalized:
+            continue
+
+        title_match = _SAMPLE_TITLE_RE.match(normalized)
+        if title_match and not description:
+            description = title_match.group(1).strip()
+
+        if "violations" in normalized.lower() and ":" in normalized:
+            tail = normalized.split(":", 1)[1]
+            violations.extend(_POLICY_ID_RE.findall(tail))
+
+    if not description:
+        for line in lines[:40]:
+            normalized = line.strip().strip("# ").strip("'\"")
+            if not normalized:
+                continue
+            if normalized.lower() in {"sample", "violations"}:
+                continue
+            if normalized.lower().startswith("sample "):
+                description = normalized
+            else:
+                description = normalized.rstrip(".")
+            break
+
+    if not violations:
+        preview = "\n".join(lines[:240])
+        mapped = _MAPPED_POLICY_RE.findall(preview)
+        if mapped:
+            violations.extend(mapped)
+        else:
+            violations.extend(_POLICY_ID_RE.findall(preview))
+
+    return {
+        "description": description or stem_fallback,
+        "violations": _dedupe_preserving_order(violations),
+    }
+
+
 def _parse_file_test_case(file_path: Path, include_code: bool = False) -> Dict[str, Any]:
     content = file_path.read_text()
     lines = content.split('\n')
-
-    description = ""
-    violations: List[str] = []
-    for line in lines[:20]:
-        stripped = line.strip()
-        if stripped.startswith('"""') or stripped.startswith("'''"):
-            continue
-        if "Sample" in line and ":" in line:
-            description = line.split(":", 1)[1].strip()
-        if "Violations:" in line:
-            violations = [v.strip() for v in line.split(":", 1)[1].strip().split(",")]
+    fallback_description = file_path.stem.replace("_", " ").title()
+    metadata = _extract_sample_metadata(lines, fallback_description)
 
     item: Dict[str, Any] = {
         "id": f"file:{file_path.name}",
         "source": "file",
         "name": file_path.name,
-        "description": description or file_path.stem.replace("_", " ").title(),
+        "description": metadata["description"],
         "language": "python",
         "tags": ["file-sample"],
-        "violations": violations,
+        "violations": metadata["violations"],
         "read_only": True,
         "created_at": None,
         "updated_at": None,
@@ -1852,6 +1905,8 @@ async def enforce_compliance(
     seen_code_hashes = {hashlib.sha256(code.encode()).hexdigest()}
     prev_violation_fingerprint: Optional[tuple[str, ...]] = None
     prev_violation_count: Optional[int] = None
+    consecutive_unchanged_fixes = 0
+    last_fix_changed: Optional[bool] = None
 
     def _build_performance() -> Dict[str, Any]:
         return {
@@ -1928,6 +1983,7 @@ async def enforce_compliance(
         current_fingerprint = tuple(sorted(v.rule_id for v in analysis.violations))
         if (
             request.stop_on_stagnation
+            and last_fix_changed is not False
             and prev_violation_fingerprint is not None
             and current_fingerprint == prev_violation_fingerprint
             and prev_violation_count is not None
@@ -1953,10 +2009,20 @@ async def enforce_compliance(
             violations_fixed.extend([v.rule_id for v in analysis.violations])
             next_code = fixed_code
             if next_code.strip() == code.strip():
-                stopped_early_reason = "fix_returned_unchanged_code"
-                break
+                iter_metrics["fix_changed"] = False
+                consecutive_unchanged_fixes += 1
+                last_fix_changed = False
+                prev_violation_fingerprint = current_fingerprint
+                prev_violation_count = len(analysis.violations)
+                if request.stop_on_stagnation and consecutive_unchanged_fixes >= 2:
+                    stopped_early_reason = "fix_returned_unchanged_code"
+                    break
+                continue
 
             next_hash = hashlib.sha256(next_code.encode()).hexdigest()
+            iter_metrics["fix_changed"] = True
+            consecutive_unchanged_fixes = 0
+            last_fix_changed = True
             if request.stop_on_stagnation and next_hash in seen_code_hashes:
                 code = next_code
                 stopped_early_reason = "fix_cycle_detected"
@@ -1969,6 +2035,7 @@ async def enforce_compliance(
         except Exception as e:
             iter_metrics["fix_attempted"] = True
             iter_metrics["fix_error"] = str(e)
+            iter_metrics["fix_changed"] = False
             # Fix failed - still generate proof bundle for formal logic visibility
             fail_analysis_started = time.perf_counter()
             fail_analysis = prosecutor.analyze(
@@ -2006,11 +2073,6 @@ async def enforce_compliance(
                 proof_bundle=fail_proof
             )
     
-    # Max iterations reached without compliance
-    # Still generate a proof bundle to show the formal logic of why it failed
-    if stopped_early_reason is None:
-        stopped_early_reason = "max_iterations_reached"
-
     final_analysis_started = time.perf_counter()
     final_analysis = prosecutor.analyze(
         code=code,
@@ -2043,21 +2105,24 @@ async def enforce_compliance(
         audit.log_enforcement(
             artifact_hash=hashlib.sha256(code.encode()).hexdigest()[:16],
             language=request.language,
-            compliant=False,
+            compliant=final_adjudication.compliant,
             violations_fixed=violations_fixed,
-            iterations=request.max_iterations,
+            iterations=len(iteration_metrics) if iteration_metrics else request.max_iterations,
             user_id=_auth_actor(auth),
             ip_address=get_client_ip(http_request),
             request_id=request_id
         )
     except Exception:
         pass
+
+    if not final_adjudication.compliant and stopped_early_reason is None:
+        stopped_early_reason = "max_iterations_reached"
     
     return EnforceResponse(
         original_code=original_code,
         final_code=code,
         iterations=len(iteration_metrics) if iteration_metrics else request.max_iterations,
-        compliant=False,
+        compliant=final_adjudication.compliant,
         violations_fixed=violations_fixed,
         llm_usage=generator.get_usage_summary(),
         performance=_build_performance(),
@@ -2139,6 +2204,25 @@ async def generate_proof(
 # ============================================================================
 # Proof Retrieval Endpoints
 # ============================================================================
+
+@router.get("/proof/public-key")
+async def get_public_key():
+    """
+    Get the public key used for signing proof bundles.
+
+    This can be used to independently verify signatures.
+    """
+    from ..core.crypto import get_signer
+
+    signer = get_signer()
+
+    return {
+        "public_key_pem": signer.get_public_key_pem(),
+        "fingerprint": signer.get_public_key_fingerprint(),
+        "algorithm": "ECDSA-SHA256",
+        "curve": "SECP256R1 (P-256)"
+    }
+
 
 @router.get("/proof/{artifact_hash}")
 async def get_proof_by_hash(
@@ -2350,25 +2434,6 @@ async def verify_proof_bundle(
         result["errors"].append(f"Verification error: {str(e)}")
     
     return result
-
-
-@router.get("/proof/public-key")
-async def get_public_key():
-    """
-    Get the public key used for signing proof bundles.
-    
-    This can be used to independently verify signatures.
-    """
-    from ..core.crypto import get_signer
-    
-    signer = get_signer()
-    
-    return {
-        "public_key_pem": signer.get_public_key_pem(),
-        "fingerprint": signer.get_public_key_fingerprint(),
-        "algorithm": "ECDSA-SHA256",
-        "curve": "SECP256R1 (P-256)"
-    }
 
 
 # ============================================================================

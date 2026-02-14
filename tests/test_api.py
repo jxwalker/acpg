@@ -38,6 +38,54 @@ def test_health_endpoint(client):
     assert data["status"] == "healthy"
 
 
+def test_llm_test_endpoint_accepts_provider_payload(client, monkeypatch):
+    """LLM test endpoint should pass provider_id/timeout from request body."""
+
+    class DummyConfig:
+        def test_connection(self, provider_name=None, timeout_seconds=12.0):
+            assert provider_name == "target-provider"
+            assert timeout_seconds == 5
+            return {
+                "success": True,
+                "provider": "Dummy Provider",
+                "model": "dummy-model",
+                "response": "OK",
+                "endpoint": "responses",
+                "usage": None,
+                "estimated_cost_usd": None,
+            }
+
+    monkeypatch.setattr("app.core.llm_config.get_llm_config", lambda: DummyConfig())
+
+    response = client.post(
+        "/api/v1/llm/test",
+        json={"provider_id": "target-provider", "timeout_seconds": 5},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["provider"] == "Dummy Provider"
+
+
+def test_llm_test_endpoint_unknown_provider_returns_400(client, monkeypatch):
+    """LLM test endpoint should map unknown provider errors to HTTP 400."""
+
+    class DummyConfig:
+        def test_connection(self, provider_name=None, timeout_seconds=12.0):
+            raise ValueError(f"Unknown LLM provider: {provider_name}")
+
+    monkeypatch.setattr("app.core.llm_config.get_llm_config", lambda: DummyConfig())
+
+    response = client.post(
+        "/api/v1/llm/test",
+        json={"provider_id": "missing-provider"},
+    )
+
+    assert response.status_code == 400
+    assert "Unknown LLM provider" in response.json()["detail"]
+
+
 def test_admin_database_diagnostics_endpoint(client):
     """Database diagnostics endpoint should expose connectivity metadata."""
     response = client.get("/api/v1/admin/database/diagnostics")
@@ -73,6 +121,16 @@ def test_runtime_policies_list_and_evaluate(client):
         "require_approval",
         "allow_with_monitoring",
     }
+
+
+def test_proof_public_key_endpoint(client):
+    """Proof public key endpoint should return signer metadata."""
+    response = client.get("/api/v1/proof/public-key")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["fingerprint"]
+    assert payload["algorithm"] == "ECDSA-SHA256"
+    assert "BEGIN PUBLIC KEY" in payload["public_key_pem"]
 
 
 def test_list_policies(client):
@@ -123,6 +181,239 @@ def test_analyze_clean_code(client):
     # Should have few or no violations
     sec001_violations = [v for v in data["violations"] if v["rule_id"] == "SEC-001"]
     assert len(sec001_violations) == 0
+
+
+def test_enforce_retries_after_first_unchanged_fix(client, monkeypatch):
+    """Enforce should retry once when a fix pass returns unchanged code."""
+    from app.models.schemas import (
+        AdjudicationResult,
+        AnalysisResult,
+        ArtifactMetadata,
+        ProofBundle,
+        Violation,
+    )
+
+    class StubProsecutor:
+        def analyze(self, code, language, policy_ids=None):
+            violations = []
+            if "hashlib.md5" in code:
+                violations.append(
+                    Violation(
+                        rule_id="NIST-SC-13",
+                        description="Use approved cryptographic algorithms",
+                        line=13,
+                        evidence="hashlib.md5",
+                        detector="regex",
+                        severity="high",
+                    )
+                )
+            if "eval(" in code and "literal_eval(" not in code:
+                violations.append(
+                    Violation(
+                        rule_id="SEC-003",
+                        description="Dangerous eval/exec usage",
+                        line=5,
+                        evidence="eval(",
+                        detector="regex",
+                        severity="high",
+                    )
+                )
+            return AnalysisResult(artifact_id="artifact-test", violations=violations)
+
+    class StubAdjudicator:
+        def adjudicate(self, analysis, policy_ids, semantics=None, solver_decision_mode=None):
+            compliant = len(analysis.violations) == 0
+            return AdjudicationResult(
+                semantics=semantics or "grounded",
+                requested_semantics=semantics or "grounded",
+                solver_decision_mode=solver_decision_mode or "auto",
+                compliant=compliant,
+                unsatisfied_rules=sorted({v.rule_id for v in analysis.violations}),
+                satisfied_rules=[] if not compliant else ["NIST-SC-13", "SEC-003"],
+                reasoning=[],
+            )
+
+    class StubProofAssembler:
+        def assemble_proof(self, code, analysis, adjudication, language):
+            return ProofBundle(
+                artifact=ArtifactMetadata(
+                    hash="a" * 64,
+                    language=language,
+                    generator="test",
+                ),
+                code=code,
+                policies=[],
+                evidence=[],
+                decision="Compliant" if adjudication.compliant else "Non-compliant",
+                signed={
+                    "signature": "sig",
+                    "signer": "test",
+                    "algorithm": "ECDSA-SHA256",
+                    "public_key_fingerprint": "fp",
+                },
+            )
+
+    class StubGenerator:
+        def __init__(self):
+            self.calls = 0
+
+        def reset_usage_tracking(self):
+            return None
+
+        def get_usage_summary(self):
+            return {"call_count": self.calls, "endpoint_breakdown": {}}
+
+        def fix_violations(self, code, violations, language):
+            self.calls += 1
+            if self.calls == 1:
+                return code.replace("hashlib.md5", "hashlib.sha256")
+            return code
+
+    stub_generator = StubGenerator()
+    monkeypatch.setattr("app.api.routes.get_prosecutor", lambda: StubProsecutor())
+    monkeypatch.setattr("app.api.routes.get_adjudicator", lambda: StubAdjudicator())
+    monkeypatch.setattr("app.api.routes.get_generator", lambda: stub_generator)
+    monkeypatch.setattr("app.api.routes.get_proof_assembler", lambda: StubProofAssembler())
+
+    vulnerable_code = (
+        "import hashlib\n"
+        "value = eval(user_input)\n"
+        "digest = hashlib.md5(data.encode()).hexdigest()\n"
+    )
+
+    response = client.post(
+        "/api/v1/enforce",
+        json={
+            "code": vulnerable_code,
+            "language": "python",
+            "policies": ["SEC-003", "NIST-SC-13"],
+            "max_iterations": 3,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["compliant"] is False
+    assert payload["iterations"] == 3
+    assert payload["performance"]["stopped_early_reason"] == "fix_returned_unchanged_code"
+    assert payload["performance"]["iterations"][-1]["fix_changed"] is False
+    assert stub_generator.calls == 3
+
+
+def test_enforce_marks_compliant_when_last_iteration_fix_succeeds(client, monkeypatch):
+    """A successful fix on the final iteration should return compliant=True."""
+    from app.models.schemas import (
+        AdjudicationResult,
+        AnalysisResult,
+        ArtifactMetadata,
+        ProofBundle,
+        Violation,
+    )
+
+    class StubProsecutor:
+        def analyze(self, code, language, policy_ids=None):
+            violations = []
+            if "hashlib.md5" in code:
+                violations.append(
+                    Violation(
+                        rule_id="NIST-SC-13",
+                        description="Use approved cryptographic algorithms",
+                        line=13,
+                        evidence="hashlib.md5",
+                        detector="regex",
+                        severity="high",
+                    )
+                )
+            if "eval(" in code and "literal_eval(" not in code:
+                violations.append(
+                    Violation(
+                        rule_id="SEC-003",
+                        description="Dangerous eval/exec usage",
+                        line=5,
+                        evidence="eval(",
+                        detector="regex",
+                        severity="high",
+                    )
+                )
+            return AnalysisResult(artifact_id="artifact-test", violations=violations)
+
+    class StubAdjudicator:
+        def adjudicate(self, analysis, policy_ids, semantics=None, solver_decision_mode=None):
+            compliant = len(analysis.violations) == 0
+            return AdjudicationResult(
+                semantics=semantics or "grounded",
+                requested_semantics=semantics or "grounded",
+                solver_decision_mode=solver_decision_mode or "auto",
+                compliant=compliant,
+                unsatisfied_rules=sorted({v.rule_id for v in analysis.violations}),
+                satisfied_rules=[] if not compliant else ["NIST-SC-13", "SEC-003"],
+                reasoning=[],
+            )
+
+    class StubProofAssembler:
+        def assemble_proof(self, code, analysis, adjudication, language):
+            return ProofBundle(
+                artifact=ArtifactMetadata(
+                    hash="b" * 64,
+                    language=language,
+                    generator="test",
+                ),
+                code=code,
+                policies=[],
+                evidence=[],
+                decision="Compliant" if adjudication.compliant else "Non-compliant",
+                signed={
+                    "signature": "sig",
+                    "signer": "test",
+                    "algorithm": "ECDSA-SHA256",
+                    "public_key_fingerprint": "fp",
+                },
+            )
+
+    class StubGenerator:
+        def __init__(self):
+            self.calls = 0
+
+        def reset_usage_tracking(self):
+            return None
+
+        def get_usage_summary(self):
+            return {"call_count": self.calls, "endpoint_breakdown": {}}
+
+        def fix_violations(self, code, violations, language):
+            self.calls += 1
+            if self.calls == 1:
+                return code.replace("hashlib.md5", "hashlib.sha256")
+            return code.replace("eval(", "ast.literal_eval(")
+
+    stub_generator = StubGenerator()
+    monkeypatch.setattr("app.api.routes.get_prosecutor", lambda: StubProsecutor())
+    monkeypatch.setattr("app.api.routes.get_adjudicator", lambda: StubAdjudicator())
+    monkeypatch.setattr("app.api.routes.get_generator", lambda: stub_generator)
+    monkeypatch.setattr("app.api.routes.get_proof_assembler", lambda: StubProofAssembler())
+
+    vulnerable_code = (
+        "import hashlib\n"
+        "value = eval(user_input)\n"
+        "digest = hashlib.md5(data.encode()).hexdigest()\n"
+    )
+
+    response = client.post(
+        "/api/v1/enforce",
+        json={
+            "code": vulnerable_code,
+            "language": "python",
+            "policies": ["SEC-003", "NIST-SC-13"],
+            "max_iterations": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["iterations"] == 2
+    assert payload["compliant"] is True
+    assert payload["performance"]["stopped_early_reason"] is None
+    assert stub_generator.calls == 2
 
 
 def test_dynamic_artifact_history_index(client):
@@ -485,6 +776,30 @@ def test_list_test_cases(client):
     assert "cases" in data
     assert isinstance(data["cases"], list)
     assert any(item["source"] == "file" for item in data["cases"])
+
+
+def test_file_sample_metadata_includes_tool_demo_expectations(client):
+    """Sample 12 should expose meaningful metadata for dropdown demos."""
+    response = client.get("/api/v1/test-cases/file:12_tool_demo.py")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "file"
+    assert payload["description"]
+    assert "SQL-001" in payload["violations"]
+    assert "SEC-001" in payload["violations"]
+    assert "SEC-003" in payload["violations"]
+    assert payload["code"]
+
+
+def test_file_sample_metadata_preserves_multi_segment_policy_ids(client):
+    """Sample metadata parsing should preserve IDs like NIST-SC-13."""
+    response = client.get("/api/v1/test-cases/file:13_semantics_stable_vs_grounded.py")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "file"
+    assert "SEC-003" in payload["violations"]
+    assert "CRYPTO-001" in payload["violations"]
+    assert "NIST-SC-13" in payload["violations"]
 
 
 def test_test_case_crud(client):

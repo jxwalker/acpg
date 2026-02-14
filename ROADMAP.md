@@ -44,7 +44,17 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 1. UI readiness and operator workflows
 - Improve model management UX (provider create/edit diagnostics and endpoint clarity)
 - Expose richer runtime/dynamic evidence views and policy rollout insights
+  - Completed: Formal proof UI now renders runtime-policy evidence with structured action/tool/rule details and explicit static-vs-runtime explanation.
 - Expand cost and performance visualizations for regulated regression runs
+  - Completed: Compliance panel now includes iteration diagnostics (per-iteration violations, phase latencies, fix outcome, average fix latency).
+
+2. Demo coverage closure (UI + sample suite)
+- Add runtime policy simulator UI for event-level allow/deny/monitor evaluation (`/api/v1/runtime/policies/evaluate`)
+- Add LangGraph live-stream trace viewer (`/api/v1/langgraph/enforce/stream`, `/api/v1/langgraph/visualize`)
+- Add batch test-case runner UI for stored suites (`/api/v1/analyze/batch`)
+- Add proof registry + signer public-key inspector (`/api/v1/proofs`, `/api/v1/proof/public-key`)
+- Add dynamic artifact explorer in history (`/api/v1/history/dynamic-artifacts`)
+- Expand sample suite with semantics-focused and runtime-focused demo cases
 
 ## Medium-Term Priorities
 
@@ -52,6 +62,14 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - PostgreSQL + operational reliability improvements
 - Compliance reporting and trend analytics
 - Rich CI integrations with policy gates and artifact publication
+
+## Sample Suite Roadmap
+
+- `12_tool_demo.py`: tool mapping + unmapped findings workflow (metadata-rich dropdown support)
+- Add `13_semantics_stable_vs_grounded.py`: scenario with competing extensions to illustrate skeptical semantics
+- Add `14_joint_attack_nelson_parsons.py`: joint-attack policy conflict example for Nielsen-Parsons reasoning
+- Add `15_runtime_policy_events.py`: agent/tool/network/filesystem runtime event simulation target
+- Add `16_dynamic_analysis_replay.py`: deterministic replay artifact and runtime-safety evidence path
 
 ## Success Criteria
 

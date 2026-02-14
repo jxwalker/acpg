@@ -238,6 +238,7 @@ class EnforceIterationMetrics(BaseModel):
     adjudication_seconds: float
     fix_seconds: Optional[float] = None
     fix_attempted: bool = False
+    fix_changed: Optional[bool] = None
     fix_error: Optional[str] = None
     semantics_used: Optional[str] = None
 
