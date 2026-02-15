@@ -37,6 +37,14 @@ export default {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'spin-slow': 'spin 3s linear infinite',
         'bounce-slow': 'bounce 2s infinite',
+        'progress-indeterminate': 'progress-indeterminate 1.8s ease-in-out infinite',
+      },
+      keyframes: {
+        'progress-indeterminate': {
+          '0%': { width: '20%', marginLeft: '0%' },
+          '50%': { width: '40%', marginLeft: '30%' },
+          '100%': { width: '20%', marginLeft: '80%' },
+        },
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',

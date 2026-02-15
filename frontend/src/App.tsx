@@ -1874,7 +1874,7 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-slate-500">No trend data available for selected window.</div>
+              <div className="text-xs text-slate-500">No analysis history in this time window. Run code analysis to generate compliance trend data, or widen the date range.</div>
             )}
             {historyTrends && historyTrends.top_violated_rules.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -2486,6 +2486,34 @@ export default function App() {
                             <span>Waiting for model response and iteration checks</span>
                           </>
                         )}
+                      </div>
+                      {/* Progress bar */}
+                      <div className="mt-3 h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${
+                          analysisProgress.phase === 'generating'
+                            ? 'bg-gradient-to-r from-violet-500 via-cyan-400 to-violet-500 animate-progress-indeterminate'
+                            : 'bg-gradient-to-r from-violet-500 to-cyan-500 animate-progress-indeterminate'
+                        }`} />
+                      </div>
+                      {/* Phase steps */}
+                      <div className="mt-2 flex gap-1.5">
+                        {['starting', 'tools', 'adjudicating', 'generating'].map((phase) => {
+                          const phases = ['starting', 'tools', 'adjudicating', 'generating'];
+                          const currentIdx = phases.indexOf(analysisProgress!.phase);
+                          const phaseIdx = phases.indexOf(phase);
+                          const labels: Record<string, string> = {
+                            starting: 'Init', tools: 'Tools', adjudicating: 'Adjudicate', generating: 'Fix'
+                          };
+                          return (
+                            <div key={phase} className={`text-[10px] px-1.5 py-0.5 rounded ${
+                              phaseIdx < currentIdx ? 'bg-emerald-500/20 text-emerald-400'
+                                : phaseIdx === currentIdx ? 'bg-violet-500/20 text-violet-300'
+                                : 'bg-slate-800/50 text-slate-600'
+                            }`}>
+                              {labels[phase]}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

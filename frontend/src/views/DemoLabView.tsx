@@ -662,7 +662,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
             <div className="glass rounded-2xl p-5 border border-white/5">
               <h3 className="text-lg font-semibold text-white mb-3">Decision Output</h3>
               {!runtimeDecision ? (
-                <p className="text-sm text-slate-500">Run an event evaluation to inspect allow/deny/monitor reasoning.</p>
+                <p className="text-sm text-slate-500">Configure an event above and click Evaluate to see the allow/deny decision with matched rule details here.</p>
               ) : (
                 <div className="space-y-3 text-sm">
                   <div className="flex items-center gap-2">
@@ -717,7 +717,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
                       {rule.description && <p className="text-xs text-slate-400 mt-1">{rule.description}</p>}
                     </div>
                   ))}
-                  {runtimeRules.length === 0 && <p className="text-sm text-slate-500">No runtime rules loaded.</p>}
+                  {runtimeRules.length === 0 && <p className="text-sm text-slate-500">No runtime policy rules loaded. Click Refresh Rules to load from the policy configuration file.</p>}
                 </div>
               )}
             </div>
@@ -788,7 +788,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
                       </div>
                     </label>
                   ))}
-                  {batchCases.length === 0 && <p className="text-sm text-slate-500">No test cases available.</p>}
+                  {batchCases.length === 0 && <p className="text-sm text-slate-500">No test cases stored yet. Add test cases from the main editor or import them via the API to run batch analysis.</p>}
                 </div>
 
                 <button
@@ -811,7 +811,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
           <div className="xl:col-span-3 glass rounded-2xl p-5 border border-white/5">
             <h3 className="text-lg font-semibold text-white mb-3">Batch Results</h3>
             {!batchResult ? (
-              <p className="text-sm text-slate-500">Select test cases and run batch analysis to compare compliance outcomes.</p>
+              <p className="text-sm text-slate-500">Select test cases on the left and click Run Batch to compare compliance outcomes, violation counts, and risk scores here.</p>
             ) : (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 text-xs">
@@ -962,7 +962,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
                     {graphDefinition
                       ? graphDefinition.replace(/^\n+/, '').replace(/\n\s*$/, '')
                           .split('\n').map(l => l.startsWith('    ') ? l.slice(4) : l).join('\n')
-                      : 'No graph definition available.'}
+                      : 'Graph definition unavailable. Click Refresh Graph to reload the ACPG workflow structure.'}
                   </pre>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
                     <div className="p-3 rounded bg-slate-800/60 border border-slate-700/60">
@@ -998,7 +998,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
               <h3 className="text-lg font-semibold text-white mb-2">Live Stream Events</h3>
               <div className="max-h-96 overflow-y-auto space-y-2">
                 {graphEvents.length === 0 && (
-                  <p className="text-sm text-slate-500">Start streaming to inspect agent_message, state_update, runtime_event, and completion events.</p>
+                  <p className="text-sm text-slate-500">Paste code on the left and click Start Stream to watch prosecutor, adjudicator, and generator events execute here in real time.</p>
                 )}
                 {graphEvents.map((entry, idx) => (
                   <div key={`${entry.at}-${idx}`} className="p-3 rounded-lg bg-slate-800/70 border border-slate-700/60">
@@ -1052,7 +1052,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
                     <div className="text-[11px] text-slate-400 mt-1">{proof.decision} | {new Date(proof.created_at).toLocaleString()}</div>
                   </button>
                 ))}
-                {proofs.length === 0 && <p className="text-sm text-slate-500">No proofs stored yet.</p>}
+                {proofs.length === 0 && <p className="text-sm text-slate-500">No compliance proofs stored yet. Use the form below to generate and store a cryptographically signed proof bundle.</p>}
               </div>
             )}
 
@@ -1107,7 +1107,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
             {selectedProofLoading ? (
               <p className="text-sm text-slate-500">Loading proof bundle...</p>
             ) : !selectedProof ? (
-              <p className="text-sm text-slate-500">Select a proof to inspect stored evidence and decision details.</p>
+              <p className="text-sm text-slate-500">Select a proof from the registry to inspect its signed bundle — including decision, evidence chain, argumentation, and ECDSA signature.</p>
             ) : (
               <pre className="text-xs text-slate-300 bg-slate-900/70 border border-slate-700 rounded-lg p-4 overflow-auto max-h-[34rem]">
                 {JSON.stringify(selectedProof, null, 2)}
@@ -1206,7 +1206,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
                 </div>
               ))}
               {!dynamicLoading && dynamicArtifacts.length === 0 && (
-                <p className="text-sm text-slate-500">No dynamic artifacts matched the current filters.</p>
+                <p className="text-sm text-slate-500">No replay artifacts match the current filters. Adjust the suite, rule, or status filters above, or click Refresh to reload.</p>
               )}
             </div>
           </div>

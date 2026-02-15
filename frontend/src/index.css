@@ -574,3 +574,10 @@ input:focus-visible {
 .animate-badge-pulse {
   animation: badge-pulse 1s ease-in-out infinite;
 }
+
+/* Indeterminate progress bar */
+@keyframes progress-indeterminate {
+  0% { width: 20%; margin-left: 0%; }
+  50% { width: 40%; margin-left: 30%; }
+  100% { width: 20%; margin-left: 80%; }
+}
