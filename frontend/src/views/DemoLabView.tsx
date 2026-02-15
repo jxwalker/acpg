@@ -104,6 +104,9 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
   const [selectedProof, setSelectedProof] = useState<Record<string, unknown> | null>(null);
   const [selectedProofHash, setSelectedProofHash] = useState<string | null>(null);
   const [selectedProofLoading, setSelectedProofLoading] = useState(false);
+  const [proofGenCode, setProofGenCode] = useState(currentCode);
+  const [proofGenLanguage, setProofGenLanguage] = useState('python');
+  const [proofGenerating, setProofGenerating] = useState(false);
 
   const [dynamicLoading, setDynamicLoading] = useState(false);
   const [dynamicError, setDynamicError] = useState<string | null>(null);
@@ -418,6 +421,38 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
     }
   }, []);
 
+  const generateProof = useCallback(async () => {
+    if (!proofGenCode.trim()) {
+      setProofsError('Enter code to generate a proof for.');
+      return;
+    }
+    setProofGenerating(true);
+    setProofsError(null);
+    try {
+      const response = await fetch('/api/v1/proof/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: proofGenCode,
+          language: proofGenLanguage,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Proof generation failed');
+      }
+      await loadProofRegistry();
+      const hash = payload.artifact?.hash as string | undefined;
+      if (hash) {
+        await loadProofBundle(hash);
+      }
+    } catch (err) {
+      setProofsError(err instanceof Error ? err.message : 'Proof generation failed');
+    } finally {
+      setProofGenerating(false);
+    }
+  }, [loadProofBundle, loadProofRegistry, proofGenCode, proofGenLanguage]);
+
   const loadDynamicArtifacts = useCallback(async () => {
     setDynamicLoading(true);
     setDynamicError(null);
@@ -500,6 +535,8 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
       </div>
 
       {activeTab === 'runtime' && (
+        <div className="space-y-4">
+        <p className="text-sm text-slate-400">Simulate runtime events (tool execution, network calls, filesystem operations) and evaluate them against governance rules. Pick an event type, fill in the details, and click Evaluate to see the allow/deny decision.</p>
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
           <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-4">
             <div className="flex items-center justify-between">
@@ -686,9 +723,12 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {activeTab === 'batch' && (
+        <div className="space-y-4">
+        <p className="text-sm text-slate-400">Select stored test cases and run them through the analysis pipeline in bulk. Compare compliance outcomes, violation counts, and risk scores across multiple code samples at once.</p>
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
           <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-3">
             <div className="flex items-center justify-between">
@@ -821,9 +861,12 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
             )}
           </div>
         </div>
+        </div>
       )}
 
       {activeTab === 'graph' && (
+        <div className="space-y-4">
+        <p className="text-sm text-slate-400">Inspect the ACPG compliance workflow graph, paste code, and stream a live enforcement run. Watch agent events as the prosecutor, adjudicator, and generator loop executes in real time.</p>
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
           <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-3">
             <div className="flex items-center justify-between">
@@ -915,7 +958,12 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
                 <p className="text-sm text-slate-500">Loading graph metadata...</p>
               ) : (
                 <>
-                  <p className="text-xs text-slate-500 font-mono break-all mb-3">{graphDefinition || 'No graph definition available.'}</p>
+                  <pre className="text-xs text-slate-400 font-mono bg-slate-900/70 border border-slate-700 rounded-lg p-4 overflow-x-auto mb-3 leading-relaxed">
+                    {graphDefinition
+                      ? graphDefinition.replace(/^\n+/, '').replace(/\n\s*$/, '')
+                          .split('\n').map(l => l.startsWith('    ') ? l.slice(4) : l).join('\n')
+                      : 'No graph definition available.'}
+                  </pre>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
                     <div className="p-3 rounded bg-slate-800/60 border border-slate-700/60">
                       <div className="text-slate-400 mb-2">Nodes</div>
@@ -967,9 +1015,12 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
             </div>
           </div>
         </div>
+        </div>
       )}
 
       {activeTab === 'proofs' && (
+        <div className="space-y-4">
+        <p className="text-sm text-slate-400">Browse stored cryptographic proof bundles — signed compliance certificates generated after each analysis. Select any proof to inspect its full JSON payload including decision, signature, and evidence.</p>
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
           <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-4">
             <div className="flex items-center justify-between">
@@ -1005,6 +1056,37 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
               </div>
             )}
 
+            <div className="border-t border-slate-700/60 pt-4 space-y-3">
+              <h4 className="text-sm font-semibold text-white">Generate &amp; Store Proof</h4>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Language</label>
+                <select
+                  value={proofGenLanguage}
+                  onChange={(e) => setProofGenLanguage(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-800/70 border border-slate-700 rounded-lg text-white"
+                >
+                  <option value="python">python</option>
+                  <option value="javascript">javascript</option>
+                  <option value="typescript">typescript</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Code</label>
+                <textarea
+                  value={proofGenCode}
+                  onChange={(e) => setProofGenCode(e.target.value)}
+                  className="w-full h-36 px-3 py-2 bg-slate-900/70 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                />
+              </div>
+              <button
+                onClick={() => void generateProof()}
+                disabled={proofGenerating}
+                className="w-full py-2.5 bg-cyan-500/20 text-cyan-300 rounded-lg border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-50"
+              >
+                {proofGenerating ? 'Generating proof...' : 'Generate & Store Proof'}
+              </button>
+            </div>
+
             {publicKey && (
               <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60 text-xs space-y-1">
                 <div className="text-slate-400">Signer Public Key</div>
@@ -1033,9 +1115,12 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
             )}
           </div>
         </div>
+        </div>
       )}
 
       {activeTab === 'dynamic' && (
+        <div className="space-y-4">
+        <p className="text-sm text-slate-400">Browse dynamic analysis replay artifacts — runtime test executions captured during compliance analysis. Filter by suite, violation rule, or compliance status to find specific records.</p>
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
           <div className="xl:col-span-2 glass rounded-2xl p-5 border border-white/5 space-y-4">
             <h3 className="text-lg font-semibold text-white">Artifact Filters</h3>
@@ -1125,6 +1210,7 @@ function DemoLabView({ currentCode, semantics }: DemoLabProps) {
               )}
             </div>
           </div>
+        </div>
         </div>
       )}
     </div>

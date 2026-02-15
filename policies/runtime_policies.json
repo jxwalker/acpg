@@ -33,6 +33,101 @@
         ]
       },
       "message": "Runtime policy enabled monitoring for safety tool executions."
+    },
+    {
+      "id": "RUNTIME-TOOL-DENY-DESTRUCTIVE-CMDS",
+      "description": "Block destructive shell commands (rm, chmod, kill) from executing in the runtime sandbox.",
+      "event_type": "tool",
+      "action": "deny",
+      "severity": "critical",
+      "priority": 900,
+      "enabled": true,
+      "conditions": {
+        "command_contains": [
+          "rm -rf",
+          "rm -f",
+          "chmod 777",
+          "kill -9",
+          "mkfs",
+          "dd if="
+        ]
+      },
+      "message": "Destructive shell commands are prohibited by runtime governance policy."
+    },
+    {
+      "id": "RUNTIME-NET-DENY-UNTRUSTED-HOSTS",
+      "description": "Deny outbound network calls to known untrusted or exfiltration-risk domains.",
+      "event_type": "network",
+      "action": "deny",
+      "severity": "critical",
+      "priority": 800,
+      "enabled": true,
+      "conditions": {
+        "host_suffixes": [
+          ".pastebin.com",
+          ".ngrok.io",
+          ".requestbin.com",
+          ".burpcollaborator.net"
+        ]
+      },
+      "message": "Outbound network calls to untrusted exfiltration-risk hosts are blocked."
+    },
+    {
+      "id": "RUNTIME-NET-REQUIRE-APPROVAL-POST",
+      "description": "Require approval for outbound POST/PUT requests that could exfiltrate data.",
+      "event_type": "network",
+      "action": "require_approval",
+      "severity": "high",
+      "priority": 400,
+      "enabled": true,
+      "conditions": {
+        "methods": [
+          "POST",
+          "PUT"
+        ]
+      },
+      "message": "Outbound POST/PUT requests require human approval before execution."
+    },
+    {
+      "id": "RUNTIME-FS-DENY-SENSITIVE-PATHS",
+      "description": "Block filesystem writes to sensitive system directories.",
+      "event_type": "filesystem",
+      "action": "deny",
+      "severity": "critical",
+      "priority": 900,
+      "enabled": true,
+      "conditions": {
+        "path_prefixes": [
+          "/etc",
+          "/var/log",
+          "/root",
+          "/proc",
+          "/sys"
+        ],
+        "operations": [
+          "write",
+          "delete"
+        ]
+      },
+      "message": "Write/delete operations to sensitive system paths are prohibited."
+    },
+    {
+      "id": "RUNTIME-FS-MONITOR-TMP-WRITES",
+      "description": "Allow writes to /tmp but flag them for monitoring in compliance evidence.",
+      "event_type": "filesystem",
+      "action": "allow_with_monitoring",
+      "severity": "low",
+      "priority": 200,
+      "enabled": true,
+      "conditions": {
+        "path_prefixes": [
+          "/tmp"
+        ],
+        "operations": [
+          "write"
+        ]
+      },
+      "message": "Temporary file writes are permitted but monitored for compliance evidence."
     }
   ]
 }
