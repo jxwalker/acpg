@@ -1,6 +1,6 @@
 # Implementation Summary
 
-Last refreshed: **February 11, 2026**
+Last refreshed: **February 14, 2026**
 
 ## Summary
 
@@ -36,13 +36,11 @@ For LangGraph workflows:
 
 ## What Is Still Maturing
 
-- Runtime policy compiler is still basic (guard-driven, not full policy language).
-- Dynamic analysis sandboxing is not yet complete.
-- Solver path does not fully model joint attacks.
+- UI surface for some backend capabilities (runtime simulator, LangGraph trace viewer, batch runner, proof registry browser) is not yet built; APIs are complete.
 
 ## Validation Snapshot
 
-- `pytest -q`: 76 passed, 1 skipped
+- `pytest -q`: 124 passed, 1 skipped
 - Backend lint: passing
 - Frontend lint/build: passing
 - CI workflow: passing

@@ -7,9 +7,9 @@ export default defineConfig({
     port: 6001,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:6001',
+        target: 'http://localhost:6000',
         changeOrigin: true,
-      }
-    }
-  }
+      },
+    },
+  },
 })

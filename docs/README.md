@@ -1,31 +1,29 @@
 # Documentation Index
 
-Last refreshed: **February 11, 2026**
+Last refreshed: **February 15, 2026**
 
-## Authoritative Documents
+## Primary References
 
-Start here:
+1. **[DOCUMENTATION.md](DOCUMENTATION.md)** — Complete platform reference (installation, core concepts, CLI, web UI, API endpoints, policy system, proof bundles, runtime compliance, LLM management, CI/CD, configuration, troubleshooting, architecture)
+2. **[CLI_REFERENCE.md](CLI_REFERENCE.md)** — Full CLI command reference (all 10 commands, flags, examples, common workflows)
 
-1. `/Users/James/code/GAD/apcg/README.md`
-2. `/Users/James/code/GAD/apcg/QUICKSTART.md`
-3. `/Users/James/code/GAD/apcg/SETUP.md`
-4. `/Users/James/code/GAD/apcg/README_SCRIPTS.md`
-5. `/Users/James/code/GAD/apcg/PROJECT_SUMMARY.md`
-6. `/Users/James/code/GAD/apcg/ROADMAP.md`
+## Getting Started
 
-Operational and product docs:
+- `README.md` — Project overview and quick start
+- `QUICKSTART.md` — Setup walkthrough
+- `SETUP.md` — Environment and dependency setup
 
-- `/Users/James/code/GAD/apcg/docs/USER_MANUAL.md` — Comprehensive user manual for sales demos and CISO technical guidance
-- `/Users/James/code/GAD/apcg/docs/NEW_USER_MANUAL.md` — **Detailed new user manual** with step-by-step UI guide and screenshot placeholders
-- `/Users/James/code/GAD/apcg/docs/USER_GUIDE.md`
-- `/Users/James/code/GAD/apcg/docs/COMPLETE_FEATURE_LIST.md`
-- `/Users/James/code/GAD/apcg/docs/IMPLEMENTATION_SUMMARY.md`
-- `/Users/James/code/GAD/apcg/docs/CURRENT_PRIORITIES.md`
-- `/Users/James/code/GAD/apcg/docs/NEXT_STEPS.md`
-- `/Users/James/code/GAD/apcg/docs/runtime_policy_compliance.md`
+## Project Status
 
-## Specialized Reference Docs
+- `PROJECT_SUMMARY.md` — Feature inventory and architecture summary
+- `ROADMAP.md` — Completed milestones and upcoming priorities
 
-The remaining files under `/Users/James/code/GAD/apcg/docs/` are specialized references (CI snippets, test snapshots, static analysis deep-dives, etc.).
+## VC Pitch Materials
 
-They are useful context, but may contain point-in-time examples. Prefer the authoritative docs above for current behavior, endpoints, and status.
+- [VC_DEMO_SCRIPT.md](VC_DEMO_SCRIPT.md) — 7-act live demo script with competitor comparison
+- [INVESTOR_PITCH_BRIEF.md](INVESTOR_PITCH_BRIEF.md) — 15-slide pitch deck specification for design team
+- [TODO_VC_PITCH.md](TODO_VC_PITCH.md) — Prioritized pitch preparation checklist
+
+## Archive
+
+Older, superseded documentation is preserved in `docs/archive/` for reference. These files are no longer maintained — all their content has been consolidated into `DOCUMENTATION.md`.

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acpg"
+version = "1.0.0"
+description = "Agentic Compliance and Policy Governor — provable policy compliance for AI-generated code"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.7.4,<3.0.0",
+    "pydantic-settings>=2.1.0",
+    "openai>=1.40.0",
+    "anthropic>=0.75.0",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "bandit==1.7.5",
+    "safety>=3.7.0",
+    "cryptography>=41.0.7",
+    "sqlalchemy>=2.0.23",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "pyyaml>=6.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+acpg = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli"]
+packages = ["app", "app.api", "app.core", "app.models", "app.services", "app.services.parsers", "app.orchestration"]
+
+[tool.setuptools.package-dir]
+"" = "backend"
+
+[tool.ruff]
+line-length = 120
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

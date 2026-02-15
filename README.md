@@ -14,7 +14,7 @@ This repository is active and production-oriented for local and CI usage.
 
 Current baseline:
 - Policies loaded: **39** (default + OWASP + NIST + JS/TS)
-- Test status: **109 passed, 1 skipped**
+- Test status: **124 passed, 1 skipped**
 - LLM strategy: **Responses API first**, fallback to Chat Completions when needed
 - Decision semantics: **AUTO -> grounded** (with optional secondary solver evidence)
 - Runtime compliance: **LangGraph runtime events included in proof evidence**
@@ -214,18 +214,13 @@ Policy CRUD/grouping:
 
 ## Documentation Map
 
-Authoritative docs:
 - `README.md` (this file)
-- `QUICKSTART.md`
-- `SETUP.md`
-- `README_SCRIPTS.md`
-- `PROJECT_SUMMARY.md`
-- `ROADMAP.md`
-- `docs/README.md`
-- `docs/USER_GUIDE.md`
-- `docs/runtime_policy_compliance.md`
+- `QUICKSTART.md` / `SETUP.md` — Getting started
+- `PROJECT_SUMMARY.md` / `ROADMAP.md` — Project status
+- `docs/DOCUMENTATION.md` — Comprehensive platform reference
+- `docs/CLI_REFERENCE.md` — CLI command reference
 
-Historical or specialized docs are listed in `docs/README.md` with status.
+See `docs/README.md` for the full index including pitch materials.
 
 ## Development Checks
 

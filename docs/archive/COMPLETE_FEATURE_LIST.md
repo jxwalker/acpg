@@ -56,6 +56,6 @@ Last refreshed: **February 11, 2026**
 
 ## Current Test/Lint Baseline
 
-- `pytest -q`: 76 passed, 1 skipped
+- `pytest -q`: 124 passed, 1 skipped
 - backend lint (`ruff`): passing
 - frontend lint/build: passing

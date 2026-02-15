@@ -1,4 +1,4 @@
-# ACPG Roadmap (Refreshed February 13, 2026)
+# ACPG Roadmap (Refreshed February 14, 2026)
 
 ## Vision
 
@@ -12,6 +12,8 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Formal adjudication with grounded semantics
 - Semantics support: grounded, auto, stable, preferred (with explicit fallback behavior)
 - Joint attacks (Nielsen-Parsons style) in grounded computation
+- Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
+- Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Signed proof bundles with evidence and argumentation trace
 - LangGraph orchestration with runtime event trace
 - Runtime guard policy-to-violation flow for tool actions
@@ -30,46 +32,52 @@ Provide provable policy compliance for AI-generated code and agent behavior, wit
 - Permission-gated core APIs + tenant-scoped history/audit views
 - Permission-gated policy/LLM/LangGraph management APIs
 - Database operational diagnostics + pooled connection hardening defaults
-- Solver-backed joint-attack semantics for stable/preferred (ASP/clingo)
-- Deterministic solver decision modes (`auto` -> skeptical, `skeptical`, `credulous`)
 - Policy version history and diff/audit support (API + UI)
 - Policy-group rollout preview simulation against stored test cases
 - Unified test code management: file samples + DB-backed CRUD test cases
 - Bulk test-case import/export APIs with UI tag filtering workflows
 - Analysis/enforcement timing telemetry and UI performance visibility
 - CI pipeline covering lint/test/build/integration/docker
+- Runtime policy simulator UI (event-level allow/deny/monitor evaluation)
+- LangGraph live-stream trace viewer (SSE streaming + graph visualization)
+- Batch test-case runner UI for stored suites
+- Proof registry + signer public-key inspector UI
+- Dynamic artifact explorer UI with multi-criteria filtering
+- Sample suite: 16 samples covering tools, semantics, joint attacks, runtime, dynamic analysis
 
-## Active Near-Term Priorities
+## Active Near-Term Priorities (VC Pitch Readiness)
 
-1. UI readiness and operator workflows
-- Improve model management UX (provider create/edit diagnostics and endpoint clarity)
-- Expose richer runtime/dynamic evidence views and policy rollout insights
-  - Completed: Formal proof UI now renders runtime-policy evidence with structured action/tool/rule details and explicit static-vs-runtime explanation.
-- Expand cost and performance visualizations for regulated regression runs
-  - Completed: Compliance panel now includes iteration diagnostics (per-iteration violations, phase latencies, fix outcome, average fix latency).
+1. Demo polish and reliability
+   - End-to-end walkthrough testing of the full enforce loop (analyze → adjudicate → fix → proof) in the UI
+   - Verify LangGraph streaming works reliably with a live LLM provider
+   - Test proof verification flow end-to-end from UI
+   - Ensure clean error states when LLM keys are missing or provider is unreachable
 
-2. Demo coverage closure (UI + sample suite)
-- Add runtime policy simulator UI for event-level allow/deny/monitor evaluation (`/api/v1/runtime/policies/evaluate`)
-- Add LangGraph live-stream trace viewer (`/api/v1/langgraph/enforce/stream`, `/api/v1/langgraph/visualize`)
-- Add batch test-case runner UI for stored suites (`/api/v1/analyze/batch`)
-- Add proof registry + signer public-key inspector (`/api/v1/proofs`, `/api/v1/proof/public-key`)
-- Add dynamic artifact explorer in history (`/api/v1/history/dynamic-artifacts`)
-- Expand sample suite with semantics-focused and runtime-focused demo cases
+2. Pitch materials
+   - Competitor comparison slide (ACPG vs Snyk/Semgrep/Checkov)
+   - Argumentation graph visualization for pitch deck (export or screenshot)
+   - One-pager summarizing the formal methods differentiation
+
+3. UI quality-of-life
+   - Loading states and error boundaries for all Demo Lab tabs
+   - Mobile/responsive behavior for projector-friendly demo
 
 ## Medium-Term Priorities
 
-- Multi-tenant authn/authz and key management hardening
-- PostgreSQL + operational reliability improvements
-- Compliance reporting and trend analytics
-- Rich CI integrations with policy gates and artifact publication
+- Expanded language coverage (Go, Java, Rust policy catalogs and tool integrations)
+- Multi-tenant authn/authz hardening (SSO/OAuth, key rotation)
+- PostgreSQL production deployment and operational reliability
+- Compliance reporting exports (PDF/CSV for regulatory filings)
+- Rich CI integrations beyond GitHub Actions (GitLab CI, Jenkins)
+- Webhook/notification integrations for compliance events
 
-## Sample Suite Roadmap
+## Long-Term Vision
 
-- `12_tool_demo.py`: tool mapping + unmapped findings workflow (metadata-rich dropdown support)
-- Add `13_semantics_stable_vs_grounded.py`: scenario with competing extensions to illustrate skeptical semantics
-- Add `14_joint_attack_nelson_parsons.py`: joint-attack policy conflict example for Nielsen-Parsons reasoning
-- Add `15_runtime_policy_events.py`: agent/tool/network/filesystem runtime event simulation target
-- Add `16_dynamic_analysis_replay.py`: deterministic replay artifact and runtime-safety evidence path
+- SaaS deployment with org-level tenancy
+- Policy marketplace for industry-specific compliance catalogs
+- Agent observability dashboard for multi-agent fleet monitoring
+- Integration SDK for embedding ACPG in IDE plugins and code review tools
+- Formal certification pathway (SOC 2, ISO 27001 artifact generation)
 
 ## Success Criteria
 
