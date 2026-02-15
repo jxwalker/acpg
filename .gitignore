@@ -69,6 +69,9 @@ audit_logs/
 # Database
 *.db
 backend/acpg.db
+
+# Runtime data
+backend/data/analysis_history.json
 backend/keys/*.pem
 
 # Additional security exclusions
