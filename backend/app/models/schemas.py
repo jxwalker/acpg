@@ -1,7 +1,7 @@
 """Data models for ACPG system."""
 from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class PolicyCheck(BaseModel):
@@ -176,7 +176,7 @@ class ArtifactMetadata(BaseModel):
     hash: str
     language: str
     generator: str = "unknown"
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
 
 class PolicyOutcome(BaseModel):

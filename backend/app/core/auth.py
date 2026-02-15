@@ -2,7 +2,7 @@
 import hashlib
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import Depends, HTTPException, Request, Security
@@ -167,13 +167,15 @@ async def get_auth_context(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    # Check expiration
-    if db_key.expires_at and db_key.expires_at < datetime.utcnow():
-        raise HTTPException(
-            status_code=401,
-            detail="API key has expired",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
+    # Check expiration (SQLite returns naive datetimes; treat them as UTC)
+    if db_key.expires_at:
+        expires = db_key.expires_at if db_key.expires_at.tzinfo else db_key.expires_at.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(tz=timezone.utc):
+            raise HTTPException(
+                status_code=401,
+                detail="API key has expired",
+                headers={"WWW-Authenticate": "ApiKey"},
+            )
 
     # Enforce tenant scope for non-master keys
     key_tenant_id = (db_key.tenant_id or "").strip() or None
@@ -184,7 +186,7 @@ async def get_auth_context(
         )
 
     # Update last used
-    db_key.last_used = datetime.utcnow()
+    db_key.last_used = datetime.now(tz=timezone.utc)
     db.commit()
 
     role_name = (db_key.role or "operator").strip().lower()
@@ -239,7 +241,7 @@ class APIKeyManager:
 
         expires_at = None
         if expires_in_days:
-            expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+            expires_at = datetime.now(tz=timezone.utc) + timedelta(days=expires_in_days)
 
         role_name = (role or "operator").strip().lower()
         if role_name not in ROLE_PERMISSIONS:

@@ -3,7 +3,7 @@ import os
 import json
 import asyncio
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import httpx
 
@@ -32,7 +32,7 @@ class WebhookPayload:
         self.event = event
         self.data = data
         self.artifact_hash = artifact_hash
-        self.timestamp = datetime.utcnow().isoformat() + "Z"
+        self.timestamp = datetime.now(tz=timezone.utc).isoformat()
     
     def to_dict(self) -> Dict[str, Any]:
         return {

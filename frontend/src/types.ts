@@ -343,3 +343,19 @@ export interface VerificationResult {
   checks: string[];
   errors: string[];
 }
+
+export type SemanticsMode = 'auto' | 'grounded' | 'stable' | 'preferred';
+
+export interface ManagedTestCase {
+  id: string;
+  source: 'db' | 'file';
+  name: string;
+  description?: string;
+  language: string;
+  tags: string[];
+  violations: string[];
+  read_only: boolean;
+  code?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}

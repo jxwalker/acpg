@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import settings
 from app.core.llm_config import get_llm_config
+from app.core.middleware import RequestIdMiddleware
 from app.core.service_config import get_cors_origins
 from app.services import get_policy_compiler
 
@@ -112,6 +113,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestIdMiddleware)
 
 # Include API routes
 app.include_router(router, prefix=settings.API_V1_STR)

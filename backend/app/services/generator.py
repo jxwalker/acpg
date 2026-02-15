@@ -1,6 +1,6 @@
 """Generator Service - AI-powered code generation and fixing using configurable LLMs."""
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 from ..models.schemas import (
@@ -382,7 +382,7 @@ Provide a brief, clear explanation of each fix."""
             hash=code_hash,
             language=language,
             generator=f"ACPG-{self.model_name}",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(tz=timezone.utc)
         )
     
     def _get_policy_context(self, policy_ids: Optional[List[str]] = None) -> List[PolicyRule]:

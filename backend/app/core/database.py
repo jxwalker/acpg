@@ -1,6 +1,6 @@
 """Database configuration and models for ACPG."""
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
@@ -55,7 +55,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=lambda: datetime.now(tz=None), index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
     action = Column(String(50), index=True)  # analyze, enforce, generate, proof
     artifact_hash = Column(String(64), index=True)
     language = Column(String(20))
@@ -73,7 +73,7 @@ class StoredProof(Base):
     __tablename__ = "stored_proofs"
     
     id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(tz=None), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
     artifact_hash = Column(String(64), unique=True, index=True)
     artifact_name = Column(String(255), nullable=True)
     language = Column(String(20))
@@ -91,7 +91,7 @@ class PolicyHistory(Base):
     __tablename__ = "policy_history"
     
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=lambda: datetime.now(tz=None))
+    timestamp = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc))
     action = Column(String(20))  # add, modify, delete
     policy_id = Column(String(50), index=True)
     policy_data = Column(JSON)
@@ -105,7 +105,7 @@ class APIKey(Base):
     id = Column(Integer, primary_key=True, index=True)
     key_hash = Column(String(64), unique=True, index=True)  # SHA-256 of key
     name = Column(String(100))
-    created_at = Column(DateTime, default=lambda: datetime.now(tz=None))
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc))
     expires_at = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
     permissions = Column(JSON, default=list)  # List of allowed actions
@@ -123,7 +123,7 @@ class Tenant(Base):
     tenant_id = Column(String(100), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(tz=None), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
     is_active = Column(Boolean, default=True, index=True)
 
 
@@ -132,8 +132,8 @@ class TestCase(Base):
     __tablename__ = "test_cases"
 
     id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(tz=None), index=True)
-    updated_at = Column(DateTime, default=lambda: datetime.now(tz=None), index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(tz=timezone.utc), index=True)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     language = Column(String(20), default="python", index=True)
@@ -153,7 +153,12 @@ def init_db():
 
 
 def _run_schema_migrations():
-    """Apply lightweight schema migrations for environments without Alembic."""
+    """Apply lightweight schema migrations for environments without Alembic.
+
+    Prefer using ``alembic upgrade head`` for schema changes.  This function
+    is kept as a fallback so the app can still self-bootstrap a fresh SQLite
+    database when Alembic has not been run.
+    """
     with engine.begin() as conn:
         if "sqlite" in DATABASE_URL:
             cols = {
@@ -332,7 +337,7 @@ class TestCaseStore:
         tags: Optional[List[str]] = None,
         is_active: bool = True,
     ) -> TestCase:
-        now = datetime.now(tz=None)
+        now = datetime.now(tz=timezone.utc)
         test_case = TestCase(
             name=name,
             description=description,
@@ -371,7 +376,7 @@ class TestCaseStore:
             case.tags = tags
         if is_active is not None:
             case.is_active = is_active
-        case.updated_at = datetime.now(tz=None)
+        case.updated_at = datetime.now(tz=timezone.utc)
         self.db.add(case)
         self.db.commit()
         self.db.refresh(case)
@@ -453,7 +458,7 @@ class PolicyHistoryStore:
             policy_id=policy_id,
             policy_data=payload,
             changed_by=changed_by,
-            timestamp=datetime.now(tz=None),
+            timestamp=datetime.now(tz=timezone.utc),
         )
         self.db.add(entry)
         self.db.commit()
@@ -504,7 +509,7 @@ class TenantStore:
             tenant_id=tenant_id,
             name=name,
             description=description,
-            created_at=datetime.now(tz=None),
+            created_at=datetime.now(tz=timezone.utc),
             is_active=True,
         )
         self.db.add(tenant)

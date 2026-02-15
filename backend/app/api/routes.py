@@ -4,7 +4,7 @@ import hashlib
 import re
 import uuid
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
@@ -760,7 +760,7 @@ async def export_test_cases(
 
     return {
         "version": "1",
-        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "exported_at": datetime.now(tz=timezone.utc).isoformat(),
         "count": len(payload),
         "cases": payload,
     }
@@ -2701,7 +2701,7 @@ async def add_to_history(
     
     entry = {
         "id": str(uuid.uuid4())[:8],
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "code_preview": code[:100] + ("..." if len(code) > 100 else ""),
         "language": language,
         "compliant": compliant,
@@ -2777,8 +2777,8 @@ def _parse_history_timestamp(value: Optional[str]) -> Optional[datetime]:
     try:
         cleaned = value.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(cleaned)
-        if parsed.tzinfo is not None:
-            return parsed.replace(tzinfo=None)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
         return parsed
     except Exception:
         return None
@@ -2791,7 +2791,7 @@ async def get_history_trends(
 ):
     """Aggregate compliance trends from analysis history for audit dashboards."""
     history = load_history()
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
 
     selected = []
     for entry in history:

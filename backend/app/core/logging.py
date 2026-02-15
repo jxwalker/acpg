@@ -1,8 +1,10 @@
 """Structured logging for ACPG."""
 import logging
+import logging.handlers
 import json
+import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from contextvars import ContextVar
 
@@ -17,7 +19,7 @@ class JSONFormatter(logging.Formatter):
     
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -165,7 +167,19 @@ def setup_logging(json_format: bool = True):
         ))
     
     root_logger.addHandler(handler)
-    
+
+    # Optional file handler with rotation (for bare-metal deployments)
+    log_file = os.environ.get("LOG_FILE")
+    if log_file:
+        max_bytes = int(os.environ.get("LOG_MAX_BYTES", 10 * 1024 * 1024))  # 10 MB
+        backup_count = int(os.environ.get("LOG_BACKUP_COUNT", 5))
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=max_bytes, backupCount=backup_count
+        )
+        file_handler.setFormatter(JSONFormatter())
+        root_logger.addHandler(file_handler)
+
     # Reduce noise from third-party libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
