@@ -31,12 +31,12 @@ api:
 
 # Logging
 logging:
-  backend_log: "/tmp/acpg_backend.log"
-  frontend_log: "/tmp/acpg_frontend.log"
+  backend_log: "./data/logs/acpg_backend.log"
+  frontend_log: "./data/logs/acpg_frontend.log"
   level: "INFO"
 
 # Process Management
 process:
-  pid_dir: "/tmp/acpg_pids"
+  pid_dir: "./data/pids"
   graceful_shutdown_timeout: 10  # seconds
 

@@ -3,16 +3,7 @@
 # Shows status of all services
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$PROJECT_ROOT/config.yaml"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-PID_DIR=$(grep "pid_dir:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
+source "$SCRIPT_DIR/_common.sh"
 
 echo "ACPG Service Status"
 echo "=================="
@@ -22,7 +13,7 @@ echo ""
 if [ -f "$PID_DIR/backend.pid" ]; then
     BACKEND_PID=$(cat "$PID_DIR/backend.pid")
     BACKEND_PORT=$(cat "$PID_DIR/backend.port" 2>/dev/null || echo "unknown")
-    
+
     if ps -p $BACKEND_PID > /dev/null 2>&1; then
         if curl -s --fail --max-time 5 "http://localhost:$BACKEND_PORT/api/v1/health" > /dev/null 2>&1; then
             echo -e "Backend:  ${GREEN}RUNNING${NC} (PID: $BACKEND_PID, Port: $BACKEND_PORT)"
@@ -40,7 +31,7 @@ fi
 if [ -f "$PID_DIR/frontend.pid" ]; then
     FRONTEND_PID=$(cat "$PID_DIR/frontend.pid")
     FRONTEND_PORT=$(cat "$PID_DIR/frontend.port" 2>/dev/null || echo "unknown")
-    
+
     if ps -p $FRONTEND_PID > /dev/null 2>&1; then
         if curl -s --fail --max-time 5 "http://localhost:$FRONTEND_PORT" > /dev/null 2>&1; then
             echo -e "Frontend: ${GREEN}RUNNING${NC} (PID: $FRONTEND_PID, Port: $FRONTEND_PORT)"

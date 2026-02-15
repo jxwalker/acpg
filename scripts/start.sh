@@ -5,37 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$PROJECT_ROOT/config.yaml"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Load YAML config (simple parser)
-get_config() {
-    local key="$1"
-    grep -A 100 "^$key:" "$CONFIG_FILE" | grep -E "^\s+[a-z_]+:" | head -1 | awk '{print $1}' | tr -d ':' | xargs
-}
-
-get_port() {
-    local service="$1"
-    local base_port=$(grep -A 5 "^  $service:" "$CONFIG_FILE" | grep "base_port:" | awk '{print $2}')
-    local auto_find=$(grep -A 5 "^  $service:" "$CONFIG_FILE" | grep "auto_find_port:" | awk '{print $2}')
-    
-    if [ "$auto_find" = "true" ]; then
-        # Find next available port
-        local port=$base_port
-        while lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; do
-            port=$((port + 1))
-        done
-        echo $port
-    else
-        echo $base_port
-    fi
-}
+source "$SCRIPT_DIR/_common.sh"
 
 # Check if port is available
 check_port() {
@@ -57,9 +27,35 @@ find_free_port() {
     echo $port
 }
 
-# Create PID directory
-PID_DIR=$(grep "pid_dir:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
+# Check if a process from a PID file is alive
+is_running() {
+    local pidfile="$1"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile" 2>/dev/null)
+        [ -n "$pid" ] && ps -p "$pid" > /dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+# --- Lock file guard ---
+LOCK_FILE="$PID_DIR/acpg.lock"
+
 mkdir -p "$PID_DIR"
+mkdir -p "$(dirname "$BACKEND_LOG")"
+mkdir -p "$(dirname "$FRONTEND_LOG")"
+
+if [ -f "$LOCK_FILE" ]; then
+    if is_running "$PID_DIR/backend.pid" || is_running "$PID_DIR/frontend.pid"; then
+        echo -e "${RED}ACPG is already running.${NC}"
+        echo "Use './scripts/stop.sh' first, or './scripts/restart.sh' to restart."
+        exit 1
+    else
+        echo -e "${YELLOW}Stale lock file found. Cleaning up...${NC}"
+        rm -f "$LOCK_FILE" "$PID_DIR"/*.pid "$PID_DIR"/*.port
+    fi
+fi
+echo "$$" > "$LOCK_FILE"
 
 # Get ports
 BACKEND_PORT=$(find_free_port 6000)
@@ -74,7 +70,6 @@ echo -e "${YELLOW}Starting backend...${NC}"
 cd "$PROJECT_ROOT/backend"
 source venv/bin/activate
 
-BACKEND_LOG=$(grep "backend_log:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
 nohup uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" > "$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > "$PID_DIR/backend.pid"
@@ -98,33 +93,8 @@ done
 echo -e "${YELLOW}Starting frontend...${NC}"
 cd "$PROJECT_ROOT/frontend"
 
-# Update vite config with actual port
-FRONTEND_LOG=$(grep "frontend_log:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-
-# Backup original vite config if not already backed up
-if [ ! -f "vite.config.ts.bak" ]; then
-    cp vite.config.ts vite.config.ts.bak
-fi
-
-# Update vite config with actual ports
-cat > vite.config.ts <<EOF
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: $FRONTEND_PORT,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:$BACKEND_PORT',
-        changeOrigin: true,
-      },
-    },
-  },
-})
-EOF
-
+export VITE_PORT="$FRONTEND_PORT"
+export VITE_BACKEND_URL="http://localhost:$BACKEND_PORT"
 nohup npm run dev > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > "$PID_DIR/frontend.pid"

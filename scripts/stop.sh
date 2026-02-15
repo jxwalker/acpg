@@ -2,81 +2,71 @@
 # ACPG Shutdown Script
 # Graceful shutdown of all services
 
-set -e
+set +e  # Cleanup must continue even if commands fail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$PROJECT_ROOT/config.yaml"
+source "$SCRIPT_DIR/_common.sh"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# Stop a service by PID file with graceful timeout
+stop_service() {
+    local name="$1"
+    local pidfile="$2"
 
-PID_DIR=$(grep "pid_dir:" "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-TIMEOUT=$(grep "graceful_shutdown_timeout:" "$CONFIG_FILE" | awk '{print $2}')
+    if [ ! -f "$pidfile" ]; then
+        echo "$name: no PID file"
+        return
+    fi
+
+    local pid=$(cat "$pidfile" 2>/dev/null)
+    rm -f "$pidfile"
+
+    if [ -z "$pid" ] || ! ps -p "$pid" > /dev/null 2>&1; then
+        echo "$name: not running (stale PID file removed)"
+        return
+    fi
+
+    echo "Stopping $name (PID: $pid)..."
+    kill -TERM "$pid" 2>/dev/null || true
+
+    for i in $(seq 1 "$GRACEFUL_TIMEOUT"); do
+        if ! ps -p "$pid" > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ $name stopped${NC}"
+            return
+        fi
+        sleep 1
+    done
+
+    echo "Force killing $name..."
+    kill -9 "$pid" 2>/dev/null || true
+    echo -e "${GREEN}✓ $name stopped (forced)${NC}"
+}
+
+# Kill any process listening on a given port
+kill_by_port() {
+    local port="$1"
+    local pids
+    pids=$(lsof -ti :"$port" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "$pids" | xargs kill 2>/dev/null || true
+    fi
+}
 
 echo -e "${YELLOW}Stopping ACPG Services...${NC}"
 
-# Stop Frontend
-if [ -f "$PID_DIR/frontend.pid" ]; then
-    FRONTEND_PID=$(cat "$PID_DIR/frontend.pid")
-    if ps -p $FRONTEND_PID > /dev/null 2>&1; then
-        echo "Stopping frontend (PID: $FRONTEND_PID)..."
-        kill -TERM $FRONTEND_PID 2>/dev/null || true
-        sleep 2
-        if ps -p $FRONTEND_PID > /dev/null 2>&1; then
-            echo "Force killing frontend..."
-            kill -9 $FRONTEND_PID 2>/dev/null || true
-        fi
-        rm -f "$PID_DIR/frontend.pid"
-        echo -e "${GREEN}✓ Frontend stopped${NC}"
-    else
-        echo "Frontend process not running"
-        rm -f "$PID_DIR/frontend.pid"
-    fi
+# Stop services by PID
+stop_service "Frontend" "$PID_DIR/frontend.pid"
+stop_service "Backend" "$PID_DIR/backend.pid"
+
+# Kill any remaining processes on known ports
+if [ -f "$PID_DIR/backend.port" ]; then
+    kill_by_port "$(cat "$PID_DIR/backend.port")"
+fi
+if [ -f "$PID_DIR/frontend.port" ]; then
+    kill_by_port "$(cat "$PID_DIR/frontend.port")"
 fi
 
-# Stop Backend
-if [ -f "$PID_DIR/backend.pid" ]; then
-    BACKEND_PID=$(cat "$PID_DIR/backend.pid")
-    if ps -p $BACKEND_PID > /dev/null 2>&1; then
-        echo "Stopping backend (PID: $BACKEND_PID)..."
-        kill -TERM $BACKEND_PID 2>/dev/null || true
-        
-        # Wait for graceful shutdown
-        for i in $(seq 1 $TIMEOUT); do
-            if ! ps -p $BACKEND_PID > /dev/null 2>&1; then
-                break
-            fi
-            sleep 1
-        done
-        
-        if ps -p $BACKEND_PID > /dev/null 2>&1; then
-            echo "Force killing backend..."
-            kill -9 $BACKEND_PID 2>/dev/null || true
-        fi
-        rm -f "$PID_DIR/backend.pid"
-        echo -e "${GREEN}✓ Backend stopped${NC}"
-    else
-        echo "Backend process not running"
-        rm -f "$PID_DIR/backend.pid"
-    fi
-fi
-
-# Clean up port files
-rm -f "$PID_DIR/backend.port"
-rm -f "$PID_DIR/frontend.port"
-
-# Restore vite config if backup exists
-if [ -f "$PROJECT_ROOT/frontend/vite.config.ts.bak" ]; then
-    mv "$PROJECT_ROOT/frontend/vite.config.ts.bak" "$PROJECT_ROOT/frontend/vite.config.ts"
-fi
-
-# Kill any remaining processes
-pkill -f "uvicorn main:app" 2>/dev/null || true
-pkill -f "vite" 2>/dev/null || true
+# Clean up all state files
+rm -f "$PID_DIR"/backend.port "$PID_DIR"/frontend.port
+rm -f "$PID_DIR"/acpg.lock
 
 echo -e "${GREEN}All services stopped${NC}"
-

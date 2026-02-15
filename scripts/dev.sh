@@ -4,7 +4,7 @@
 
 set -e
 
-echo "🚀 Starting ACPG Development Servers..."
+echo "Starting ACPG Development Servers..."
 echo ""
 
 # Colors
@@ -12,10 +12,10 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Kill any existing servers
+# Kill any existing servers on dev ports
 echo "Stopping existing servers..."
-pkill -f "uvicorn main:app" 2>/dev/null || true
-pkill -f "vite" 2>/dev/null || true
+lsof -ti :8000 | xargs kill 2>/dev/null || true
+lsof -ti :3000 | xargs kill 2>/dev/null || true
 sleep 2
 
 # Get script directory
@@ -40,7 +40,7 @@ BACKEND_PID=$!
 echo "Waiting for backend..."
 for i in {1..30}; do
     if curl -s http://localhost:8000/api/v1/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✅ Backend running on http://localhost:8000${NC}"
+        echo -e "${GREEN}Backend running on http://localhost:8000${NC}"
         break
     fi
     sleep 1
@@ -53,12 +53,12 @@ if [ ! -d "node_modules" ]; then
     echo "Installing frontend dependencies..."
     npm install
 fi
-npm run dev &
+VITE_PORT=3000 VITE_BACKEND_URL="http://localhost:8000" npm run dev &
 FRONTEND_PID=$!
 
 # Wait for frontend
 sleep 3
-echo -e "${GREEN}✅ Frontend running on http://localhost:3000${NC}"
+echo -e "${GREEN}Frontend running on http://localhost:3000${NC}"
 
 echo ""
 echo "=============================================="
@@ -77,4 +77,3 @@ trap "echo 'Stopping servers...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; e
 
 # Keep script running
 wait
-
